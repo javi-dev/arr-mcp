@@ -229,9 +229,54 @@ describe('recheck_torrents', () => {
         expect(late.structuredContent.applied).toBe(false);
     });
 
-    it('leaves alone a torrent saved outside the roots whose files are where it says', async () => {
+    it('refuses a stopped torrent stored outside the roots, where a damaged piece would rename its file', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP', save_path: '/mnt/legacy', content_path: '/mnt/legacy/Some.Film/film.mkv' })] });
-        expect((await h.call('recheck_torrents', { ids: [HASH] })).structuredContent.confirm_token).toBeDefined();
+        await expect(h.call('recheck_torrents', { ids: [HASH] })).rejects.toThrow(/outside the locations/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('refuses files really stored outside the roots, whatever the save path says', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP', content_path: '/mnt/stray/Some.Film/film.mkv' })] });
+        await expect(h.call('recheck_torrents', { ids: [HASH] })).rejects.toThrow(/outside the locations/);
+    });
+
+    it('does not let a token survive the files turning up somewhere else', async () => {
+        const h = harness();
+        const preview = await h.call('recheck_torrents', { ids: [HASH] });
+        h.torrents[0]!.content_path = '/data/media/moved/Some.Film/film.mkv';
+        const late = await h.call('recheck_torrents', { ids: [HASH], confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('judges each torrent of a batch by its own files', async () => {
+        const h = harness({
+            torrents: [torrent(), torrent({ hash: OTHER, content_path: '/data/torrents/movies' })],
+            filesByHash: { [OTHER]: [{ name: 'a.mkv', size: 1, progress: 1 }, { name: 'sub/b.mkv', size: 1, progress: 1 }] }
+        });
+        const preview = await h.call('recheck_torrents', { ids: [HASH, OTHER] });
+        expect(preview.structuredContent.effects.join(' ')).not.toContain('where it is configured to be');
+    });
+
+    it('skips a torrent that is being moved, and says when to check it', async () => {
+        const h = harness({ torrents: [torrent(), torrent({ hash: OTHER, state: 'moving' })] });
+        const preview = await h.call('recheck_torrents', { ids: [HASH, OTHER] });
+        expect(preview.structuredContent.effects.join(' ')).toContain('being moved. Check it once the move has ended.');
+        await h.call('recheck_torrents', { ids: [HASH, OTHER], confirm: preview.structuredContent.confirm_token });
+        expect(h.posts).toEqual([{ path: '/torrents/recheck', form: { hashes: HASH } }]);
+    });
+
+    it('has nothing to do when the only torrent is being moved', async () => {
+        const preview = await harness({ torrents: [torrent({ state: 'moving' })] }).call('recheck_torrents', { ids: [HASH] });
+        expect(preview.structuredContent.noop).toBe(true);
+    });
+
+    it('reports a check that ended on an error as an error, not as a download', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 500, progress: 0.5 })], recheckStates: ['checkingDL', 'error'] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toMatchObject({ errored: [HASH] });
+        expect(applied.structuredContent.result).not.toHaveProperty('incomplete');
+        expect(applied.structuredContent.summary).not.toContain('downloading what is missing');
     });
 
     it.each(['missingFiles', 'stalledUP', 'downloading'])('refuses a torrent at %s that would write to a save path outside the roots', async state => {

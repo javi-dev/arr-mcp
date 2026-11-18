@@ -68,8 +68,10 @@ record. It is off by default.
 A tracker URL holds the user's passkey, and a magnet or a `.torrent` URL can
 too. So a tracker is reduced to its hostname as it is read, a host label that
 looks like a passkey is masked, and a tracker's message is never read at all. The
-source given to `add_torrent` or `add_nzb` reaches only the request to the client:
-previews, targets, errors and the audit log carry a SHA-256 of it instead.
+source given to `add_torrent`, `add_nzb` or `grab_release` reaches only the request
+to the client: previews, targets, errors and the audit log carry a SHA-256 of it
+instead. Audit rows written by `grab_release` before this version can still hold
+the whole magnet link.
 
 ## The repair page renders the config file verbatim
 

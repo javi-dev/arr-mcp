@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { INSTANCE_PARAM_DESCRIPTION, resolveInstance } from './resolveInstance.ts';
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
@@ -234,7 +235,8 @@ export function registerGrabRelease(
                         'It appears in get_queue and can be removed again with remove_queue_item.',
                         ...(hosts.length === 0 ? [] : [`The client will also contact: ${hosts.join(', ')}.`])
                     ],
-                    args: { magnet }
+                    // A digest and never the link: this object is written to the audit log, and a tracker's `tr=` holds the passkey.
+                    args: { magnet_sha256: createHash('sha256').update(magnet).digest('hex') }
                 };
             }
 

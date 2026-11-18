@@ -88,7 +88,7 @@ type TorrentToolOptions = { sleep?: (ms: number) => Promise<void> };
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
-type RecheckOutcome = { rechecking: string[]; resumed?: string[]; incomplete?: string[]; still_checking?: string[]; still_moving?: string[]; unconfirmed?: string[]; gone?: string[]; resume_failed?: string[] };
+type RecheckOutcome = { rechecking: string[]; resumed?: string[]; incomplete?: string[]; errored?: string[]; still_checking?: string[]; still_moving?: string[]; unconfirmed?: string[]; gone?: string[]; resume_failed?: string[] };
 
 /**
  * Watches a recheck that has been sent, and starts what came back whole and
@@ -144,7 +144,8 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
     return {
         rechecking: [...ids],
         ...list(resumeFailed ? 'resume_failed' : 'resumed', toStart),
-        ...list('incomplete', finished.flatMap(([id, s]) => (s !== undefined && !s.complete ? [id] : []))),
+        ...list('incomplete', finished.flatMap(([id, s]) => (s !== undefined && !s.complete && s.state !== 'error' ? [id] : []))),
+        ...list('errored', finished.flatMap(([id, s]) => (s?.state === 'error' ? [id] : []))),
         ...list('still_checking', ids.filter(id => !settled.has(id) && seenChecking.has(id) && !moving.has(id))),
         ...list('still_moving', ids.filter(id => !settled.has(id) && moving.has(id))),
         ...list('unconfirmed', [...wholeAndStopped.filter(id => !toStart.includes(id)), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id) && !moving.has(id))]),
@@ -153,11 +154,12 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
 }
 
 const outcomeSentence = (o: RecheckOutcome): string | undefined => {
-    if (o.resumed === undefined && o.incomplete === undefined && o.still_checking === undefined && o.still_moving === undefined && o.unconfirmed === undefined && o.gone === undefined && o.resume_failed === undefined) return undefined;
+    if (o.resumed === undefined && o.incomplete === undefined && o.errored === undefined && o.still_checking === undefined && o.still_moving === undefined && o.unconfirmed === undefined && o.gone === undefined && o.resume_failed === undefined) return undefined;
     const part = (label: string, ids: string[] | undefined) => (ids === undefined ? [] : [`${label}: ${ids.join(', ')}`]);
     return `Recheck sent. ${[
         ...part('started again', o.resumed),
         ...part('came back incomplete, and any that was not stopped is downloading what is missing', o.incomplete),
+        ...part('stopped on an error during the check, so read its message in get_queue', o.errored),
         ...part('still checking, so start these with pause_downloads and `action: "resume"` once get_queue shows them complete', o.still_checking),
         ...part('still moving to the save path and not started, so once get_queue no longer shows them at moving and shows them complete, start them with pause_downloads and `action: "resume"`', o.still_moving),
         ...part('no check was seen running yet, so these were not started; look at them again in get_queue', o.unconfirmed),
@@ -330,7 +332,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 throw new ServiceError('NotFound', client.id, `no torrent with hash ${missing.join(', ')}`, { remedy: 'Take current ids from get_queue.' });
             }
             const skipped = states.filter(s => !s.hasMetadata);
-            const toCheck = states.filter(s => !s.checking && s.hasMetadata).map(s => s.id).sort();
+            const inMotion = states.filter(s => s.hasMetadata && s.state === 'moving');
+            const toCheck = states.filter(s => !s.checking && s.hasMetadata && s.state !== 'moving').map(s => s.id).sort();
             // A check that finds data missing sends what is left to the incomplete folder.
             const fallbacks = states.filter(s => toCheck.includes(s.id) && s.downloadPath !== undefined).sort((a, b) => a.id.localeCompare(b.id));
             for (const s of fallbacks) {
@@ -338,15 +341,17 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 // And one that finds everything sends it on to the save path.
                 allowedPath(client.id, s.savePath ?? '', client.allowedPaths);
             }
-            // With no incomplete folder, a check retries a move that failed earlier, and a torrent it does not stop writes what is missing.
-            const atHome = states.filter(s => toCheck.includes(s.id) && s.downloadPath === undefined && s.savePath !== undefined).sort((a, b) => a.id.localeCompare(b.id));
-            const stored = await Promise.all(atHome.map(async s => storageDirectory(s.contentPath, await client.torrentFileNames(s.id))));
-            const strays = atHome.filter((s, i) => stored[i] !== (s.savePath ?? '').replace(/\/+$/, ''));
-            const writesHome = atHome.filter(s => strays.includes(s) || !s.stopped);
-            for (const s of writesHome) allowedPath(client.id, s.savePath ?? '', client.allowedPaths);
+            // A check can write where the files are (a damaged piece renames its file), and retries a move that failed earlier.
+            const checked = states.filter(s => toCheck.includes(s.id)).sort((a, b) => a.id.localeCompare(b.id));
+            const stored = await Promise.all(checked.map(async s => storageDirectory(s.contentPath, await client.torrentFileNames(s.id))));
+            checked.forEach((s, i) => {
+                if (s.savePath !== undefined) allowedPath(client.id, s.savePath, client.allowedPaths);
+                if (stored[i] !== undefined) allowedPath(client.id, stored[i], client.allowedPaths);
+            });
+            const strays = checked.filter((s, i) => s.downloadPath === undefined && s.savePath !== undefined && stored[i] !== s.savePath.replace(/\/+$/, ''));
             const atMissingFiles = states.filter(s => toCheck.includes(s.id) && s.state === 'missingFiles').sort((a, b) => a.id.localeCompare(b.id));
             const target = `${client.id}:${toCheck.length === 0 ? wanted.join(',') : toCheck.join(',')}`;
-            if (toCheck.length === 0) return { target, summary: `None of those torrents can be checked on ${client.id}: each is already checking or still fetching its metadata.`, effects: [], noop: true };
+            if (toCheck.length === 0) return { target, summary: `None of those torrents can be checked on ${client.id}: each is already checking, being moved or still fetching its metadata.`, effects: [], noop: true };
             // A torrent the check finds whole starts counting towards its share limits, and may already be past them.
             const incomplete = states.filter(s => toCheck.includes(s.id) && !s.complete).sort((a, b) => a.id.localeCompare(b.id));
             const [categories, defaults] = incomplete.length === 0 ? [new Map<string, TorrentCategory>(), undefined] : await Promise.all([client.torrentCategories(), client.torrentClientDefaults()]);
@@ -366,6 +371,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 effects: [
                     ...states.filter(s => toCheck.includes(s.id)).slice(0, 10).map(s => `Checks ${s.title} (${s.id}).`),
                     ...skipped.map(s => `Skips ${s.title} (${s.id}), which has no metadata to check yet.`),
+                    ...inMotion.map(s => `Skips ${s.title} (${s.id}), which is being moved. Check it once the move has ended.`),
                     ...fallbacks.map(s => `If ${s.title} comes back incomplete, qBittorrent moves what is left of it to ${s.downloadPath}; if complete, to ${s.savePath}.`),
                     ...strays.map(s => `After the check, qBittorrent moves ${s.title} to ${s.savePath}, where it is configured to be.`),
                     ...atMissingFiles.map(s => `${s.title} is at missing files: unless it is stopped, qBittorrent downloads whatever the check does not find.`),
@@ -383,7 +389,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     resume: resume_if_complete,
                     fallbacks: fallbacks.map(s => [s.id, s.downloadPath, s.savePath]),
                     strays: strays.map(s => [s.id, s.savePath]),
-                    writesHome: writesHome.map(s => [s.id, s.savePath]),
+                    homes: checked.map((s, i) => [s.id, s.savePath ?? '', stored[i] ?? '']),
                     atMissingFiles: atMissingFiles.map(s => s.id),
                     removals: removals.map(r => [r.state.id, r.rule, r.protection !== undefined]),
                     allowRemoval: allow_removal

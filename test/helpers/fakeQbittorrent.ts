@@ -58,6 +58,8 @@ export type FakeOptions = {
     torrents?: RawTorrent[];
     categories?: Record<string, Record<string, unknown>>;
     files?: unknown[];
+    /** The files of one torrent, where they differ from `files`. */
+    filesByHash?: Record<string, unknown[]>;
     trackers?: unknown[];
     properties?: Record<string, unknown>;
     preferences?: Record<string, unknown>;
@@ -111,7 +113,7 @@ export function fakeQbittorrent(opts: FakeOptions = {}) {
             case '/torrents/properties':
                 return jsonResponse(opts.properties ?? {});
             case '/torrents/files':
-                return jsonResponse(opts.files ?? [{ name: 'Some.Film/film.mkv', size: 1000, progress: 1 }]);
+                return jsonResponse(opts.filesByHash?.[url.searchParams.get('hash') ?? ''] ?? opts.files ?? [{ name: 'Some.Film/film.mkv', size: 1000, progress: 1 }]);
             case '/torrents/trackers':
                 return jsonResponse(
                     opts.trackers ?? [

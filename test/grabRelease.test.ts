@@ -320,6 +320,7 @@ describe('grab_release with a magnet', () => {
             }
         };
 
+        const audit = WriteAudit.ephemeral();
         const clientConfig = {
             url: 'http://192.0.2.10:9091',
             timeout_ms: 10_000,
@@ -336,14 +337,14 @@ describe('grab_release with a magnet', () => {
                     })
                 ),
                 confirm: new ConfirmTokens(),
-                audit: WriteAudit.ephemeral(),
+                audit,
                 library: { invalidate: vi.fn() } as unknown as LibraryLoader,
                 ...(opts.crossChecks === undefined ? {} : { crossChecks: opts.crossChecks })
             },
             [new TransmissionAdapter(clientConfig, impl), new QbittorrentAdapter(clientConfig, impl)]
         );
 
-        return { call: (a: Record<string, unknown>) => call(a), sent };
+        return { call: (a: Record<string, unknown>) => call(a), sent, audit };
     }
 
     it('names the hash and says nothing vetted the link', async () => {
@@ -400,6 +401,16 @@ describe('grab_release with a magnet', () => {
             confirm: first.structuredContent.confirm_token
         });
         expect(h.sent.find(s => s.path === '/api/v2/torrents/add')?.body).toContain('urls=magnet');
+    });
+
+    it('keeps a tracker passkey in the magnet out of the audit log', async () => {
+        const passkey = 'd41d8cd98f00b204e9800998ecf8427e';
+        const uri = `${MAGNET}&tr=${encodeURIComponent(`https://tracker.example/${passkey}/announce`)}`;
+        const h = clientHarness({ qbittorrent: true });
+        const first = await h.call({ service: 'qbittorrent', magnet: uri });
+        await h.call({ service: 'qbittorrent', magnet: uri, confirm: first.structuredContent.confirm_token });
+        expect(h.sent.find(s => s.path === '/api/v2/torrents/add')?.body).toContain(passkey);
+        expect(JSON.stringify(h.audit.recent())).not.toContain(passkey);
     });
 
     it('reports a base32 magnet under the hex hash the client keys on', async () => {

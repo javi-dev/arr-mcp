@@ -10,6 +10,10 @@
 * **queue:** show private, ratio, seed time and tracker hostnames in the `remove_queue_item` preview, and refuse protected torrents unless `allow_protected` is passed
 * **config:** add `allowed_paths`, `protect_private_torrents`, `protect_all_torrents` and `webui_api_key` to qBittorrent instances
 
+### Bug Fixes
+
+* **grab_release:** keep the magnet link, and any tracker passkey in it, out of the audit log by recording its SHA-256 instead
+
 ## [2.3.1](https://github.com/bardesss/arr-mcp/compare/v2.3.0...v2.3.1) (2026-11-17)
 
 
