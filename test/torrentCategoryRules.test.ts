@@ -8,6 +8,7 @@ const defaults = (over: Partial<TorrentClientDefaults> = {}): TorrentClientDefau
     incompleteEnabled: false,
     incompletePath: '/data/incomplete',
     addsStopped: false,
+    stopCondition: 'None',
     share: share({ action: 'Stop', ratio: -1, seedingMinutes: -1, inactiveMinutes: -1 }),
     ...over
 });

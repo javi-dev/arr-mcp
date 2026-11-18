@@ -2072,7 +2072,7 @@ export type TorrentCategory = {
 };
 
 /** What a category inherits from once its parents run out. */
-export type TorrentClientDefaults = { incompleteEnabled: boolean; incompletePath: string; addsStopped: boolean; share: TorrentShareRule };
+export type TorrentClientDefaults = { incompleteEnabled: boolean; incompletePath: string; addsStopped: boolean; /** `MetadataReceived` or `FilesChecked` when a new torrent stops at that point. */ stopCondition: string; share: TorrentShareRule };
 
 /** What a torrent is added from. The source reaches only the adapter's request and is never echoed. */
 export type TorrentSource = { kind: 'url'; url: string } | { kind: 'file'; bytes: Buffer; filename: string };
@@ -2080,7 +2080,7 @@ export type TorrentSource = { kind: 'url'; url: string } | { kind: 'file'; bytes
 export type TorrentAdded = { accepted: true; pending: boolean };
 
 /** One row of `recheck_torrents`' watch. */
-export type TorrentCheckState = { id: string; /** Fenced. */ title: string; state: string; checking: boolean; complete: boolean; stopped: boolean; hasMetadata: boolean; /** The incomplete-downloads folder it is set to use. */ downloadPath?: string; savePath?: string; category: string; private: boolean | null; share: TorrentShareRule };
+export type TorrentCheckState = { id: string; /** Fenced. */ title: string; state: string; checking: boolean; complete: boolean; stopped: boolean; hasMetadata: boolean; /** The incomplete-downloads folder it is set to use. */ downloadPath?: string; savePath?: string; /** Where its files are right now. */ contentPath?: string; category: string; private: boolean | null; share: TorrentShareRule };
 
 export interface TorrentManageCapable {
     /** Roots a location may sit under, from `allowed_paths`. */

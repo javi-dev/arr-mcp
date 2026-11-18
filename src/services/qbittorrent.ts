@@ -119,6 +119,7 @@ type RawPreferences = {
     temp_path?: string;
     /** "Do not start the download automatically". */
     add_stopped_enabled?: boolean;
+    torrent_stop_condition?: string;
     share_limits_mode?: string;
     max_inactive_seeding_time_enabled?: boolean;
     max_inactive_seeding_time?: number;
@@ -740,6 +741,7 @@ export class QbittorrentAdapter
                 hasMetadata: hasMetadataOf(t),
                 ...(t.download_path === undefined || t.download_path === '' ? {} : { downloadPath: t.download_path }),
                 ...(t.save_path === undefined || t.save_path === '' ? {} : { savePath: t.save_path }),
+                ...(t.content_path === undefined || t.content_path === '' ? {} : { contentPath: t.content_path }),
                 category: t.category ?? '',
                 private: privateOf(t, undefined),
                 share: shareRuleOf(t)
@@ -777,6 +779,7 @@ export class QbittorrentAdapter
             incompleteEnabled: prefs.temp_path_enabled !== false,
             incompletePath: prefs.temp_path ?? '',
             addsStopped: prefs.add_stopped_enabled === true,
+            stopCondition: prefs.torrent_stop_condition ?? 'None',
             share: {
                 action: SHARE_ACTION_NAME[prefs.max_ratio_act ?? -1] ?? 'Remove',
                 mode: prefs.share_limits_mode ?? 'Default',

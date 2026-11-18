@@ -208,7 +208,63 @@ describe('recheck_torrents', () => {
     it('reports a move that outlasts the watch as still under way', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'moving'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
-        expect(applied.structuredContent.result).toMatchObject({ still_checking: [HASH] });
+        expect(applied.structuredContent.result).toMatchObject({ still_moving: [HASH] });
+        expect(applied.structuredContent.result).not.toHaveProperty('still_checking');
+        expect(applied.structuredContent.summary).toContain('leave these until get_queue no longer shows them at moving');
+    });
+
+    it('refuses a check that would retry a move to a save path outside the allowed roots', async () => {
+        const h = harness({ torrents: [torrent({ save_path: '/mnt/legacy/movies' })] });
+        await expect(h.call('recheck_torrents', { ids: [HASH] })).rejects.toThrow(/outside the locations/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('says when a check will retry a move to the save path, and binds it', async () => {
+        const h = harness({ torrents: [torrent({ save_path: '/data/media/movies' })] });
+        const preview = await h.call('recheck_torrents', { ids: [HASH] });
+        expect(preview.structuredContent.effects.join(' ')).toContain('moves');
+        expect(preview.structuredContent.effects.join(' ')).toContain('to /data/media/movies, where it is configured to be');
+        h.torrents[0]!.save_path = '/data/media/other';
+        const late = await h.call('recheck_torrents', { ids: [HASH], confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+    });
+
+    it('leaves alone a torrent saved outside the roots whose files are where it says', async () => {
+        const h = harness({ torrents: [torrent({ save_path: '/mnt/legacy', content_path: '/mnt/legacy/Some.Film/film.mkv' })] });
+        expect((await h.call('recheck_torrents', { ids: [HASH] })).structuredContent.confirm_token).toBeDefined();
+    });
+
+    it('warns that a running torrent at missing files downloads what the check does not find', async () => {
+        const preview = await harness({ torrents: [torrent({ state: 'missingFiles' })] }).call('recheck_torrents', { ids: [HASH] });
+        expect(preview.structuredContent.effects.join(' ')).toContain('unless it is stopped, qBittorrent downloads whatever the check does not find');
+    });
+
+    it('guards a private torrent under protect_private_torrents', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 500, progress: 0.5 })], categories: removing }, { protect_private_torrents: true });
+        await expect(h.call('recheck_torrents', { ids: [HASH] })).rejects.toThrow(/share limits can remove it/);
+    });
+
+    it('guards a torrent whose own share limits would remove it', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 500, progress: 0.5, share_limit_action: 'Remove', ratio_limit: 1 })] }, { protect_all_torrents: true });
+        await expect(h.call('recheck_torrents', { ids: [HASH] })).rejects.toThrow(/share limits can remove it/);
+    });
+
+    it('does not let a token survive a removal rule changing', async () => {
+        const categories = { movies: { share_limit_action: 'Remove', ratio_limit: 3 } };
+        const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 500, progress: 0.5 })], categories });
+        const preview = await h.call('recheck_torrents', { ids: [HASH] });
+        categories.movies.ratio_limit = 1;
+        const late = await h.call('recheck_torrents', { ids: [HASH], confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('keeps the token valid for two removable torrents listed in another order', async () => {
+        const rows = [torrent({ state: 'stoppedDL', amount_left: 500, progress: 0.5 }), torrent({ hash: OTHER, state: 'stoppedDL', amount_left: 500, progress: 0.5 })];
+        const h = harness({ torrents: rows, categories: removing });
+        const preview = await h.call('recheck_torrents', { ids: [HASH, OTHER] });
+        rows.reverse();
+        expect((await h.call('recheck_torrents', { ids: [HASH, OTHER], confirm: preview.structuredContent.confirm_token })).structuredContent.applied).toBe(true);
     });
 
     it('refuses a recheck that could send data outside the allowed roots', async () => {
@@ -357,7 +413,7 @@ describe('add_torrent', () => {
 
     it.each([
         ['a path outside the allowed roots', { magnet: `magnet:?xt=urn:btih:${OTHER}`, save_path: '/etc' }, /outside the locations/],
-        ['a category that does not exist', { magnet: `magnet:?xt=urn:btih:${OTHER}`, category: 'nope' }, /no category named/],
+        ['a category that does not exist', { magnet: `magnet:?xt=urn:btih:${OTHER}`, category: 'nope' }, /has no such category/],
         ['two sources', { magnet: `magnet:?xt=urn:btih:${OTHER}`, url: 'https://a.example/x.torrent' }, /exactly one/],
         ['no source', { save_path: '/data/torrents' }, /exactly one/],
         ['a magnet with a line break', { magnet: `magnet:?xt=urn:btih:${OTHER}\nhttp://evil.example/x` }, /not a magnet/],
@@ -447,6 +503,34 @@ describe('add_torrent', () => {
     it('says so when the client adds torrents stopped', async () => {
         const preview = await harness({ preferences: { add_stopped_enabled: true } }).call('add_torrent', { magnet: `magnet:?xt=urn:btih:${OTHER}`, save_path: '/data/torrents' });
         expect(preview.structuredContent.effects.join(' ')).toContain('Adds it stopped');
+    });
+
+    it.each([
+        ['MetadataReceived', 'stops it once it has its metadata'],
+        ['FilesChecked', 'stops it once its files are checked']
+    ])('says when the client stops a new torrent at %s', async (condition, text) => {
+        const preview = await harness({ preferences: { torrent_stop_condition: condition } }).call('add_torrent', { magnet: `magnet:?xt=urn:btih:${OTHER}`, save_path: '/data/torrents' });
+        expect(preview.structuredContent.effects.join(' ')).toContain(text);
+    });
+
+    it('does not let a token survive the client changing how it adds torrents', async () => {
+        const preferences: Record<string, unknown> = { add_stopped_enabled: false };
+        const h = harness({ preferences });
+        const args = { magnet: `magnet:?xt=urn:btih:${OTHER}`, save_path: '/data/torrents' };
+        const preview = await h.call('add_torrent', args);
+        preferences.add_stopped_enabled = true;
+        const late = await h.call('add_torrent', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('does not repeat a tracker URL passed as a category, in the refusal or the audit', async () => {
+        const h = harness();
+        const category = `https://tracker.example.org/${PASSKEY}/announce`;
+        const refusal = await h.call('add_torrent', { magnet: `magnet:?xt=urn:btih:${OTHER}`, category }).catch((err: Error) => err.message);
+        expect(String(refusal)).toContain('no such category');
+        expect(String(refusal)).not.toContain(PASSKEY);
+        expect(JSON.stringify(h.context.audit.recent())).not.toContain(PASSKEY);
     });
 
     it('does not let an override token survive a torrent ceasing to need it', async () => {
@@ -611,6 +695,12 @@ describe('set_torrent_location', () => {
         const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' });
         expect(preview.structuredContent.effects[0]).toContain('any file of this torrent still there moves too');
         expect(preview.structuredContent.effects.join(' ')).toContain('recheck_torrents');
+    });
+
+    it('treats a torrent at missing files that never finished as unfinished', async () => {
+        const h = harness({ torrents: [torrent({ state: 'missingFiles', amount_left: 500, completion_on: -1, download_path: '/data/torrents/incomplete' })] });
+        const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' });
+        expect(preview.structuredContent.effects[0]).toContain('leaves its unfinished data where it is');
     });
 
     it('keeps a torrent unfinished when it finished once and a later check found it incomplete', async () => {
@@ -1160,7 +1250,7 @@ describe('set_torrent_category', () => {
     });
 
     it('refuses a category that does not exist', async () => {
-        await expect(harness().call('set_torrent_category', { id: HASH, category: 'nope' })).rejects.toThrow(/no category named/);
+        await expect(harness().call('set_torrent_category', { id: HASH, category: 'nope' })).rejects.toThrow(/has no such category/);
     });
 });
 

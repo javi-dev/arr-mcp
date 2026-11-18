@@ -170,7 +170,7 @@ describe('add_nzb', () => {
         ['a file name with a path', { nzb_base64: b64(NZB), filename: '../../etc/x.nzb' }, /plain file name/],
         ['text that is not base64', { nzb_base64: 'not base64!' }, /not valid base64/],
         ['another scheme', { url: 'file:///etc/passwd' }, /http and https/],
-        ['a category that does not exist', { url: 'https://a.example/x.nzb', category: 'nope' }, /no category named/]
+        ['a category that does not exist', { url: 'https://a.example/x.nzb', category: 'nope' }, /has no such category/]
     ])('refuses %s', async (_why, args, message) => {
         await expect(harness().call('add_nzb', args)).rejects.toThrow(message);
     });
@@ -300,6 +300,21 @@ describe('update_client_settings', () => {
             ['unwanted_extensions', 'exe,zip'],
             ['action_on_unwanted_extensions', '1']
         ]);
+    });
+
+    it('leaves the action alone when only the list changes', async () => {
+        const h = harness();
+        h.settings.action_on_unwanted_extensions = 2;
+        await confirmed(h.call, 'update_client_settings', { unwanted_extensions: ['iso'] });
+        expect(h.sent('set_config').map(r => r.searchParams.get('keyword'))).toEqual(['unwanted_extensions']);
+    });
+
+    it('does not repeat a tracker URL passed as a category, in the refusal or the audit', async () => {
+        const h = harness();
+        const category = `https://tracker.example.org/${PASSKEY}/announce`;
+        const refusal = await h.call('add_nzb', { url: 'https://indexer.example/a.nzb', category }).catch((err: Error) => err.message);
+        expect(String(refusal)).not.toContain(PASSKEY);
+        expect(JSON.stringify(h.context.audit.recent())).not.toContain(PASSKEY);
     });
 
     it('does not let a token overwrite a value edited since the preview', async () => {

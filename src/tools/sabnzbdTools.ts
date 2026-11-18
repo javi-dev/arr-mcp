@@ -155,7 +155,8 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
             if (args.category !== undefined) {
                 const categories = await client.nzbCategories();
                 if (!categories.includes(args.category)) {
-                    throw new ServiceError('NotFound', client.id, `${client.id} has no category named "${args.category}"`, {
+                    // Not repeated: what was passed here may be a tracker URL with its passkey.
+                    throw new ServiceError('NotFound', client.id, `${client.id} has no such category`, {
                         remedy: `Its categories: ${categories.join(', ') || 'none'}.`
                     });
                 }
