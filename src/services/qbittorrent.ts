@@ -749,6 +749,11 @@ export class QbittorrentAdapter
         });
     }
 
+    async torrentFileNames(id: string): Promise<string[]> {
+        const files = await this.#http.getArray<RawFile>(`${API}/torrents/files?hash=${this.#hash(id)}`);
+        return files.flatMap(f => (typeof f.name === 'string' ? [f.name] : []));
+    }
+
     async recheckTorrents(ids: readonly string[]): Promise<void> {
         await this.#http.postForm(`${API}/torrents/recheck`, { hashes: ids.map(id => this.#hash(id)).join('|') }, true);
     }

@@ -10,6 +10,7 @@ import { importFailing, importStepFor, orphanImportStepFor, retriedImportStepFor
 import { nextStepLine, stepsField, type NextStep } from '../core/nextStep.ts';
 import { DOWNLOAD_CLIENTS, serviceOf, type ServiceId } from '../config/schema.ts';
 import { ServiceError } from '../core/errors.ts';
+import { shownValue } from '../core/pastedUrl.ts';
 import { INSTANCE_PARAM_DESCRIPTION } from './resolveInstance.ts';
 import { readTargets, serviceTarget } from './serviceTarget.ts';
 
@@ -217,7 +218,7 @@ function queueAdapters(adapters: readonly ServiceAdapter[], service: ServiceId |
     const wanted = instance.toLowerCase();
     const found = adapters.filter(a => hasQueue(a) && a.instance?.toLowerCase() === wanted);
     if (found.length === 0) {
-        throw new ServiceError('NotFound', 'get_queue', `no queue belongs to an instance named "${instance}"`, {
+        throw new ServiceError('NotFound', 'get_queue', `no queue belongs to an instance named "${shownValue(instance)}"`, {
             remedy: `Named instances with a queue: ${adapters.filter(hasQueue).flatMap(a => a.instance ?? []).join(', ') || 'none'}.`
         });
     }

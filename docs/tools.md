@@ -3454,10 +3454,12 @@ outside what they can catch. No tool changes seeding limits.
 
 Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
-One still checking when the watch ends, or never seen checking because it is
-queued behind another, is reported as such and left alone. A torrent still fetching
+One still checking or still moving to its save path when the watch ends, or never
+seen checking because it is queued behind another, is reported as such and left
+alone. A torrent still fetching
 metadata has nothing to check and is skipped. A check can send a torrent to its
-incomplete folder or its save path, so both have to be inside `allowed_paths`. A
+incomplete folder or its save path, and a torrent it does not stop writes what is
+missing there, so those folders have to be inside `allowed_paths`. A
 protected torrent whose share limits could remove it once the check finds it whole
 needs `allow_removal: true`, which needs `destructive`.
 

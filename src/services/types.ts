@@ -2089,6 +2089,8 @@ export interface TorrentManageCapable {
     readonly deleteProtection: { readonly private: boolean; readonly all: boolean };
     getTorrentDetails(id: string): Promise<TorrentDetails>;
     torrentCheckStates(ids: readonly string[]): Promise<TorrentCheckState[]>;
+    /** The file paths of one torrent, relative to where it is stored. */
+    torrentFileNames(id: string): Promise<string[]>;
     recheckTorrents(ids: readonly string[]): Promise<void>;
     startTorrents(ids: readonly string[]): Promise<void>;
     torrentCategories(): Promise<Map<string, TorrentCategory>>;

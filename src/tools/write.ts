@@ -7,6 +7,7 @@ import { nextStepLine, type NextStep } from '../core/nextStep.ts';
 import { checkPermission, type PermissionSource, type WriteTier } from '../core/permissions.ts';
 import { toolInput } from '../core/shape.ts';
 import { logger } from '../core/logger.ts';
+import { shownValue } from '../core/pastedUrl.ts';
 import type { CrossCheckProfile, CrossCheckSubject, CrossChecker } from './crossChecks.ts';
 import type { LibraryLoader } from './library.ts';
 import { resolveTarget, type ServiceTarget } from './serviceTarget.ts';
@@ -258,9 +259,9 @@ const TARGET_KEYS = [
 export function rawTarget(args: Record<string, unknown>): string {
     for (const key of TARGET_KEYS) {
         const value = args[key];
-        // Never an id, and a tracker URL or magnet pasted by mistake carries its passkey into the audit log.
-        if (typeof value === 'string' && /^\s*(?:[a-z][a-z0-9+.-]*:\/\/|magnet:)/i.test(value)) return '(a URL, left out)';
-        if (typeof value === 'string' || typeof value === 'number') return String(value);
+        // A tracker URL or magnet pasted by mistake would carry its passkey into the audit log.
+        if (typeof value === 'string') return shownValue(value);
+        if (typeof value === 'number') return String(value);
     }
     return '';
 }

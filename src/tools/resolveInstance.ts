@@ -1,3 +1,4 @@
+import { shownValue } from '../core/pastedUrl.ts';
 import type { ServiceId } from '../config/schema.ts';
 import { ServiceError } from '../core/errors.ts';
 import type { ServiceAdapter } from '../services/types.ts';
@@ -43,7 +44,7 @@ export function resolveInstance(
         const found = candidates.find(a => (a.instance ?? '').toLowerCase() === wanted);
         if (found !== undefined) return found;
 
-        throw new ServiceError('NotFound', type, `${type} has no instance named "${instance}"`, {
+        throw new ServiceError('NotFound', type, `${type} has no instance named "${shownValue(instance)}"`, {
             remedy: `Configured ${type} instances: ${nameList(candidates)}.`
         });
     }

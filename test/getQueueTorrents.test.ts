@@ -146,6 +146,12 @@ describe('get_queue filters', () => {
         await expect(buildGetQueue(stack(), { detail: 'standard', limit: 50, instance: 'nope' })).rejects.toThrow(/no queue belongs/);
     });
 
+    it('does not repeat a tracker URL passed as an instance', async () => {
+        const instance = `https://tracker.example.org/${PASSKEY}/announce`;
+        await expect(buildGetQueue(stack(), { detail: 'standard', limit: 50, instance })).rejects.toThrow(/left out/);
+        await expect(buildGetQueue(stack(), { detail: 'standard', limit: 50, instance })).rejects.not.toThrow(PASSKEY);
+    });
+
     it('refuses a service that is not configured', async () => {
         await expect(buildGetQueue(stack(), { detail: 'standard', limit: 50, service: 'sonarr' })).rejects.toThrow();
     });
