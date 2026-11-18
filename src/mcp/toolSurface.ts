@@ -80,7 +80,16 @@ export const TOOL_SERVICES: Readonly<Record<string, readonly ServiceId[]>> = {
     update_media: ['radarr', 'sonarr', 'lidarr'],
     delete_media: ['radarr', 'sonarr', 'whisparr', 'lidarr', 'grimmory'],
     get_releases: ['radarr', 'sonarr', 'whisparr', 'lidarr', 'shelfmark'],
-    grab_release: ['radarr', 'sonarr', 'whisparr', 'lidarr', 'shelfmark', 'transmission', 'qbittorrent']
+    grab_release: ['radarr', 'sonarr', 'whisparr', 'lidarr', 'shelfmark', 'transmission', 'qbittorrent'],
+    recheck_torrents: ['qbittorrent'],
+    add_torrent: ['qbittorrent'],
+    set_torrent_location: ['qbittorrent'],
+    rename_torrent_file: ['qbittorrent'],
+    set_torrent_category: ['qbittorrent'],
+    reannounce_torrent: ['qbittorrent'],
+    add_nzb: ['sabnzbd'],
+    get_client_settings: ['sabnzbd'],
+    update_client_settings: ['sabnzbd']
 };
 
 /** The services that hold each kind. A `kind` field lists only the kinds a configured service holds. */

@@ -20,7 +20,7 @@ import type { Config, ServiceId } from './schema.ts';
  * reference and write the reference back.
  */
 
-const SECRET_FIELDS = ['api_key', 'password'] as const;
+const SECRET_FIELDS = ['api_key', 'password', 'webui_api_key'] as const;
 export type SecretField = (typeof SECRET_FIELDS)[number];
 
 export type SecretSource = { kind: 'file'; path: string } | { kind: 'env'; name: string };

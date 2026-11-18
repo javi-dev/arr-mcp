@@ -4,14 +4,19 @@ import { gather } from '../core/gather.ts';
 import { DetailSchema, LimitSchema, OffsetSchema, PagedOutputSchema, READ_ONLY, applyLimit, listText, toolInput, type DetailLevel, unreachableTail } from '../core/shape.ts';
 import { annotateCleanuparr, dueWithin, type CleanuparrDue } from './cleanuparrQueue.ts';
 import type { LibraryKind } from '../core/resolver.ts';
-import { hasQueue, type QueueItem, type ServiceAdapter } from '../services/types.ts';
+import { hasQueue, hasTorrentManage, TORRENT_FILES_SHOWN, type QueueItem, type ServiceAdapter, type TorrentDetails } from '../services/types.ts';
 import { MediaKindSchema, holds } from './mediaKind.ts';
 import { importFailing, importStepFor, orphanImportStepFor, retriedImportStepFor } from './importStep.ts';
 import { nextStepLine, stepsField, type NextStep } from '../core/nextStep.ts';
-import { DOWNLOAD_CLIENTS } from '../config/schema.ts';
+import { DOWNLOAD_CLIENTS, serviceOf, type ServiceId } from '../config/schema.ts';
+import { ServiceError } from '../core/errors.ts';
+import { INSTANCE_PARAM_DESCRIPTION } from './resolveInstance.ts';
+import { readTargets, serviceTarget } from './serviceTarget.ts';
 
 type GetQueueResult = {
     items: QueueItem[];
+    /** Torrents on this page that were not given their files, trackers and save path, because the page is too long. */
+    torrentDetailsOmitted?: number;
     total: number;
     returned: number;
     offset: number;
@@ -195,7 +200,86 @@ export type QueueFilter = {
     struck?: boolean;
     due_within_days?: number;
     unmatched?: boolean;
+    hash?: string;
 };
+
+/** The services with a queue, for the `service` filter. */
+const QUEUE_TARGET = serviceTarget({
+    services: ['radarr', 'sonarr', 'whisparr', 'lidarr', 'sabnzbd', 'nzbget', 'transmission', 'qbittorrent', 'shelfmark', 'grimmory'],
+    can: hasQueue,
+    cannot: 'has no download queue'
+});
+
+/** The adapters a `service` and `instance` filter leave, refused rather than answered empty when they name nothing. */
+function queueAdapters(adapters: readonly ServiceAdapter[], service: ServiceId | undefined, instance: string | undefined): readonly ServiceAdapter[] {
+    if (service !== undefined) return readTargets(adapters, QUEUE_TARGET, service, instance);
+    if (instance === undefined || instance === '') return adapters;
+    const wanted = instance.toLowerCase();
+    const found = adapters.filter(a => hasQueue(a) && a.instance?.toLowerCase() === wanted);
+    if (found.length === 0) {
+        throw new ServiceError('NotFound', 'get_queue', `no queue belongs to an instance named "${instance}"`, {
+            remedy: `Named instances with a queue: ${adapters.filter(hasQueue).flatMap(a => a.instance ?? []).join(', ') || 'none'}.`
+        });
+    }
+    return found;
+}
+
+/** How many torrents are read at once for `detail: "full"`: up to four requests each, against one client's WebUI. */
+const DETAIL_READS_AT_ONCE = 4;
+
+/** A longer page carries no per-torrent details: 500 rows would be 2,000 requests to the client and an answer no session can hold. */
+const DETAIL_ROWS_MAX = 100;
+
+/** Files listed across one page, handed out in row order, so a page of season packs stays readable. */
+const DETAIL_FILES_PER_PAGE = 500;
+
+/**
+ * The per-torrent facts `torrents/info` does not carry. Only the rows on this
+ * page are read. A failed read names the instance in `degraded` and leaves its
+ * row as the list had it; the rest of the page still answers.
+ */
+async function withTorrentDetails(rows: QueueItem[], adapters: readonly ServiceAdapter[], degraded: string[]): Promise<{ items: QueueItem[]; omitted: number }> {
+    const clients = new Map(adapters.filter(hasTorrentManage).map(a => [a.id, a]));
+    const wanted = rows.flatMap((row, i) => (clients.has(row.service) ? [i] : []));
+    if (wanted.length > DETAIL_ROWS_MAX) return { items: rows, omitted: wanted.length };
+
+    const details = new Map<number, TorrentDetails>();
+    let next = 0;
+    const worker = async (): Promise<void> => {
+        for (let at = next++; at < wanted.length; at = next++) {
+            const i = wanted[at]!;
+            const row = rows[i]!;
+            try {
+                details.set(i, await clients.get(row.service)!.getTorrentDetails(row.id));
+            } catch (err) {
+                // Removed since the list was read: there is nothing to describe.
+                if (err instanceof ServiceError && err.kind === 'NotFound') continue;
+                const source = `${row.service}:torrent details`;
+                if (!degraded.includes(source)) degraded.push(source);
+            }
+        }
+    };
+    await Promise.all(Array.from({ length: DETAIL_READS_AT_ONCE }, worker));
+
+    let filesLeft = DETAIL_FILES_PER_PAGE;
+    const items = rows.map((row, i) => {
+        const d = details.get(i);
+        if (d === undefined) return row;
+        const shown = Math.min(d.files.length, TORRENT_FILES_SHOWN, filesLeft);
+        filesLeft -= shown;
+        return {
+            ...row,
+            ...(d.savePath === undefined ? {} : { savePath: d.savePath }),
+            private: d.private,
+            ...(d.ratio === undefined ? {} : { ratio: d.ratio }),
+            ...(d.seedingSeconds === undefined ? {} : { seedingSeconds: d.seedingSeconds }),
+            files: d.files.slice(0, shown),
+            ...(d.files.length > shown ? { filesOmitted: d.files.length - shown } : {}),
+            trackers: d.trackers
+        };
+    });
+    return { items, omitted: 0 };
+}
 
 const DAY_MS = 86_400_000;
 
@@ -204,6 +288,10 @@ const needsCleanuparr = (f: QueueFilter): boolean =>
     f.over_limit !== undefined || f.struck !== undefined || f.due_within_days !== undefined || f.unmatched !== undefined;
 
 function matchesFilter(item: QueueItem, f: QueueFilter, now: number): boolean {
+    if (f.hash !== undefined) {
+        const wanted = f.hash.trim().toLowerCase();
+        if (![item.id, item.downloadId, item.torrent?.hash].some(v => v?.toLowerCase() === wanted)) return false;
+    }
     if (f.category !== undefined && (item.torrent === undefined || !f.category.includes(item.torrent.category))) return false;
     if (f.status !== undefined && !item.status.toLowerCase().startsWith(f.status.toLowerCase())) return false;
     if (f.over_limit !== undefined && (item.seeding?.overLimit === true) !== f.over_limit) return false;
@@ -219,11 +307,11 @@ function matchesFilter(item: QueueItem, f: QueueFilter, now: number): boolean {
 
 export async function buildGetQueue(
     adapters: readonly ServiceAdapter[],
-    opts: { detail: DetailLevel; limit: number; offset?: number; kind?: LibraryKind; filter?: QueueFilter; byTracker?: { minSeedDays?: number } }
+    opts: { detail: DetailLevel; limit: number; offset?: number; kind?: LibraryKind; filter?: QueueFilter; byTracker?: { minSeedDays?: number }; service?: ServiceId; instance?: string }
 ): Promise<GetQueueResult> {
     const filter = opts.filter ?? {};
     const { items, degraded, counts } = await gather(
-        adapters
+        queueAdapters(adapters, opts.service, opts.instance)
             .filter(hasQueue)
             .filter(a => holds(a, opts.kind))
             .map(a => ({ id: a.id, fetch: () => a.getQueue() }))
@@ -254,9 +342,12 @@ export async function buildGetQueue(
     // twice and add up to more than `total`. A service that answered stays at 0.
     const listedCounts = Object.fromEntries(Object.keys(counts).map(id => [id, listed.filter(q => q.service === id).length]));
     const byTracker = opts.byTracker === undefined ? undefined : seedingByTracker(matching, now, opts.byTracker.minSeedDays);
+    const projected = shaped.items.map(i => project(i, opts.detail));
+    const detailed = opts.detail === 'full' ? await withTorrentDetails(projected, adapters, degraded) : { items: projected, omitted: 0 };
     return {
         ...shaped,
-        items: shaped.items.map(i => project(i, opts.detail)),
+        items: detailed.items,
+        ...(detailed.omitted === 0 ? {} : { torrentDetailsOmitted: detailed.omitted }),
         degraded,
         counts: listedCounts,
         ...(due === undefined ? {} : { cleanuparrDue: due }),
@@ -282,6 +373,9 @@ const importSteps = (rows: readonly QueueItem[]): NextStep[] =>
     });
 
 const GetQueueInput = toolInput({
+    service: serviceOf(QUEUE_TARGET.services).optional().describe('Only this service\'s queue.'),
+    instance: z.string().optional().describe(INSTANCE_PARAM_DESCRIPTION),
+    hash: z.string().min(1).optional().describe('Only the row with this queue id, download id or torrent hash.'),
     kind: MediaKindSchema.describe(
         'Only one service\'s queue. [[radarr: `movie`: Radarr.]] [[sonarr|whisparr: `series`: {{and: sonarr=Sonarr; whisparr=Whisparr}}.]] [[lidarr: `artist`: Lidarr.]] [[shelfmark|grimmory: `book`: {{and: shelfmark=Shelfmark; grimmory=Grimmory\'s Bookdrop}}.]] Pass it when the request names one of those services. Download clients are left out, since their rows are the same downloads. Omit for everything.'
     ),
@@ -305,11 +399,11 @@ export function registerGetQueue(server: McpServer, adapters: readonly ServiceAd
             title: 'Download queue',
             annotations: READ_ONLY,
             description:
-                'Everything downloading or stalled, merged across every *arr queue and download client[[grimmory: , plus files waiting in Grimmory\'s Bookdrop]]. Sizes are bytes, ETAs seconds; release names are fenced as untrusted data. An *arr row carries `downloadId` and `statusMessages`: a finished download stuck at `importBlocked`, or `importPending` with messages, comes back as an import_download step in `next_steps`; a title mismatch or unknown episode fails on every retry until fixed in the service. [[transmission|qbittorrent: At `detail: "full"` a torrent carries `seeding` (ratio, time seeded, the limit that applies, `overLimit`) and, with Cleanuparr, the rule that governs it, its `strikes` and `dueAt`; `cleanuparrDue` totals what falls due within 7 days.]] Filter on the server rather than reading the whole queue. Remove a row with remove_queue_item. Field reference: arr://docs/get_queue.',
+                'Everything downloading or stalled, merged across every *arr queue and download client[[grimmory: , plus files waiting in Grimmory\'s Bookdrop]]. Sizes are bytes, ETAs seconds; release names are fenced as untrusted data. An *arr row carries `downloadId` and `statusMessages`: a finished download stuck at `importBlocked`, or `importPending` with messages, comes back as an import_download step in `next_steps`; a title mismatch or unknown episode fails on every retry until fixed in the service. [[transmission|qbittorrent: At `detail: "full"` a torrent carries `seeding` (ratio, time seeded, the limit that applies, `overLimit`) and, with Cleanuparr, the rule that governs it, its `strikes` and `dueAt`; `cleanuparrDue` totals what falls due within 7 days.]] [[qbittorrent: A qBittorrent row at `detail: "full"` also has `savePath`, `private`, `ratio`, `seedingSeconds`, `files` and `trackers` (hostnames only).]] Filter on the server rather than reading the whole queue. Remove a row with remove_queue_item. Field reference: arr://docs/get_queue.',
             outputSchema: PagedOutputSchema,
             inputSchema: GetQueueInput
         },
-        async ({ kind, detail, limit, offset, by_tracker, min_seed_days, ...rest }) => {
+        async ({ service, instance, kind, detail, limit, offset, by_tracker, min_seed_days, ...rest }) => {
             const filter = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) as QueueFilter;
             const filtered = Object.keys(filter).length > 0;
             const tracked = by_tracker === true || min_seed_days !== undefined;
@@ -318,13 +412,16 @@ export function registerGetQueue(server: McpServer, adapters: readonly ServiceAd
                 limit,
                 offset,
                 filter,
+                ...(service === undefined ? {} : { service }),
+                ...(instance === undefined ? {} : { instance }),
                 ...(kind === undefined ? {} : { kind }),
                 ...(tracked ? { byTracker: min_seed_days === undefined ? {} : { minSeedDays: min_seed_days } } : {})
             });
             const summary =
                 `${result.returned} of ${result.total} item(s) in the queue${filtered ? ' match' : ''}` +
                 unreachableTail(result.degraded) +
-                (result.cleanuparrDue === undefined ? '' : ` ${dueText(result.cleanuparrDue)}`);
+                (result.cleanuparrDue === undefined ? '' : ` ${dueText(result.cleanuparrDue)}`) +
+                (result.torrentDetailsOmitted === undefined ? '' : ` Files, trackers and save paths are left out of a page of ${result.torrentDetailsOmitted} torrents: ask for ${DETAIL_ROWS_MAX} or fewer, or one \`hash\`.`);
 
             const trackers =
                 result.byTracker === undefined ? '' : ['', 'Per tracker:', ...(result.byTracker.length === 0 ? ['(nothing seeding)'] : result.byTracker.map(trackerLine)), ''].join('\n');

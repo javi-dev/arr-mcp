@@ -168,6 +168,14 @@ function applyFields(type: ServiceId, base: Entry, fields: InstanceFields): Entr
         throw new CredentialWouldMoveError(new URL(fields.url).origin, secret, source);
     }
 
+    // qBittorrent's second credential has no form field to retype it in, so it
+    // stays behind rather than following the instance to another host.
+    const storedUrl = (base as { url?: unknown }).url;
+    if (fields.url !== undefined && URL.canParse(fields.url) && typeof storedUrl === 'string' && URL.canParse(storedUrl) && new URL(fields.url).origin !== new URL(storedUrl).origin) {
+        delete next.webui_api_key;
+        delete next.webui_api_key_file;
+    }
+
     if (fields.url !== undefined && fields.url !== '') next.url = fields.url;
     if (fields.timeout_ms !== undefined) next.timeout_ms = fields.timeout_ms;
 

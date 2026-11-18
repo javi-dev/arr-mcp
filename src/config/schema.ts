@@ -231,7 +231,35 @@ const CredentialServiceSchema = z.strictObject({
 });
 export type CredentialServiceConfig = z.infer<typeof CredentialServiceSchema>;
 
-export type AnyServiceConfig = KeyedServiceConfig | MultiUserServiceConfig | PlexServiceConfig | CredentialServiceConfig;
+/** Where the torrent tools may point qBittorrent when a block sets no `allowed_paths`. */
+export const DEFAULT_TORRENT_PATHS: readonly string[] = ['/data/torrents', '/data/media'];
+
+/** Absolute, already normal, and never the filesystem root, which would allow everything. */
+const TorrentRootSchema = z
+    .string()
+    // eslint-disable-next-line no-control-regex
+    .regex(/^(?:\/[^/\\\0-\x1f]+)+$/, 'must be an absolute path with no trailing slash, such as /data/torrents')
+    .refine(path => !path.split('/').some(part => part === '.' || part === '..'), { message: 'must not contain . or .. segments' });
+
+/**
+ * qBittorrent's guardrails sit beside its credentials. All optional, so a block
+ * written before they existed parses and saves unchanged.
+ *
+ * `webui_api_key` is the second credential of a service whose main secret is
+ * still `password`, so `secretFieldOf` and the config form keep treating it as a
+ * password service. It is set in config.yaml only and no API or page returns it.
+ */
+const QbittorrentServiceSchema = z.strictObject({
+    ...CredentialServiceSchema.shape,
+    webui_api_key: z.string().min(1).optional(),
+    webui_api_key_file: z.string().min(1, 'must name a file').optional(),
+    allowed_paths: z.array(TorrentRootSchema).min(1, 'list at least one path, or remove the key for the defaults').optional(),
+    protect_private_torrents: z.boolean().optional(),
+    protect_all_torrents: z.boolean().optional()
+});
+type QbittorrentServiceConfig = z.infer<typeof QbittorrentServiceSchema>;
+
+export type AnyServiceConfig = KeyedServiceConfig | MultiUserServiceConfig | PlexServiceConfig | CredentialServiceConfig | QbittorrentServiceConfig;
 
 /**
  * Which config shape each service id carries.
@@ -277,7 +305,7 @@ export type ConfigByService = {
     seerr: For<'seerr', MultiUserServiceConfig>;
     plex: For<'plex', PlexServiceConfig>;
     transmission: For<'transmission', Instanced<CredentialServiceConfig>>;
-    qbittorrent: For<'qbittorrent', Instanced<CredentialServiceConfig>>;
+    qbittorrent: For<'qbittorrent', Instanced<QbittorrentServiceConfig>>;
     profilarr: For<'profilarr', KeyedServiceConfig>;
     cleanuparr: For<'cleanuparr', KeyedServiceConfig>;
     reclaimerr: For<'reclaimerr', KeyedServiceConfig>;
@@ -330,6 +358,9 @@ const withSecretSources = <B extends z.ZodObject>(block: B) => {
             ctx.addIssue({ code: 'custom', path: [fileKey], message: `cannot be set together with ${field}; keep one of them` });
         } else if (required && entry[field] === undefined && entry[fileKey] === undefined) {
             ctx.addIssue({ code: 'custom', path: [field], message: `is required (or name a file with ${fileKey})` });
+        }
+        if (entry.webui_api_key !== undefined && entry.webui_api_key_file !== undefined) {
+            ctx.addIssue({ code: 'custom', path: ['webui_api_key_file'], message: 'cannot be set together with webui_api_key; keep one of them' });
         }
     };
     return { parsing, rule };
@@ -430,7 +461,7 @@ const SERVICES = {
     jellyfin: single(MultiUserServiceSchema),
     seerr: single(MultiUserServiceSchema),
     transmission: multi(CredentialServiceSchema),
-    qbittorrent: multi(CredentialServiceSchema),
+    qbittorrent: multi(QbittorrentServiceSchema),
     plex: single(PlexServiceSchema),
     // Single only: Profilarr is the one place that owns profile config,
     // so two of them would mean two sources of truth.

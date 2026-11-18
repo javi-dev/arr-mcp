@@ -401,8 +401,18 @@ export type QueueItem = {
     statusMessages?: string[];
     /** ISO 8601, when the item arrived. Grimmory's Bookdrop rows only. */
     addedAt?: string;
-    /** Torrent clients only. Absent when the client did not say. */
-    private?: boolean;
+    /** Torrent clients only. Absent when the client did not say; `null` at `detail: "full"` when qBittorrent has no metadata yet. */
+    private?: boolean | null;
+    /** qBittorrent, at `detail: "full"`: share ratio, also for a torrent that is not seeding. */
+    ratio?: number;
+    /** qBittorrent, at `detail: "full"`: total time seeded, also for a torrent that is not seeding. */
+    seedingSeconds?: number;
+    /** qBittorrent, at `detail: "full"`: the files, capped at `TORRENT_FILES_SHOWN`. Names are fenced. */
+    files?: TorrentFileRow[];
+    /** How many files the cap on `files` left out. */
+    filesOmitted?: number;
+    /** qBittorrent, at `detail: "full"`: each tracker by hostname only, never its URL or message. */
+    trackers?: TorrentTrackerRow[];
     /** Torrent clients only, and only once the download has finished. */
     seeding?: SeedingState;
     /** Torrent clients only, at `detail: "full"`: what Cleanuparr's rules match on. Not fenced, like rule categories. */
@@ -2004,6 +2014,111 @@ export type MagnetAdded = { id?: string; title?: string; duplicate: boolean };
 export interface MagnetAddCapable {
     addMagnet(uri: string): Promise<MagnetAdded>;
 }
+
+/** How many files of one torrent `get_queue` lists. A season pack fits; a 5,000-file archive would not. */
+export const TORRENT_FILES_SHOWN = 200;
+
+type TorrentFileRow = { name: string; sizeBytes: number; progress: number };
+
+/** Hostname only. A tracker's URL holds the passkey and its message can echo it, so neither is ever read into this. */
+export type TorrentTrackerRow = { host: string; status: string };
+
+/** What qBittorrent knows about one torrent, for `get_queue` and the torrent write previews. */
+export type TorrentDetails = {
+    id: string;
+    /** Fenced. */
+    title: string;
+    status: string;
+    /** qBittorrent's raw state, which the location and recheck rules read. */
+    state: string;
+    savePath?: string;
+    /** `null` when the torrent has no metadata yet, so nobody can say. */
+    private: boolean | null;
+    ratio?: number;
+    seedingSeconds?: number;
+    category: string;
+    autoManaged: boolean;
+    /** Bytes of wanted data still missing. */
+    remainingBytes?: number;
+    /** Bytes of this torrent's data on disk, as far as qBittorrent knows. */
+    completedBytes?: number;
+    sizeBytes?: number;
+    progress?: number;
+    /** Raw names, for matching a rename. `files` on a queue row carries them fenced. */
+    fileNames: string[];
+    files: TorrentFileRow[];
+    trackers: TorrentTrackerRow[];
+};
+
+/** What a torrent is added from. The source reaches only the adapter's request and is never echoed. */
+export type TorrentSource = { kind: 'url'; url: string } | { kind: 'file'; bytes: Buffer; filename: string };
+
+export type TorrentAdded = { accepted: true; pending: boolean };
+
+/** One row of `recheck_torrents`' watch. */
+export type TorrentCheckState = { id: string; /** Fenced. */ title: string; state: string; checking: boolean; complete: boolean; stopped: boolean };
+
+export interface TorrentManageCapable {
+    /** Roots a location may sit under, from `allowed_paths`. */
+    readonly allowedPaths: readonly string[];
+    /** From `protect_private_torrents` and `protect_all_torrents`. */
+    readonly deleteProtection: { readonly private: boolean; readonly all: boolean };
+    getTorrentDetails(id: string): Promise<TorrentDetails>;
+    torrentCheckStates(ids: readonly string[]): Promise<TorrentCheckState[]>;
+    recheckTorrents(ids: readonly string[]): Promise<void>;
+    startTorrents(ids: readonly string[]): Promise<void>;
+    torrentCategories(): Promise<Map<string, string>>;
+    defaultSavePath(): Promise<string>;
+    /** Whether a category change relocates an automatically managed torrent. */
+    categoryChangeRelocates(): Promise<boolean>;
+    hasTorrent(hash: string): Promise<boolean>;
+    addTorrent(source: TorrentSource, opts: { category?: string; savePath: string }): Promise<TorrentAdded>;
+    setTorrentLocation(id: string, location: string): Promise<void>;
+    renameTorrentFile(id: string, oldPath: string, newPath: string): Promise<void>;
+    setTorrentCategory(id: string, category: string): Promise<void>;
+    reannounceTorrent(id: string): Promise<void>;
+}
+
+export const hasTorrentManage = (a: ServiceAdapter): a is ServiceAdapter & TorrentManageCapable =>
+    typeof (a as Partial<TorrentManageCapable>).getTorrentDetails === 'function';
+
+/** One download client an *arr sends to, with only the fields a category warning needs. */
+export type ArrDownloadClient = { name: string; implementation: string; enabled: boolean; categories: string[] };
+
+interface DownloadClientListCapable {
+    getDownloadClients(): Promise<ArrDownloadClient[]>;
+}
+
+export const hasDownloadClientList = (a: ServiceAdapter): a is ServiceAdapter & DownloadClientListCapable =>
+    typeof (a as Partial<DownloadClientListCapable>).getDownloadClients === 'function';
+
+/** What an NZB is added from. The source reaches only the adapter's request and is never echoed. */
+export type NzbSource = { kind: 'url'; url: string } | { kind: 'file'; bytes: Buffer; filename: string };
+
+/** SABnzbd's own keywords, and the only settings `update_client_settings` can reach. */
+export type SabClientSettings = {
+    fail_hopeless_jobs: boolean | null;
+    unwanted_extensions: string[] | null;
+    action_on_unwanted_extensions: 'off' | 'pause' | 'abort' | null;
+    cleanup_list: string[] | null;
+    history_retention_option: string | null;
+    history_retention_number: number | null;
+};
+
+/** Read beside the settings because it decides what `unwanted_extensions` means. Never written. */
+export type SabClientSettingsRead = SabClientSettings & { unwanted_extensions_mode: 'blacklist' | 'whitelist' | null };
+
+export type SabSettingChange = { [K in keyof SabClientSettings]?: NonNullable<SabClientSettings[K]> };
+
+export interface NzbAddCapable {
+    nzbCategories(): Promise<string[]>;
+    addNzb(source: NzbSource, opts: { category?: string }): Promise<{ ids: string[] }>;
+    getClientSettings(): Promise<SabClientSettingsRead>;
+    updateClientSettings(changes: SabSettingChange): Promise<void>;
+}
+
+export const hasNzbAdd = (a: ServiceAdapter): a is ServiceAdapter & NzbAddCapable =>
+    typeof (a as Partial<NzbAddCapable>).addNzb === 'function';
 
 export const hasMagnetAdd = (a: ServiceAdapter): a is ServiceAdapter & MagnetAddCapable =>
     typeof (a as Partial<MagnetAddCapable>).addMagnet === 'function';

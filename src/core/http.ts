@@ -7,8 +7,8 @@ import { logger } from './logger.ts';
 const CIRCUIT_THRESHOLD = 5;
 const CIRCUIT_COOLDOWN_MS = 60_000;
 
-/** JSON everywhere but qBittorrent, whose WebUI takes form fields. */
-type RequestBody = { readonly json: unknown } | { readonly form: Record<string, string> };
+/** JSON everywhere but qBittorrent, whose WebUI takes form fields. A file upload is multipart. */
+type RequestBody = { readonly json: unknown } | { readonly form: Record<string, string> } | { readonly multipart: FormData };
 
 /** `text` for qBittorrent's `/api/v2/app/version`, which answers `v5.0.4`;
  *  a bare string that is not valid JSON. */
@@ -81,10 +81,13 @@ const followable = (from: URL, to: URL): boolean =>
         to.hostname === from.hostname &&
         (to.port === '' || to.port === from.port));
 
-const encodeBody = (body: RequestBody): { contentType: string; payload: string } =>
-    'form' in body
+/** No content type for multipart: fetch writes it, because only fetch knows the boundary. */
+const encodeBody = (body: RequestBody): { contentType?: string; payload: string | FormData } => {
+    if ('multipart' in body) return { payload: body.multipart };
+    return 'form' in body
         ? { contentType: 'application/x-www-form-urlencoded', payload: new URLSearchParams(body.form).toString() }
         : { contentType: 'application/json', payload: JSON.stringify(body.json) };
+};
 
 /**
  * The one implementation of the resilience policy. Every adapter sharing it is
@@ -246,6 +249,16 @@ export class ServiceHttp {
         return this.#request<string>('POST', path, { form: fields }, false, 'text');
     }
 
+    /** A file upload whose verdict is in a text body, as `torrents/add`. Never auto-retried. */
+    async postMultipartText(path: string, form: FormData): Promise<string> {
+        return this.#request<string>('POST', path, { multipart: form }, false, 'text');
+    }
+
+    /** A file upload answered with JSON, as SABnzbd's `addfile`. Never auto-retried. */
+    async postMultipart<T>(path: string, form: FormData): Promise<T> {
+        return this.#request<T>('POST', path, { multipart: form }, false, 'json');
+    }
+
     /**
      * Like every write, never auto-retried. `discardBody` because Sonarr's
      * `/episode/monitor` answers with an empty 200; routing that through the
@@ -370,7 +383,7 @@ export class ServiceHttp {
         const url = new URL(this.#basePath + path, this.#baseUrl);
         const headers = new Headers({ Accept: read === 'text' ? '*/*' : 'application/json' });
         const encoded = body === undefined ? undefined : encodeBody(body);
-        if (encoded !== undefined) headers.set('content-type', encoded.contentType);
+        if (encoded?.contentType !== undefined) headers.set('content-type', encoded.contentType);
         if (this.#closeConnection) headers.set('Connection', 'close');
         for (const [name, value] of Object.entries(extraHeaders ?? {})) headers.set(name, value);
 
