@@ -258,8 +258,8 @@ const TARGET_KEYS = [
 export function rawTarget(args: Record<string, unknown>): string {
     for (const key of TARGET_KEYS) {
         const value = args[key];
-        // Never an id, and a tracker URL pasted by mistake carries its passkey into the audit log.
-        if (typeof value === 'string' && /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return '(a URL, left out)';
+        // Never an id, and a tracker URL or magnet pasted by mistake carries its passkey into the audit log.
+        if (typeof value === 'string' && /^\s*(?:[a-z][a-z0-9+.-]*:\/\/|magnet:)/i.test(value)) return '(a URL, left out)';
         if (typeof value === 'string' || typeof value === 'number') return String(value);
     }
     return '';

@@ -66,13 +66,17 @@ describe('remove_queue_item on qBittorrent', () => {
         await expect(h.call('remove_queue_item', { ...ARGS, remove_from_client: false })).rejects.toThrow(/protected from deletion/);
     });
 
-    it('does not repeat a tracker URL passed as an id, in the refusal or the audit', async () => {
+    it.each([
+        ['a tracker URL', `https://tracker.example.org/announce?passkey=${PASSKEY}`],
+        ['a tracker URL after a space', ` https://tracker.example.org/announce?passkey=${PASSKEY}`],
+        ['a magnet', `magnet:?xt=urn:btih:${HASH}&tr=https%3A%2F%2Ftracker.example.org%2F${PASSKEY}%2Fannounce`]
+    ])('does not repeat %s passed as an id, in the refusal or the audit', async (_why, id) => {
         const qb = fakeQbittorrent();
         const cfg = config('vpn');
         const { server, call } = toolServer();
         const context = writeContext(namedInstances('qbittorrent', [cfg]));
         registerRemoveQueueItem(server, context, [new QbittorrentAdapter(cfg, qb.impl)]);
-        const refusal = await call('remove_queue_item', { ...ARGS, id: `https://tracker.example.org/announce?passkey=${PASSKEY}` }).catch((err: Error) => err.message);
+        const refusal = await call('remove_queue_item', { ...ARGS, id }).catch((err: Error) => err.message);
         expect(String(refusal)).not.toContain(PASSKEY);
         expect(JSON.stringify(context.audit.recent())).not.toContain(PASSKEY);
     });

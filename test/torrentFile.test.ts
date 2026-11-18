@@ -41,6 +41,11 @@ describe('readTorrentFile', () => {
         expect(readTorrentFile(bencode({ info: v2 })).hash).toBe(createHash('sha256').update(bencode(v2)).digest('hex').slice(0, 40));
     });
 
+    it('hashes the top-level info dictionary, not one nested deeper', () => {
+        const decoy = { info: { length: 1, name: 'Decoy' } };
+        expect(readTorrentFile(bencode({ decoy, info })).hash).toBe(createHash('sha1').update(bencode(info)).digest('hex'));
+    });
+
     it('counts and sizes the files of a v2 file tree', () => {
         const tree = { Season: { 'a.mkv': { '': { length: 10, 'pieces root': 'x' } }, 'b.mkv': { '': { length: 32, 'pieces root': 'y' } } } };
         const v2 = { 'file tree': tree, 'meta version': 2, name: 'Pack', 'piece length': 16384 };

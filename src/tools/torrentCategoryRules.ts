@@ -60,18 +60,30 @@ function effectiveShare(own: TorrentShareRule, categories: Categories, defaults:
     const limit = (read: (rule: TorrentShareRule) => number): number => chain.map(read).find(value => value !== INHERIT) ?? -1;
     return {
         action: chain.map(rule => rule.action).find(action => action !== 'Default') ?? 'Default',
+        mode: chain.map(rule => rule.mode).find(mode => mode !== 'Default') ?? 'Default',
         ratio: limit(rule => rule.ratio),
         seedingMinutes: limit(rule => rule.seedingMinutes),
         inactiveMinutes: limit(rule => rule.inactiveMinutes)
     };
 }
 
-/** The action that would delete this torrent once it reaches a limit in this category, or undefined when none would. */
-export function removalAtLimit(own: TorrentShareRule, categories: Categories, defaults: TorrentClientDefaults, category: string): 'Remove' | 'RemoveWithContent' | undefined {
+/** The rule that would delete this torrent once it reaches a limit in this category, or undefined when none would. */
+export function removalAtLimit(own: TorrentShareRule, categories: Categories, defaults: TorrentClientDefaults, category: string): TorrentShareRule | undefined {
     const rule = effectiveShare(own, categories, defaults, category);
     if (rule.action !== 'Remove' && rule.action !== 'RemoveWithContent') return undefined;
-    return rule.ratio >= 0 || rule.seedingMinutes >= 0 || rule.inactiveMinutes >= 0 ? rule.action : undefined;
+    return rule.ratio >= 0 || rule.seedingMinutes >= 0 || rule.inactiveMinutes >= 0 ? rule : undefined;
+}
+
+/**
+ * Whether a torrent's files sit directly in `directory`. `content_path` is the
+ * directory itself for a torrent with no root folder, and one level below it for
+ * a root folder or a single file.
+ */
+export function isStoredIn(contentPath: string, directory: string): boolean {
+    const content = trimmed(contentPath);
+    const dir = trimmed(directory);
+    return content === dir || content.slice(0, Math.max(content.lastIndexOf('/'), 0)) === dir;
 }
 
 /** A torrent being added inherits everything. */
-export const NO_OWN_SHARE_RULE: TorrentShareRule = { action: 'Default', ratio: INHERIT, seedingMinutes: INHERIT, inactiveMinutes: INHERIT };
+export const NO_OWN_SHARE_RULE: TorrentShareRule = { action: 'Default', mode: 'Default', ratio: INHERIT, seedingMinutes: INHERIT, inactiveMinutes: INHERIT };

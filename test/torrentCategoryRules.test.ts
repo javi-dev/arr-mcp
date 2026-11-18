@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TorrentCategory, TorrentClientDefaults, TorrentShareRule } from '../src/services/types.ts';
-import { NO_OWN_SHARE_RULE, categoryIncompletePath, categorySavePath, removalAtLimit } from '../src/tools/torrentCategoryRules.ts';
+import { NO_OWN_SHARE_RULE, categoryIncompletePath, categorySavePath, isStoredIn, removalAtLimit } from '../src/tools/torrentCategoryRules.ts';
 
 const share = (over: Partial<TorrentShareRule> = {}): TorrentShareRule => ({ ...NO_OWN_SHARE_RULE, ...over });
 const category = (over: Partial<TorrentCategory> = {}): TorrentCategory => ({ savePath: '', downloadPath: null, share: share(), ...over });
@@ -63,17 +63,17 @@ describe('removalAtLimit', () => {
     const removing = share({ action: 'RemoveWithContent', ratio: 1 });
 
     it('finds the action of the category', () => {
-        expect(removalAtLimit(NO_OWN_SHARE_RULE, new Map([['a', category({ share: removing })]]), defaults(), 'a')).toBe('RemoveWithContent');
+        expect(removalAtLimit(NO_OWN_SHARE_RULE, new Map([['a', category({ share: removing })]]), defaults(), 'a')?.action).toBe('RemoveWithContent');
     });
 
     it('inherits the action and the limit from a parent', () => {
         const categories = new Map([['a', category({ share: removing })], ['a/b', category()]]);
-        expect(removalAtLimit(NO_OWN_SHARE_RULE, categories, defaults(), 'a/b')).toBe('RemoveWithContent');
+        expect(removalAtLimit(NO_OWN_SHARE_RULE, categories, defaults(), 'a/b')?.action).toBe('RemoveWithContent');
     });
 
     it('falls back to the client', () => {
         const client = defaults({ share: share({ action: 'Remove', ratio: 2, seedingMinutes: -1, inactiveMinutes: -1 }) });
-        expect(removalAtLimit(NO_OWN_SHARE_RULE, new Map(), client, '')).toBe('Remove');
+        expect(removalAtLimit(NO_OWN_SHARE_RULE, new Map(), client, '')?.action).toBe('Remove');
     });
 
     it('needs a limit to reach', () => {
@@ -83,10 +83,27 @@ describe('removalAtLimit', () => {
 
     it('lets a limit of the torrent itself count', () => {
         const client = defaults({ share: share({ action: 'Remove', ratio: -1, seedingMinutes: -1, inactiveMinutes: -1 }) });
-        expect(removalAtLimit(share({ seedingMinutes: 60 }), new Map(), client, '')).toBe('Remove');
+        expect(removalAtLimit(share({ seedingMinutes: 60 }), new Map(), client, '')?.action).toBe('Remove');
+    });
+
+    it('counts a limit on inactivity alone', () => {
+        const categories = new Map([['a', category({ share: share({ action: 'Remove', ratio: -1, seedingMinutes: -1, inactiveMinutes: 30 }) })]]);
+        expect(removalAtLimit(NO_OWN_SHARE_RULE, categories, defaults(), 'a')?.inactiveMinutes).toBe(30);
     });
 
     it('lets the action of the torrent itself win', () => {
         expect(removalAtLimit(share({ action: 'Stop' }), new Map([['a', category({ share: removing })]]), defaults(), 'a')).toBeUndefined();
+    });
+});
+
+describe('isStoredIn', () => {
+    it.each([
+        ['/data/dl/Root', '/data/dl', true],
+        ['/data/dl/film.mkv', '/data/dl/', true],
+        ['/data/dl', '/data/dl', true],
+        ['/data/dl/sub/Root', '/data/dl', false],
+        ['/data/dl-old/Root', '/data/dl', false]
+    ])('%s in %s is %s', (content, directory, expected) => {
+        expect(isStoredIn(content, directory)).toBe(expected);
     });
 });

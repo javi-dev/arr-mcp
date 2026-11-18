@@ -82,6 +82,7 @@ type RawTorrent = {
     content_path?: string;
     has_metadata?: boolean;
     share_limit_action?: string;
+    share_limits_mode?: string;
     inactive_seeding_time_limit?: number;
     progress?: number;
     completed?: number;
@@ -104,7 +105,7 @@ type RawTracker = { url?: string; status?: number; updating?: boolean };
 /** `download_path` is a folder, `false` for none, or `null` to follow the global setting. */
 type RawCategories = Record<
     string,
-    { savePath?: string; download_path?: string | boolean | null; share_limit_action?: string; ratio_limit?: number; seeding_time_limit?: number; inactive_seeding_time_limit?: number }
+    { savePath?: string; download_path?: string | boolean | null; share_limit_action?: string; share_limits_mode?: string; ratio_limit?: number; seeding_time_limit?: number; inactive_seeding_time_limit?: number }
 >;
 
 type RawMainData = { server_state?: { free_space_on_disk?: number } };
@@ -233,8 +234,9 @@ const hasMetadataOf = (t: RawTorrent): boolean => t.has_metadata !== false && t.
 /** `max_ratio_act` as the action names categories and torrents use. Unknown counts as removing: the guard fails closed. */
 const SHARE_ACTION_NAME: Record<number, string> = { 0: 'Stop', 1: 'Remove', 2: 'EnableSuperSeeding', 3: 'RemoveWithContent' };
 
-const shareRuleOf = (raw: { share_limit_action?: string; ratio_limit?: number; seeding_time_limit?: number; inactive_seeding_time_limit?: number }): TorrentShareRule => ({
+const shareRuleOf = (raw: { share_limit_action?: string; share_limits_mode?: string; ratio_limit?: number; seeding_time_limit?: number; inactive_seeding_time_limit?: number }): TorrentShareRule => ({
     action: raw.share_limit_action ?? 'Default',
+    mode: raw.share_limits_mode ?? 'Default',
     ratio: raw.ratio_limit ?? -2,
     seedingMinutes: raw.seeding_time_limit ?? -2,
     inactiveMinutes: raw.inactive_seeding_time_limit ?? -2
@@ -766,6 +768,7 @@ export class QbittorrentAdapter
             incompletePath: prefs.temp_path ?? '',
             share: {
                 action: SHARE_ACTION_NAME[prefs.max_ratio_act ?? -1] ?? 'Remove',
+                mode: 'Default',
                 ratio: limit(prefs.max_ratio_enabled, prefs.max_ratio),
                 seedingMinutes: limit(prefs.max_seeding_time_enabled, prefs.max_seeding_time),
                 inactiveMinutes: limit(prefs.max_inactive_seeding_time_enabled, prefs.max_inactive_seeding_time)

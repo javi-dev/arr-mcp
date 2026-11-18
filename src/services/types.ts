@@ -2058,7 +2058,7 @@ export type TorrentDetails = {
 };
 
 /** Share limits as qBittorrent stores them: -2 and `Default` inherit, -1 means no limit. */
-export type TorrentShareRule = { action: string; ratio: number; seedingMinutes: number; inactiveMinutes: number };
+export type TorrentShareRule = { action: string; mode: string; ratio: number; seedingMinutes: number; inactiveMinutes: number };
 
 /** A qBittorrent category, as the torrent tools need to reason about it. */
 export type TorrentCategory = {

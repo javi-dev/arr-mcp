@@ -265,7 +265,7 @@ tests:
 
 | Stack | Tools listed | `tools/list` | Roughly |
 | --- | --- | --- | --- |
-| Nothing configured yet | 53 | 131,984 bytes | 33,000 tokens |
+| Nothing configured yet | 53 | 132,046 bytes | 33,000 tokens |
 | Radarr, Sonarr, SABnzbd, Jellyfin | 39 | 88,761 bytes | 22,200 tokens |
 | Those four, plus Lidarr, Prowlarr, Bazarr and Seerr | 45 | 108,856 bytes | 27,200 tokens |
 
@@ -283,7 +283,7 @@ Four limits hold it there, each one asserted in `test/app.test.ts`:
 - **The whole list under 133,000 bytes.** Declaring only the fields every write
   result carries, and cutting the parameter text that each tool repeated, took
   it from 130,045 bytes to 113,613; the nine qBittorrent and SABnzbd chores
-  brought it to 131,984.
+  brought it to 132,046.
 - **Nothing in it that does not apply to your stack.** The rest of this section
   is what that means.
 
@@ -3477,7 +3477,8 @@ in no preview, target, error or audit row: the token binds its SHA-256.
 
 Points a torrent at a new save path. qBittorrent has no call that changes a path
 without moving what it finds there, so without `move_files` this is refused unless
-the torrent is at `missing files` or still fetching metadata. Any file of a
+the torrent is at `missing files`, still fetching metadata, or has its unfinished
+data in the incomplete-downloads folder, where that data stays. Any file of a
 `missing files` torrent still at the old path moves too, and the preview says so.
 Follow it with `recheck_torrents`. `move_files: true` needs `destructive`. The
 move runs in the background after the call returns. A torrent being checked is
