@@ -265,7 +265,7 @@ tests:
 
 | Stack | Tools listed | `tools/list` | Roughly |
 | --- | --- | --- | --- |
-| Nothing configured yet | 53 | 132,469 bytes | 33,000 tokens |
+| Nothing configured yet | 53 | 132,636 bytes | 33,000 tokens |
 | Radarr, Sonarr, SABnzbd, Jellyfin | 39 | 88,761 bytes | 22,200 tokens |
 | Those four, plus Lidarr, Prowlarr, Bazarr and Seerr | 45 | 108,856 bytes | 27,200 tokens |
 
@@ -283,7 +283,7 @@ Four limits hold it there, each one asserted in `test/app.test.ts`:
 - **The whole list under 133,000 bytes.** Declaring only the fields every write
   result carries, and cutting the parameter text that each tool repeated, took
   it from 130,045 bytes to 113,613; the nine qBittorrent and SABnzbd chores
-  brought it to 132,469.
+  brought it to 132,636.
 - **Nothing in it that does not apply to your stack.** The rest of this section
   is what that means.
 
@@ -3456,7 +3456,10 @@ Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
 One still checking when the watch ends, or never seen checking because it is
 queued behind another, is reported as such and left alone. A torrent still fetching
-metadata has nothing to check and is skipped.
+metadata has nothing to check and is skipped. A check can send a torrent to its
+incomplete folder or its save path, so both have to be inside `allowed_paths`. A
+protected torrent whose share limits could remove it once the check finds it whole
+needs `allow_removal: true`, which needs `destructive`.
 
 **Unverified live** (qBittorrent): the recheck and the watch after it.
 

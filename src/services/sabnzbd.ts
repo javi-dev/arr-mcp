@@ -507,19 +507,24 @@ export class SabnzbdAdapter
      * those back. When both halves of the retention change, the order keeps a
      * failure part-way from deleting more than either policy would: a policy
      * already deleting is parked on `all` while the count changes, and otherwise
-     * the count goes first, so a new policy never starts on the old number.
+     * the count goes first, so a new policy never starts on the old number. A
+     * new extension list and a new action on it go the same way: the action is
+     * off while the list changes, so no job meets a pairing nobody asked for.
      */
     async updateClientSettings(changes: SabSettingChange): Promise<void> {
         const applied: string[] = [];
         const earlier = (): string => (applied.length === 0 ? 'Nothing else was changed.' : `Already changed before this failed: ${[...new Set(applied)].join(', ')}.`);
-        const { history_retention_option: option, history_retention_number: count, ...rest } = changes;
+        const { history_retention_option: option, history_retention_number: count, unwanted_extensions: extensions, action_on_unwanted_extensions: action, ...rest } = changes;
         const both = option !== undefined && count !== undefined;
         const deleting = both && String(await this.#setting('history_retention_option')).endsWith('-delete');
         const steps: [string, unknown][] = [
+            ...Object.entries(rest),
             ...(deleting ? ([['history_retention_option', 'all']] as [string, unknown][]) : []),
             ...(count === undefined ? [] : ([['history_retention_number', count]] as [string, unknown][])),
             ...(option === undefined ? [] : ([['history_retention_option', option]] as [string, unknown][])),
-            ...Object.entries(rest)
+            ...(extensions !== undefined && action !== undefined ? ([['action_on_unwanted_extensions', 'off']] as [string, unknown][]) : []),
+            ...(extensions === undefined ? [] : ([['unwanted_extensions', extensions]] as [string, unknown][])),
+            ...(action === undefined ? [] : ([['action_on_unwanted_extensions', action]] as [string, unknown][]))
         ];
         for (const [keyword, value] of steps) {
             if (!WRITABLE_KEYWORDS.has(keyword)) throw new ServiceError('PermissionDenied', this.id, `${keyword} is not a setting this server may change`);

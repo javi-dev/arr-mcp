@@ -117,6 +117,8 @@ type RawPreferences = {
     /** "Keep incomplete torrents in". */
     temp_path_enabled?: boolean;
     temp_path?: string;
+    /** "Do not start the download automatically". */
+    add_stopped_enabled?: boolean;
     share_limits_mode?: string;
     max_inactive_seeding_time_enabled?: boolean;
     max_inactive_seeding_time?: number;
@@ -736,7 +738,11 @@ export class QbittorrentAdapter
                 complete: t.amount_left === 0 && t.progress === 1,
                 stopped: PAUSED_STATES.has(state),
                 hasMetadata: hasMetadataOf(t),
-                ...(t.download_path === undefined || t.download_path === '' ? {} : { downloadPath: t.download_path })
+                ...(t.download_path === undefined || t.download_path === '' ? {} : { downloadPath: t.download_path }),
+                ...(t.save_path === undefined || t.save_path === '' ? {} : { savePath: t.save_path }),
+                category: t.category ?? '',
+                private: privateOf(t, undefined),
+                share: shareRuleOf(t)
             }];
         });
     }
@@ -770,6 +776,7 @@ export class QbittorrentAdapter
         return {
             incompleteEnabled: prefs.temp_path_enabled !== false,
             incompletePath: prefs.temp_path ?? '',
+            addsStopped: prefs.add_stopped_enabled === true,
             share: {
                 action: SHARE_ACTION_NAME[prefs.max_ratio_act ?? -1] ?? 'Remove',
                 mode: prefs.share_limits_mode ?? 'Default',

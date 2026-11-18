@@ -37,7 +37,8 @@ export const torrent = (over: Partial<RawTorrent> = {}): RawTorrent => ({
     state: 'stalledUP',
     save_path: '/data/torrents/movies',
     download_path: '',
-    completion_on: 0,
+    // What 5.3.0 reports for a torrent that has never finished.
+    completion_on: -1,
     // A single file: 5.3.0 reports its whole path, as with the default file list below.
     content_path: '/data/torrents/movies/Some.Film/film.mkv',
     has_metadata: true,

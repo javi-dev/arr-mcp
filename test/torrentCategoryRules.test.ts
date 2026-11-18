@@ -7,6 +7,7 @@ const category = (over: Partial<TorrentCategory> = {}): TorrentCategory => ({ sa
 const defaults = (over: Partial<TorrentClientDefaults> = {}): TorrentClientDefaults => ({
     incompleteEnabled: false,
     incompletePath: '/data/incomplete',
+    addsStopped: false,
     share: share({ action: 'Stop', ratio: -1, seedingMinutes: -1, inactiveMinutes: -1 }),
     ...over
 });

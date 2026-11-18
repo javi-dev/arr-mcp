@@ -420,9 +420,9 @@ describe('the advertised tool surface', () => {
     ];
 
     /**
-     * Of those, the thirteen whose effect cannot be undone by calling again.
+     * Of those, the fourteen whose effect cannot be undone by calling again.
      * `set_torrent_location` and `set_torrent_category` are here for `move_files`,
-     * and `add_torrent` and `set_torrent_category` for `allow_removal`.
+     * and `add_torrent`, `recheck_torrents` and `set_torrent_category` for `allow_removal`.
      * `fix_profile` is here because the old minimum is put back only by hand.
      * `blocklist_media` is here for its `remove`, which Seerr carries out by
      * deleting the title's requests and issues; its `add` is safe tier.
@@ -443,6 +443,7 @@ describe('the advertised tool surface', () => {
         'delete_request',
         'fix_metadata',
         'fix_profile',
+        'recheck_torrents',
         'remove_queue_item',
         'set_torrent_category',
         'set_torrent_location',

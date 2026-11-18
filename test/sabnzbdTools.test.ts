@@ -291,6 +291,17 @@ describe('update_client_settings', () => {
         expect(h.sent('set_config').map(r => r.searchParams.get('keyword'))).toEqual(['history_retention_number', 'history_retention_option']);
     });
 
+    it('turns the action off while a new list and a new action are both written', async () => {
+        const h = harness();
+        h.settings.action_on_unwanted_extensions = 2;
+        await confirmed(h.call, 'update_client_settings', { unwanted_extensions: ['exe', 'zip'], action_on_unwanted_extensions: 'pause' });
+        expect(h.sent('set_config').map(r => [r.searchParams.get('keyword'), r.searchParams.get('value')])).toEqual([
+            ['action_on_unwanted_extensions', '0'],
+            ['unwanted_extensions', 'exe,zip'],
+            ['action_on_unwanted_extensions', '1']
+        ]);
+    });
+
     it('does not let a token overwrite a value edited since the preview', async () => {
         const h = harness();
         h.settings.history_retention_number = 1000;

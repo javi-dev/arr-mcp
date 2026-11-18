@@ -57,7 +57,7 @@ write, and says which permission to enable.
 | `blocklist_media` | safe; destructive to remove from Seerr | `safe_write`; `destructive` for a Seerr `remove` |
 | `fix_metadata` | destructive | `destructive`, plus `allow_metadata_repair` on Plex |
 | `fix_profile` | destructive | `destructive` |
-| `recheck_torrents` | safe | `safe_write` |
+| `recheck_torrents` | safe; destructive with `allow_removal` | `safe_write`; `destructive` with `allow_removal` |
 | `add_torrent` | safe; destructive with `allow_removal` | `safe_write`; `destructive` with `allow_removal` |
 | `set_torrent_location` | safe; destructive with `move_files` | `safe_write`; `destructive` with `move_files` |
 | `rename_torrent_file` | safe | `safe_write` |

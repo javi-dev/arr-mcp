@@ -115,6 +115,8 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         for (const id of pending) {
             const state = states.find(s => s.id === id);
             if (state?.checking === true) seenChecking.add(id);
+            // Verified data can be on its way back to the save path, and a move is not the end of the check.
+            else if (state?.state === 'moving') continue;
             else if (state === undefined || seenChecking.has(id) || (state.complete && waited >= GRACE_MS)) settled.set(id, state);
         }
     }
@@ -272,7 +274,8 @@ const AddTorrentInput = z.object({
 const RecheckInput = z.object({
     instance: instanceField,
     ids: z.array(torrentHash).min(1).max(50).describe('Torrent hashes: `id` on their get_queue rows.'),
-    resume_if_complete: z.boolean().default(false).describe('Watch the recheck briefly and start each stopped torrent that comes back complete.')
+    resume_if_complete: z.boolean().default(false).describe('Watch the recheck briefly and start each stopped torrent that comes back complete.'),
+    allow_removal: allowRemovalField
 });
 
 const LocationInput = z.object({
@@ -310,9 +313,9 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         inputSchema: RecheckInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'recheck_torrents',
-        tier: 'safe',
+        tier: ({ allow_removal }) => (allow_removal ? 'destructive' : 'safe'),
 
-        async plan({ instance, ids, resume_if_complete }): Promise<WritePlan> {
+        async plan({ instance, ids, resume_if_complete, allow_removal }): Promise<WritePlan> {
             const client = clientOf(adapters, instance);
             const wanted = [...new Set(ids.map(id => id.trim().toLowerCase()))];
             const states = await client.torrentCheckStates(wanted);
@@ -323,23 +326,50 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const skipped = states.filter(s => !s.hasMetadata);
             const toCheck = states.filter(s => !s.checking && s.hasMetadata).map(s => s.id).sort();
             // A check that finds data missing sends what is left to the incomplete folder.
-            const fallbacks = states.filter(s => toCheck.includes(s.id) && s.downloadPath !== undefined);
-            for (const s of fallbacks) allowedPath(client.id, s.downloadPath ?? '', client.allowedPaths);
+            const fallbacks = states.filter(s => toCheck.includes(s.id) && s.downloadPath !== undefined).sort((a, b) => a.id.localeCompare(b.id));
+            for (const s of fallbacks) {
+                allowedPath(client.id, s.downloadPath ?? '', client.allowedPaths);
+                // And one that finds everything sends it on to the save path.
+                allowedPath(client.id, s.savePath ?? '', client.allowedPaths);
+            }
             const target = `${client.id}:${toCheck.length === 0 ? wanted.join(',') : toCheck.join(',')}`;
             if (toCheck.length === 0) return { target, summary: `None of those torrents can be checked on ${client.id}: each is already checking or still fetching its metadata.`, effects: [], noop: true };
+            // A torrent the check finds whole starts counting towards its share limits, and may already be past them.
+            const incomplete = states.filter(s => toCheck.includes(s.id) && !s.complete).sort((a, b) => a.id.localeCompare(b.id));
+            const [categories, defaults] = incomplete.length === 0 ? [new Map<string, TorrentCategory>(), undefined] : await Promise.all([client.torrentCategories(), client.torrentClientDefaults()]);
+            const removals = incomplete.flatMap(s => {
+                const rule = defaults === undefined ? undefined : removalAtLimit(s.share, categories, defaults, s.category);
+                return rule === undefined ? [] : [{ state: s, rule, protection: protectionOf(client, s) }];
+            });
+            const blocked = removals.find(r => r.protection !== undefined);
+            if (blocked !== undefined && !allow_removal) {
+                throw new ServiceError('PermissionDenied', client.id, `if the check finds ${blocked.state.title} complete, its share limits can remove it, and ${blocked.protection}`, {
+                    remedy: 'Nothing was changed. Change its category or share limit action in qBittorrent, or pass `allow_removal: true`, which needs `destructive`.'
+                });
+            }
             return {
                 target,
                 summary: `Recheck ${toCheck.length} torrent(s) on ${client.id}.`,
                 effects: [
                     ...states.filter(s => toCheck.includes(s.id)).slice(0, 10).map(s => `Checks ${s.title} (${s.id}).`),
                     ...skipped.map(s => `Skips ${s.title} (${s.id}), which has no metadata to check yet.`),
-                    ...fallbacks.map(s => `If ${s.title} comes back incomplete, qBittorrent moves what is left of it to ${s.downloadPath}.`),
+                    ...fallbacks.map(s => `If ${s.title} comes back incomplete, qBittorrent moves what is left of it to ${s.downloadPath}; if complete, to ${s.savePath}.`),
+                    ...removals.flatMap(r => [
+                        ...(r.protection === undefined ? [] : [`Overrides the delete protection: ${r.protection}.`]),
+                        `If ${r.state.title} comes back complete: ${removalWarning(r.rule)}`
+                    ]),
                     'Reads all their data again, which can take a long time on large torrents and adds disk load while it runs.',
                     resume_if_complete
                         ? 'Starts each stopped torrent that comes back complete. An incomplete one stays stopped.'
                         : 'A stopped torrent stays stopped afterwards. Pass `resume_if_complete` to start the complete ones.'
                 ],
-                args: { ids: toCheck, resume: resume_if_complete, fallbacks: fallbacks.map(s => [s.id, s.downloadPath]) }
+                args: {
+                    ids: toCheck,
+                    resume: resume_if_complete,
+                    fallbacks: fallbacks.map(s => [s.id, s.downloadPath, s.savePath]),
+                    removals: removals.map(r => [r.state.id, r.rule, r.protection !== undefined]),
+                    allowRemoval: allow_removal
+                }
             };
         },
 
@@ -374,7 +404,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             if (source.hash !== undefined && (await client.hasTorrent(source.hash))) {
                 return { target, summary: `${client.id} already has ${source.label}.`, effects: [], noop: true };
             }
-            const removal = removalAtLimit(NO_OWN_SHARE_RULE, categories, await client.torrentClientDefaults(), args.category ?? '');
+            const defaults = await client.torrentClientDefaults();
+            const removal = removalAtLimit(NO_OWN_SHARE_RULE, categories, defaults, args.category ?? '');
             const protection = removal === undefined ? undefined : protectionOf(client, { private: source.private });
             if (protection !== undefined && !args.allow_removal) {
                 throw new ServiceError('PermissionDenied', client.id, `that category removes torrents at its share limits, and ${protection}`, {
@@ -389,12 +420,12 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(overrides ? [`Overrides the delete protection: ${protection}.`] : []),
                     ...(removal === undefined ? [] : [removalWarning(removal)]),
                     ...(await categoryWatchers(adapters, 'QBittorrent', args.category)),
-                    `Starts downloading into ${savePath}. Nothing vetted this torrent.`,
+                    `${defaults.addsStopped ? `Adds it stopped, as this client is set to, saving to ${savePath} once started` : `Starts downloading into ${savePath}`}. Nothing vetted this torrent.`,
                     ...source.effects,
                     'It appears in get_queue and can be removed again with remove_queue_item.'
                 ],
                 // A digest and never the source: this object is written to the audit log.
-                args: { source_sha256: source.digest, category: args.category ?? '', savePath, removal: removal ?? '', allowRemoval: args.allow_removal, overridesProtection: overrides }
+                args: { source_sha256: source.digest, category: args.category ?? '', savePath, addsStopped: defaults.addsStopped, removal: removal ?? '', allowRemoval: args.allow_removal, overridesProtection: overrides }
             };
         },
 
