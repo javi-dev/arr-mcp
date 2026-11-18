@@ -2052,6 +2052,14 @@ export type TorrentDetails = {
     trackers: TorrentTrackerRow[];
 };
 
+/** A qBittorrent category, as the torrent tools need to reason about it. */
+export type TorrentCategory = {
+    /** As configured: may be empty or relative. */
+    savePath: string;
+    /** Whether this category's own settings remove a torrent at its share limits. */
+    removesAtLimit: boolean;
+};
+
 /** What a torrent is added from. The source reaches only the adapter's request and is never echoed. */
 export type TorrentSource = { kind: 'url'; url: string } | { kind: 'file'; bytes: Buffer; filename: string };
 
@@ -2069,7 +2077,9 @@ export interface TorrentManageCapable {
     torrentCheckStates(ids: readonly string[]): Promise<TorrentCheckState[]>;
     recheckTorrents(ids: readonly string[]): Promise<void>;
     startTorrents(ids: readonly string[]): Promise<void>;
-    torrentCategories(): Promise<Map<string, string>>;
+    torrentCategories(): Promise<Map<string, TorrentCategory>>;
+    /** Whether unfinished data of this category sits in qBittorrent's incomplete-downloads folder. */
+    incompleteFolderApplies(category: string): Promise<boolean>;
     defaultSavePath(): Promise<string>;
     /** Whether a category change relocates an automatically managed torrent. */
     categoryChangeRelocates(): Promise<boolean>;

@@ -29,6 +29,7 @@ import {
     type SpeedLimit,
     type SpeedLimitCapable,
     type TorrentAdded,
+    type TorrentCategory,
     type TorrentCheckState,
     type TorrentDetails,
     type TorrentEndpoint,
@@ -94,13 +95,16 @@ type RawFile = { name?: string; size?: number; progress?: number };
 /** `url` is read for its host and dropped. `msg` is never read: a tracker can echo the passkey in it. */
 type RawTracker = { url?: string; status?: number; updating?: boolean };
 
-type RawCategories = Record<string, { savePath?: string }>;
+/** `download_path` is a folder, `false` for none, or `null` to follow the global setting. */
+type RawCategories = Record<string, { savePath?: string; download_path?: string | boolean | null; share_limit_action?: string }>;
 
 type RawMainData = { server_state?: { free_space_on_disk?: number } };
 type RawPreferences = {
     save_path?: string;
     /** "When Torrent Category changed": true relocates the torrent, false switches it to manual mode. */
     torrent_changed_tmm_enabled?: boolean;
+    /** "Keep incomplete torrents in". */
+    temp_path_enabled?: boolean;
     max_ratio_enabled?: boolean;
     max_ratio?: number;
     max_seeding_time_enabled?: boolean;
@@ -621,7 +625,15 @@ export class QbittorrentAdapter
      */
     async getTorrentDetails(id: string): Promise<TorrentDetails> {
         const hash = this.#hash(id);
-        const [info] = await this.#torrents(hash);
+        // Only an empty list means no such torrent. The delete guard reads
+        // NotFound as permission to go ahead, so a 404 from a proxy must not become one.
+        const listed = (err: unknown): never => {
+            if (err instanceof ServiceError && err.kind === 'NotFound') {
+                throw new ServiceError('UpstreamError', this.id, 'qBittorrent could not be asked about this torrent');
+            }
+            throw err;
+        };
+        const [info] = await this.#torrents(hash).catch(listed);
         if (info === undefined) throw this.#notFound(id);
 
         const incomplete = info.save_path === undefined || typeof info.private !== 'boolean' || info.ratio === undefined || info.seeding_time === undefined;
@@ -631,17 +643,10 @@ export class QbittorrentAdapter
                   return undefined;
               })
             : undefined;
-        // A 404 here is not "no such torrent": `torrents/info` has just listed it,
-        // and the delete guard reads NotFound as permission to go ahead.
         const [files, trackers] = await Promise.all([
             this.#http.get<RawFile[]>(`${API}/torrents/files?hash=${hash}`),
             this.#http.get<RawTracker[]>(`${API}/torrents/trackers?hash=${hash}`)
-        ]).catch((err: unknown) => {
-            if (err instanceof ServiceError && err.kind === 'NotFound') {
-                throw new ServiceError('UpstreamError', this.id, 'qBittorrent listed this torrent but would not describe it');
-            }
-            throw err;
-        });
+        ]).catch(listed);
 
         const ratio = shownRatio(info.ratio ?? props?.share_ratio);
         const seedingSeconds = info.seeding_time ?? props?.seeding_time;
@@ -698,10 +703,26 @@ export class QbittorrentAdapter
         await this.#verb(false, ids.map(id => this.#hash(id)).join('|'));
     }
 
-    /** Category name to its save path as configured, which may be empty or relative. */
-    async torrentCategories(): Promise<Map<string, string>> {
+    async torrentCategories(): Promise<Map<string, TorrentCategory>> {
         const raw = await this.#http.get<RawCategories>(`${API}/torrents/categories`);
-        return new Map(Object.entries(raw ?? {}).map(([name, c]) => [name, c.savePath ?? '']));
+        return new Map(
+            Object.entries(raw ?? {}).map(([name, c]) => [
+                name,
+                { savePath: c.savePath ?? '', removesAtLimit: c.share_limit_action === 'Remove' || c.share_limit_action === 'RemoveWithContent' }
+            ])
+        );
+    }
+
+    /** Read fresh, and unknown counts as yes: this decides whether a category change may move unfinished data. */
+    async incompleteFolderApplies(category: string): Promise<boolean> {
+        const [categories, prefs] = await Promise.all([
+            this.#http.get<RawCategories>(`${API}/torrents/categories`),
+            this.#http.get<RawPreferences>(`${API}/app/preferences`)
+        ]);
+        const own = categories?.[category]?.download_path;
+        if (typeof own === 'string') return true;
+        if (own === false) return false;
+        return prefs.temp_path_enabled !== false;
     }
 
     async defaultSavePath(): Promise<string> {
@@ -719,26 +740,33 @@ export class QbittorrentAdapter
     }
 
     /**
-     * Always sends a resolved save path with automatic management off, so the
-     * torrent lands where the preview said whatever the category's settings
-     * say. Never sends `urls` and a file together.
+     * Always sends a resolved save path with automatic management and the
+     * incomplete-downloads folder off, so the torrent lands where the preview
+     * said whatever the category's settings say. Never sends `urls` and a file
+     * together. A refusal keeps its status and drops qBittorrent's words, which
+     * can repeat the URL it was given, passkey included.
      */
     async addTorrent(source: TorrentSource, opts: { category?: string; savePath: string }): Promise<TorrentAdded> {
-        const fields = { savepath: opts.savePath, autoTMM: 'false', ...(opts.category === undefined ? {} : { category: opts.category }) };
+        const fields = { savepath: opts.savePath, autoTMM: 'false', useDownloadPath: 'false', ...(opts.category === undefined ? {} : { category: opts.category }) };
+        const remedy = 'Check the source is a valid torrent and that qBittorrent can reach it, then try again.';
         let answer: string;
-        if (source.kind === 'url') {
-            answer = await this.#http.postFormText(`${API}/torrents/add`, { ...fields, urls: source.url });
-        } else {
-            const form = new FormData();
-            for (const [key, value] of Object.entries(fields)) form.set(key, value);
-            form.set('torrents', new Blob([new Uint8Array(source.bytes)], { type: 'application/x-bittorrent' }), source.filename);
-            answer = await this.#http.postMultipartText(`${API}/torrents/add`, form);
-        }
-        if (!addAccepted(answer)) {
-            throw new ServiceError('UpstreamError', this.id, 'qBittorrent did not add the torrent', {
-                remedy: 'Check the source is a valid torrent and that qBittorrent can reach it, then try again.'
+        try {
+            if (source.kind === 'url') {
+                answer = await this.#http.postFormText(`${API}/torrents/add`, { ...fields, urls: source.url });
+            } else {
+                const form = new FormData();
+                for (const [key, value] of Object.entries(fields)) form.set(key, value);
+                form.set('torrents', new Blob([new Uint8Array(source.bytes)], { type: 'application/x-bittorrent' }), source.filename);
+                answer = await this.#http.postMultipartText(`${API}/torrents/add`, form);
+            }
+        } catch (err) {
+            if (!(err instanceof ServiceError)) throw err;
+            throw new ServiceError(err.kind, this.id, `qBittorrent did not add the torrent (HTTP ${err.status ?? 'error'})`, {
+                remedy: err.kind === 'AuthFailed' && err.remedy !== undefined ? err.remedy : remedy,
+                ...(err.status === undefined ? {} : { status: err.status })
             });
         }
+        if (!addAccepted(answer)) throw new ServiceError('UpstreamError', this.id, 'qBittorrent did not add the torrent', { remedy });
         return { accepted: true, pending: source.kind === 'url' };
     }
 

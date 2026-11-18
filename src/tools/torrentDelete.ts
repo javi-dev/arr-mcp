@@ -18,7 +18,7 @@ function factsLine(d: TorrentDetails): string {
 }
 
 /** Why `client` guards this torrent. An unknown private flag counts as private: the guard fails closed. */
-function protectionOf(client: Client, d: TorrentDetails): string | undefined {
+export function protectionOf(client: Client, d: Pick<TorrentDetails, 'private'>): string | undefined {
     if (client.deleteProtection.all) return `${client.id} protects all of its torrents`;
     if (!client.deleteProtection.private) return undefined;
     if (d.private === true) return `${client.id} protects private torrents, and this one is private`;

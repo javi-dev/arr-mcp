@@ -3454,8 +3454,9 @@ outside what they can catch. No tool changes seeding limits.
 
 Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
-One still checking when the watch ends, or never seen checking, is reported as
-such and stays stopped.
+One still checking when the watch ends, or never seen checking because it is
+queued behind another, is reported as such and left alone. A torrent still fetching
+metadata has nothing to check and is skipped.
 
 **Unverified live** (qBittorrent): the recheck and the watch after it.
 
@@ -3465,7 +3466,8 @@ Takes exactly one of `magnet`, `url` or `torrent_base64` (up to 3 MB, the most a
 request can carry once encoded), plus an existing
 `category` and a `save_path`. Without `save_path` it goes where the category
 saves, and that location has to be allowed too. The torrent is added with
-automatic management off, so it lands where the preview said. The preview warns
+automatic management and the incomplete-downloads folder off, so it lands where
+the preview said. The preview warns
 when an *arr watches the category. The source can carry a passkey, so it appears
 in no preview, target, error or audit row: the token binds its SHA-256.
 
@@ -3493,9 +3495,11 @@ own folder. The rename finishes in the background after the call returns.
 ## `set_torrent_category`
 
 Sets an existing category, or clears it with an empty string. The preview warns
-when an *arr watches the old or new category. If the change would relocate an
-automatically managed torrent it is refused without `move_files: true`, which
-needs `destructive`.
+when an *arr watches the old or new category, and when the new category removes
+torrents at its share limits; an instance protecting the torrent refuses that
+change outright. If the change would relocate an automatically managed torrent
+it is refused without `move_files: true`, which needs `destructive`, and it is
+refused while the torrent is unfinished and uses an incomplete-downloads folder.
 
 **Unverified live** (qBittorrent): changing a category, and reading whether the change relocates the torrent.
 

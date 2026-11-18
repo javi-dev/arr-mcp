@@ -10,7 +10,7 @@ import { jsonResponse, textResponse } from './serve.ts';
 
 /**
  * A qBittorrent WebUI as far as the torrent tools reach it. Written from the
- * WebUI API source of release-5.1.4, not captured from a live server.
+ * WebUI API source of release-5.3.0, not captured from a live server.
  */
 
 export const HASH = 'a'.repeat(40);
@@ -50,12 +50,14 @@ export const torrent = (over: Partial<RawTorrent> = {}): RawTorrent => ({
 
 export type FakeOptions = {
     torrents?: RawTorrent[];
-    categories?: Record<string, { savePath?: string }>;
+    categories?: Record<string, { savePath?: string; download_path?: string | boolean | null; share_limit_action?: string }>;
     files?: unknown[];
     trackers?: unknown[];
     properties?: Record<string, unknown>;
     preferences?: Record<string, unknown>;
     addAnswer?: string;
+    /** The status of `torrents/add`: 5.3.0 answers 202 while a URL is pending and 409 on failure. */
+    addStatus?: number;
     /** After a recheck, the state each read of the torrents shows in turn; the last one stays, and `null` removes them. */
     recheckStates?: (string | null)[];
     /** After a recheck, every read of the torrents fails. */
@@ -88,7 +90,8 @@ export function fakeQbittorrent(opts: FakeOptions = {}) {
                 script = [...(opts.recheckStates ?? [])];
                 blind = opts.recheckLosesSight === true;
             }
-            return textResponse(path === '/torrents/add' ? (opts.addAnswer ?? 'Ok.') : '');
+            if (path === '/torrents/add') return textResponse(opts.addAnswer ?? JSON.stringify({ success_count: 1, failure_count: 0, pending_count: 0, added_torrent_ids: [HASH] }), opts.addStatus ?? 200);
+            return textResponse('');
         }
         switch (path) {
             case '/torrents/info': {
@@ -116,7 +119,7 @@ export function fakeQbittorrent(opts: FakeOptions = {}) {
                 return textResponse('/data/torrents');
             case '/app/preferences':
                 // The defaults of a fresh qBittorrent 5.3.0 install.
-                return jsonResponse(opts.preferences ?? { torrent_changed_tmm_enabled: true, category_changed_tmm_enabled: false });
+                return jsonResponse(opts.preferences ?? { torrent_changed_tmm_enabled: true, category_changed_tmm_enabled: false, temp_path_enabled: false });
             default:
                 return jsonResponse({ message: 'not found' }, 404);
         }

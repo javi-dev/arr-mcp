@@ -24,7 +24,7 @@ const SETTINGS: Record<string, unknown> = {
     history_retention_number: 1
 };
 
-function harness(opts: { stores?: boolean; refuses?: string; breaksOn?: string; addStatus?: boolean; extra?: ServiceAdapter[]; over?: Record<string, unknown> } = {}) {
+function harness(opts: { stores?: boolean; refuses?: string; breaksOn?: string; addStatus?: boolean; addRefusal?: string; extra?: ServiceAdapter[]; over?: Record<string, unknown> } = {}) {
     const settings = { ...SETTINGS };
     const requests: URL[] = [];
     const addresses: string[] = [];
@@ -47,6 +47,7 @@ function harness(opts: { stores?: boolean; refuses?: string; breaksOn?: string; 
                 return jsonResponse({ config: { misc: { [keyword]: settings[keyword] } } });
             }
             case 'addurl':
+                if (opts.addRefusal !== undefined) return jsonResponse({ errorMessage: opts.addRefusal }, 400);
                 return jsonResponse({ status: opts.addStatus ?? true, nzo_ids: ['SABnzbd_nzo_1'] });
             case 'addfile':
                 uploads.push(init?.body as FormData);
@@ -108,6 +109,22 @@ describe('add_nzb', () => {
 
     it('keeps an upload inside what one request can carry', () => {
         expect(MAX_NZB_BASE64 + 64 * 1024).toBeLessThan(MAX_BODY_BYTES);
+    });
+
+    it('drops upstream words that repeat the source key, from the error and the audit', async () => {
+        const h = harness({ addRefusal: `could not fetch https://indexer.example/get/1.nzb?apikey=${PASSKEY}` });
+        const failure = await confirmed(h.call, 'add_nzb', { url: `https://indexer.example/get/1.nzb?apikey=${PASSKEY}` }).catch((err: Error) => err);
+        expect(String(failure)).toContain('did not add');
+        expect(String(failure)).not.toContain(PASSKEY);
+        expect(JSON.stringify(h.context.audit.recent())).not.toContain(PASSKEY);
+    });
+
+    it('binds the token to the name of an uploaded file', async () => {
+        const h = harness();
+        const preview = await h.call('add_nzb', { nzb_base64: b64(NZB), filename: 'first.nzb' });
+        const renamed = await h.call('add_nzb', { nzb_base64: b64(NZB), filename: 'other.nzb', confirm: preview.structuredContent.confirm_token });
+        expect(renamed.structuredContent.applied).toBe(false);
+        expect(h.uploads).toEqual([]);
     });
 
     it('never repeats a URL that carries a key', async () => {
@@ -257,6 +274,16 @@ describe('update_client_settings', () => {
         h.settings.unwanted_extensions_mode = mode;
         const preview = await h.call('update_client_settings', { unwanted_extensions: ['iso'] });
         expect(preview.structuredContent.effects.join(' ')).toContain(meaning);
+    });
+
+    it('does not let a token apply once the list has come to mean the opposite', async () => {
+        const h = harness();
+        const args = { unwanted_extensions: ['mkv'] };
+        const preview = await h.call('update_client_settings', args);
+        h.settings.unwanted_extensions_mode = 1;
+        const late = await h.call('update_client_settings', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.sent('set_config')).toEqual([]);
     });
 
     it('refuses a keyword outside the list at the adapter too', async () => {

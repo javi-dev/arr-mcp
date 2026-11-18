@@ -96,6 +96,40 @@ describe('recheck_torrents', () => {
         expect(applied.structuredContent.result).toMatchObject({ resumed: [HASH] });
     });
 
+    it('sees a check that only shows on the second read, as qBittorrent refreshes its state late', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['stoppedUP', 'checkingUP', 'stoppedUP'] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toMatchObject({ resumed: [HASH] });
+    });
+
+    it('does not call a torrent queued behind another check incomplete', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 10, progress: 0.9 })] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toMatchObject({ unconfirmed: [HASH] });
+        expect(applied.structuredContent.result).not.toHaveProperty('incomplete');
+    });
+
+    it('skips a torrent that has no metadata to check', async () => {
+        const h = harness({ torrents: [torrent(), torrent({ hash: OTHER, state: 'metaDL' })] });
+        const preview = await h.call('recheck_torrents', { ids: [HASH, OTHER] });
+        expect(preview.structuredContent.effects.join(' ')).toContain('no metadata to check yet');
+        await h.call('recheck_torrents', { ids: [HASH, OTHER], confirm: preview.structuredContent.confirm_token });
+        expect(h.posts).toEqual([{ path: '/torrents/recheck', form: { hashes: HASH } }]);
+    });
+
+    it('has nothing to do when no torrent has metadata yet', async () => {
+        const preview = await harness({ torrents: [torrent({ state: 'forcedMetaDL' })] }).call('recheck_torrents', { ids: [HASH] });
+        expect(preview.structuredContent.noop).toBe(true);
+    });
+
+    it('binds the token to whether it resumes', async () => {
+        const h = harness();
+        const preview = await h.call('recheck_torrents', { ids: [HASH] });
+        const resumed = await h.call('recheck_torrents', { ids: [HASH], resume_if_complete: true, confirm: preview.structuredContent.confirm_token });
+        expect(resumed.structuredContent.applied).toBe(false);
+        expect(h.posts).toEqual([]);
+    });
+
     it('does not start a torrent on the verdict of an earlier check', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
@@ -128,7 +162,7 @@ describe('recheck_torrents', () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckLosesSight: true });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
         expect(applied.structuredContent.applied).toBe(true);
-        expect(applied.structuredContent.result).toMatchObject({ still_checking: [HASH] });
+        expect(applied.structuredContent.result).toMatchObject({ unconfirmed: [HASH] });
     });
 
     it('says when a finished torrent could not be started', async () => {
@@ -144,7 +178,7 @@ describe('add_torrent', () => {
         const magnet = `magnet:?xt=urn:btih:${OTHER}`;
         const applied = await confirmed(h.call, 'add_torrent', { magnet, category: 'movies' });
         expect(applied.structuredContent.applied).toBe(true);
-        expect(h.posts).toEqual([{ path: '/torrents/add', form: { savepath: '/data/torrents/movies', autoTMM: 'false', category: 'movies', urls: magnet } }]);
+        expect(h.posts).toEqual([{ path: '/torrents/add', form: { savepath: '/data/torrents/movies', autoTMM: 'false', useDownloadPath: 'false', category: 'movies', urls: magnet } }]);
     });
 
     it('uploads a .torrent file and shows what it holds', async () => {
@@ -158,6 +192,7 @@ describe('add_torrent', () => {
 
         await h.call('add_torrent', { ...args, confirm: preview.structuredContent.confirm_token });
         expect(h.posts[0]!.multipart?.get('savepath')).toBe('/data/media/new');
+        expect(h.posts[0]!.multipart?.get('useDownloadPath')).toBe('false');
         expect(h.posts[0]!.multipart?.get('torrents')).toBeInstanceOf(Blob);
     });
 
@@ -246,9 +281,50 @@ describe('add_torrent', () => {
         expect(preview.structuredContent.noop).toBe(true);
     });
 
-    it('reports a refusal from qBittorrent as a failure', async () => {
-        const h = harness({ addAnswer: 'Fails.' });
+    it.each([
+        ['an older build', { addAnswer: 'Fails.' }],
+        ['5.3.0 counting a failure', { addAnswer: JSON.stringify({ success_count: 0, failure_count: 1, pending_count: 0 }) }],
+        ['5.3.0 answering 409', { addAnswer: '', addStatus: 409 }]
+    ])('reports a refusal from %s as a failure', async (_why, opts) => {
+        const h = harness(opts);
         await expect(confirmed(h.call, 'add_torrent', { magnet: `magnet:?xt=urn:btih:${OTHER}`, save_path: '/data/torrents' })).rejects.toThrow(/did not add/);
+    });
+
+    it('drops upstream words that repeat the source key, from the error and the audit', async () => {
+        const url = `https://indexer.example/get/${PASSKEY}.torrent`;
+        const h = harness({ addStatus: 400, addAnswer: JSON.stringify({ errorMessage: `could not fetch ${url}` }) });
+        const failure = await confirmed(h.call, 'add_torrent', { url, save_path: '/data/torrents' }).catch((err: Error) => err);
+        expect(String(failure)).toContain('did not add');
+        expect(String(failure)).not.toContain(PASSKEY);
+        expect(JSON.stringify(h.context.audit.recent())).not.toContain(PASSKEY);
+    });
+
+    it('says a source still being fetched is not finished', async () => {
+        const h = harness({ addStatus: 202, addAnswer: JSON.stringify({ success_count: 0, failure_count: 0, pending_count: 1 }) });
+        const applied = await confirmed(h.call, 'add_torrent', { url: 'https://indexer.example/a.torrent', save_path: '/data/torrents' });
+        expect(applied.structuredContent.summary).toContain('still fetching');
+    });
+
+    it('accepts a v2 magnet, and goes by its truncated hash', async () => {
+        const v2 = 'd'.repeat(64);
+        const h = harness({ torrents: [torrent({ hash: v2.slice(0, 40) })] });
+        const preview = await h.call('add_torrent', { magnet: `magnet:?xt=urn:btmh:1220${v2}`, save_path: '/data/torrents' });
+        expect(preview.structuredContent.noop).toBe(true);
+    });
+
+    it('names every tracker a magnet makes the client contact, however it is spelled', async () => {
+        const magnet = `magnet:?xt=urn:btih:${OTHER}&tr.1=https%3A%2F%2Fone.example%2Fa&TR=https%3A%2F%2Ftwo.example%2Fb`;
+        const preview = await harness().call('add_torrent', { magnet, save_path: '/data/torrents' });
+        expect(preview.structuredContent.effects.join(' ')).toContain('The client will contact: one.example, two.example.');
+    });
+
+    it('binds the token to the trackers of a magnet, not only its hash', async () => {
+        const h = harness();
+        const first = `magnet:?xt=urn:btih:${OTHER}&tr=https%3A%2F%2Fone.example%2Fa`;
+        const preview = await h.call('add_torrent', { magnet: first, save_path: '/data/torrents' });
+        const other = await h.call('add_torrent', { magnet: `magnet:?xt=urn:btih:${OTHER}&tr=https%3A%2F%2Fevil.example%2Fa`, save_path: '/data/torrents', confirm: preview.structuredContent.confirm_token });
+        expect(other.structuredContent.applied).toBe(false);
+        expect(h.posts).toEqual([]);
     });
 });
 
@@ -274,6 +350,19 @@ describe('set_torrent_location', () => {
         await expect(h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' })).rejects.toThrow(/would move it/);
     });
 
+    it.each(['metaDL', 'forcedMetaDL'])('points a torrent at %s without move_files, having nothing to move', async state => {
+        const preview = await harness({ torrents: [torrent({ state, completed: 0 })] }).call('set_torrent_location', { id: HASH, location: '/data/media/movies' });
+        expect(preview.structuredContent.tier).toBe('safe');
+        expect(preview.structuredContent.confirm_token).toBeDefined();
+    });
+
+    it('leaves unfinished data in the incomplete-downloads folder, and says so', async () => {
+        const h = harness({ torrents: [torrent({ state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete' })] });
+        const applied = await confirmed(h.call, 'set_torrent_location', { id: HASH, location: '/data/media/movies' });
+        expect(applied.structuredContent.effects[0]).toContain('stays in /data/torrents/incomplete');
+        expect(applied.structuredContent.summary).not.toContain('moving');
+    });
+
     it('refuses while the torrent is already moving', async () => {
         const h = harness({ torrents: [torrent({ state: 'moving' })] });
         await expect(h.call('set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true })).rejects.toThrow(/already being moved/);
@@ -296,7 +385,7 @@ describe('set_torrent_location', () => {
     });
 
     it('reports a move as accepted rather than finished', async () => {
-        const applied = await confirmed(harness({ torrents: [missing] }).call, 'set_torrent_location', { id: HASH, location: '/data/media/movies' });
+        const applied = await confirmed(harness().call, 'set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true });
         expect(applied.structuredContent.summary).toContain('in the background');
         expect(applied.structuredContent.result).toMatchObject({ pending: true });
     });
@@ -425,6 +514,51 @@ describe('set_torrent_category', () => {
         const late = await h.call('set_torrent_category', { ...args, confirm: preview.structuredContent.confirm_token });
         expect(late.structuredContent.applied).toBe(false);
         expect(h.posts).toEqual([]);
+    });
+
+    it.each([
+        ['the instance keeps unfinished data in a folder', { temp_path_enabled: true }, {}],
+        ['the category names its own folder', { temp_path_enabled: false }, { download_path: '/mnt/scratch/incomplete' }]
+    ])('refuses to relocate an unfinished torrent when %s', async (_why, prefs, tv) => {
+        const h = harness({
+            torrents: [torrent({ auto_tmm: true, state: 'downloading', amount_left: 500 })],
+            preferences: { torrent_changed_tmm_enabled: true, ...prefs },
+            categories: { movies: { savePath: '/data/torrents/movies' }, tv: { savePath: '/data/torrents/tv', ...tv } }
+        });
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv', move_files: true })).rejects.toThrow(/incomplete-downloads/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('refuses to relocate an unfinished torrent already in such a folder', async () => {
+        const h = harness({ torrents: [torrent({ auto_tmm: true, state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete/movies' })] });
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv', move_files: true })).rejects.toThrow(/incomplete-downloads/);
+    });
+
+    it('lets a category that opts out of the folder relocate an unfinished torrent', async () => {
+        const h = harness({
+            torrents: [torrent({ auto_tmm: true, state: 'downloading', amount_left: 500 })],
+            preferences: { torrent_changed_tmm_enabled: true, temp_path_enabled: true },
+            categories: { movies: {}, tv: { savePath: '/data/torrents/tv', download_path: false } }
+        });
+        const preview = await h.call('set_torrent_category', { id: HASH, category: 'tv', move_files: true });
+        expect(preview.structuredContent.confirm_token).toBeDefined();
+    });
+
+    it('warns when the new category removes torrents at its share limits', async () => {
+        const h = harness({ categories: { movies: {}, purge: { savePath: '/data/torrents/purge', share_limit_action: 'RemoveWithContent' } } as never });
+        const preview = await h.call('set_torrent_category', { id: HASH, category: 'purge' });
+        expect(preview.structuredContent.effects[0]).toContain('removes a torrent once it reaches');
+    });
+
+    it.each(['Remove', 'RemoveWithContent'])('refuses a protected torrent a category would %s at its limits', async action => {
+        const h = harness({ categories: { movies: {}, purge: { share_limit_action: action } } as never }, { protect_private_torrents: true });
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'purge' })).rejects.toThrow(/removes torrents at its share limits/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('lets a protected torrent into a category that only stops at its limits', async () => {
+        const h = harness({ categories: { movies: {}, hold: { share_limit_action: 'Stop' } } as never }, { protect_all_torrents: true });
+        expect((await h.call('set_torrent_category', { id: HASH, category: 'hold' })).structuredContent.confirm_token).toBeDefined();
     });
 
     it('warns about an *arr watching the category the torrent leaves', async () => {

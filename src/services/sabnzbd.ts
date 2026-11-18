@@ -441,28 +441,35 @@ export class SabnzbdAdapter
     /**
      * Both are POSTs, so an indexer's key in the URL stays out of the query
      * string and every access log on the way. Both answer 200 with
-     * `status: false` when SABnzbd refuses, so the body decides.
+     * `status: false` when SABnzbd refuses, so the body decides. A failed
+     * request keeps its status and drops the upstream's words, which can repeat
+     * the URL it was given.
      */
     async addNzb(source: NzbSource, opts: { category?: string }): Promise<{ ids: string[] }> {
         const cat = opts.category === undefined ? '' : `&cat=${encodeURIComponent(opts.category)}`;
+        const remedy = 'Check the source is a valid NZB and that SABnzbd can reach it, then try again.';
         let body: { status?: boolean; nzo_ids?: unknown };
-        if (source.kind === 'url') {
-            body = await this.#http.postForm('/api', {
-                mode: 'addurl',
-                name: source.url,
-                output: 'json',
-                ...(opts.category === undefined ? {} : { cat: opts.category })
+        try {
+            if (source.kind === 'url') {
+                body = await this.#http.postForm('/api', {
+                    mode: 'addurl',
+                    name: source.url,
+                    output: 'json',
+                    ...(opts.category === undefined ? {} : { cat: opts.category })
+                });
+            } else {
+                const form = new FormData();
+                form.set('name', new Blob([new Uint8Array(source.bytes)], { type: 'application/x-nzb' }), source.filename);
+                body = await this.#http.postMultipart(`/api?mode=addfile${cat}&output=json`, form);
+            }
+        } catch (err) {
+            if (!(err instanceof ServiceError)) throw err;
+            throw new ServiceError(err.kind, this.id, `SABnzbd did not add the NZB (HTTP ${err.status ?? 'error'})`, {
+                remedy: err.kind === 'AuthFailed' && err.remedy !== undefined ? err.remedy : remedy,
+                ...(err.status === undefined ? {} : { status: err.status })
             });
-        } else {
-            const form = new FormData();
-            form.set('name', new Blob([new Uint8Array(source.bytes)], { type: 'application/x-nzb' }), source.filename);
-            body = await this.#http.postMultipart(`/api?mode=addfile${cat}&output=json`, form);
         }
-        if (body.status !== true) {
-            throw new ServiceError('UpstreamError', this.id, 'SABnzbd did not add the NZB', {
-                remedy: 'Check the source is a valid NZB and that SABnzbd can reach it, then try again.'
-            });
-        }
+        if (body.status !== true) throw new ServiceError('UpstreamError', this.id, 'SABnzbd did not add the NZB', { remedy });
         return { ids: Array.isArray(body.nzo_ids) ? body.nzo_ids.filter((i): i is string => typeof i === 'string') : [] };
     }
 

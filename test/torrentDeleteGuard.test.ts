@@ -61,6 +61,27 @@ describe('remove_queue_item on qBittorrent', () => {
         await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/not known yet/);
     });
 
+    it('counts a torrent as private-unknown when its properties cannot be read', async () => {
+        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ private: undefined, ratio: undefined })], failing: ['/torrents/properties'] });
+        await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/not known yet/);
+    });
+
+    it('trusts no private flag while a torrent has no metadata', async () => {
+        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ state: 'forcedMetaDL', private: false })] });
+        await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/not known yet/);
+    });
+
+    it('does not let a token survive a torrent becoming protected, even with allow_protected', async () => {
+        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ private: false })] });
+        const args = { ...ARGS, allow_protected: true };
+        const preview = await h.call('remove_queue_item', args);
+        h.torrents[0]!.private = true;
+        const late = await h.call('remove_queue_item', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(late.structuredContent.effects[0]).toContain('Overrides the delete protection');
+        expect(h.posts).toEqual([]);
+    });
+
     it('fails closed when a proxy answers 404 for a torrent qBittorrent has just listed', async () => {
         const qb = fakeQbittorrent();
         const impl = ((input: string | URL | Request, init?: RequestInit) =>
@@ -128,6 +149,26 @@ describe('remove_queue_item on an *arr row', () => {
         const h = arrHarness([{ name: 'vpn' }, { name: 'novpn', over: { protect_all_torrents: true } }]);
         await expect(h.call('remove_queue_item', { service: 'radarr', id: '7' })).rejects.toThrow(/qbittorrent\/novpn protects/);
         expect(h.removed).toEqual([]);
+    });
+
+    it('fails closed when the protecting instance answers 404 to the lookup itself', async () => {
+        const removed: unknown[] = [];
+        const radarr = {
+            id: 'radarr',
+            type: 'radarr',
+            supportsBlocklist: true,
+            getQueue: () => Promise.resolve([arrRow]),
+            removeQueueItem: (_id: string, opts: unknown) => {
+                removed.push(opts);
+                return Promise.resolve();
+            }
+        } as unknown as ServiceAdapter;
+        const proxyDown = (() => Promise.resolve(new Response('', { status: 404 }))) as unknown as typeof fetch;
+        const { server, call } = toolServer();
+        const radarrInstance = { id: 'radarr', type: 'radarr', config: { url: 'http://192.0.2.10:7878', api_key: 'k', timeout_ms: 1000, permissions: { safe_write: true, destructive: true } } };
+        registerRemoveQueueItem(server, writeContext([radarrInstance as never]), [radarr, new QbittorrentAdapter(config('vpn', { protect_all_torrents: true }), proxyDown)]);
+        await expect(call('remove_queue_item', { service: 'radarr', id: '7' })).rejects.toThrow(/could not be read/);
+        expect(removed).toEqual([]);
     });
 
     it('guards a blocklist-only removal, since the *arr can still delete the download', async () => {

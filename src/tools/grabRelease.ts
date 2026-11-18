@@ -91,7 +91,7 @@ const findClient = (
  * own words about a string this tool could have rejected. No whitespace at
  * all: qbittorrent splits `urls` on newlines and fetches every part.
  */
-export const MAGNET = /^magnet:\?\S*xt=urn:btih:[0-9a-zA-Z]+\S*$/;
+const MAGNET = /^magnet:\?\S*xt=urn:btih:[0-9a-zA-Z]+\S*$/;
 
 /** Trackers, web seeds and .torrent sources: hosts the client reaches out to on the link's say-so. */
 const contactedHosts = (magnet: string): string[] => {

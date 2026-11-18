@@ -169,7 +169,7 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
                     'It appears in get_queue and can be removed again with remove_queue_item.'
                 ],
                 // A digest and never the source: this object is written to the audit log.
-                args: { source_sha256: source.digest, category: args.category ?? '' }
+                args: { source_sha256: source.digest, category: args.category ?? '', filename: source.request.kind === 'file' ? source.request.filename : '' }
             };
         },
 
@@ -242,7 +242,11 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
                     ...(retentionChanges ? [`History retention afterwards: ${shown(option)}, counting ${shown(number)}.`] : [])
                 ],
                 // The retention in force, so a token cannot outlive a change to the half of it this call leaves alone.
-                args: { changes, ...(retentionChanges ? { retention: { option, number } } : {}) }
+                args: {
+                    changes,
+                    ...(retentionChanges ? { retention: { option, number } } : {}),
+                    ...('unwanted_extensions' in changes ? { unwantedMode: current.unwanted_extensions_mode } : {})
+                }
             };
         },
 

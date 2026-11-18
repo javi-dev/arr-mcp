@@ -7,9 +7,9 @@ import { logger } from '../core/logger.ts';
 import { MAX_TORRENT_BYTES, readTorrentFile } from '../core/torrentFile.ts';
 import { allowedPath, downloadHost, renamedPath, trackerHost } from '../core/torrentGuards.ts';
 import { btihToHex } from '../services/qbittorrent.ts';
-import { hasTorrentManage, type ServiceAdapter, type TorrentCheckState, type TorrentManageCapable, type TorrentSource } from '../services/types.ts';
-import { MAGNET } from './grabRelease.ts';
+import { hasTorrentManage, type ServiceAdapter, type TorrentCategory, type TorrentCheckState, type TorrentManageCapable, type TorrentSource } from '../services/types.ts';
 import { INSTANCE_PARAM_DESCRIPTION, resolveInstance } from './resolveInstance.ts';
+import { protectionOf } from './torrentDelete.ts';
 import { categoryWatchers } from './watchedCategory.ts';
 import { registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
 
@@ -47,10 +47,10 @@ const digestOf = (source: string | Buffer): string => createHash('sha256').updat
  * as `SessionImpl::categorySavePath` works it out: a category with no path of
  * its own sits under its parent's, named for its last segment.
  */
-const categoryPath = (base: string, categories: ReadonlyMap<string, string>, category: string): string => {
+const categoryPath = (base: string, categories: ReadonlyMap<string, TorrentCategory>, category: string): string => {
     const trimmed = base.replace(/\/+$/, '');
     if (category === '') return trimmed;
-    const own = categories.get(category) ?? '';
+    const own = categories.get(category)?.savePath ?? '';
     if (own !== '') return own.startsWith('/') ? own.replace(/\/+$/, '') : `${trimmed}/${own}`;
     const slash = category.lastIndexOf('/');
     const parent = categoryPath(base, categories, slash < 0 ? '' : category.slice(0, slash));
@@ -59,7 +59,7 @@ const categoryPath = (base: string, categories: ReadonlyMap<string, string>, cat
 };
 
 /** Every category of the client, once `category` is known to be among them. */
-async function categoriesWith(client: Client, category: string): Promise<ReadonlyMap<string, string>> {
+async function categoriesWith(client: Client, category: string): Promise<ReadonlyMap<string, TorrentCategory>> {
     const categories = await client.torrentCategories();
     if (category !== '' && !categories.has(category)) {
         throw new ServiceError('NotFound', client.id, `${client.id} has no category named "${category}"`, {
@@ -70,10 +70,16 @@ async function categoriesWith(client: Client, category: string): Promise<Readonl
 }
 
 /** How long `resume_if_complete` watches a recheck before leaving the rest to the caller. */
-const WATCH_POLLS = 22;
+const WATCH_MS = 45_000;
+/** Quick reads at first, so a small torrent is caught while it is checking; qBittorrent refreshes a torrent's state about every 1.5 seconds. */
+const FAST_POLLS = 10;
+const FAST_POLL_MS = 300;
 const WATCH_POLL_MS = 2_000;
-/** Polls a torrent may show no checking state before it counts as already finished: a small one can finish between two reads. */
-const GRACE_POLLS = 2;
+/** How long a complete torrent may show no checking state before the watch stops waiting for one. */
+const GRACE_MS = 4_000;
+
+/** qBittorrent accepts a recheck of these and does nothing: there is no data to check until the metadata arrives. */
+const NO_METADATA = new Set(['metaDL', 'forcedMetaDL']);
 
 type TorrentToolOptions = { sleep?: (ms: number) => Promise<void> };
 
@@ -83,16 +89,19 @@ type RecheckOutcome = { rechecking: string[]; resumed?: string[]; incomplete?: s
 
 /**
  * Watches a recheck that has been sent, and starts what came back whole and
- * stopped. Only a torrent seen checking counts as verified: before the check
- * begins, `complete` is still the answer from the last one. The first read is
- * immediate because qBittorrent reports the checking state as soon as it
- * accepts a recheck, which is what lets a small torrent be seen at all.
+ * stopped. Only a torrent seen checking counts as verified: until its check
+ * begins, `complete` is still the answer from the last one. qBittorrent checks
+ * one torrent at a time, so a torrent showing no check may simply be queued: an
+ * incomplete one is watched to the end rather than reported as checked.
  */
 async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: number) => Promise<void>): Promise<RecheckOutcome> {
     const seenChecking = new Set<string>();
     const settled = new Map<string, TorrentCheckState | undefined>();
-    for (let poll = 0; poll <= WATCH_POLLS && settled.size < ids.length; poll += 1) {
-        if (poll > 0) await sleep(WATCH_POLL_MS);
+    let waited = 0;
+    for (let poll = 0; waited < WATCH_MS && settled.size < ids.length; poll += 1) {
+        const pause = poll === 0 ? 0 : poll <= FAST_POLLS ? FAST_POLL_MS : WATCH_POLL_MS;
+        if (pause > 0) await sleep(pause);
+        waited += pause;
         const pending = ids.filter(id => !settled.has(id));
         let states: TorrentCheckState[];
         try {
@@ -104,7 +113,7 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         for (const id of pending) {
             const state = states.find(s => s.id === id);
             if (state?.checking === true) seenChecking.add(id);
-            else if (state === undefined || seenChecking.has(id) || poll >= GRACE_POLLS) settled.set(id, state);
+            else if (state === undefined || seenChecking.has(id) || (state.complete && waited >= GRACE_MS)) settled.set(id, state);
         }
     }
 
@@ -125,8 +134,8 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         rechecking: [...ids],
         ...list(resumeFailed ? 'resume_failed' : 'resumed', toStart),
         ...list('incomplete', finished.flatMap(([id, s]) => (s !== undefined && !s.complete ? [id] : []))),
-        ...list('still_checking', ids.filter(id => !settled.has(id))),
-        ...list('unconfirmed', wholeAndStopped.filter(id => !seenChecking.has(id))),
+        ...list('still_checking', ids.filter(id => !settled.has(id) && seenChecking.has(id))),
+        ...list('unconfirmed', [...wholeAndStopped.filter(id => !seenChecking.has(id)), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id))]),
         ...list('gone', finished.flatMap(([id, s]) => (s === undefined ? [id] : [])))
     };
 }
@@ -136,9 +145,9 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
     const part = (label: string, ids: string[] | undefined) => (ids === undefined ? [] : [`${label}: ${ids.join(', ')}`]);
     return `Recheck sent. ${[
         ...part('started again', o.resumed),
-        ...part('came back incomplete and left stopped', o.incomplete),
+        ...part('came back incomplete', o.incomplete),
         ...part('still checking, so start these with pause_downloads once get_queue shows them complete', o.still_checking),
-        ...part('no check was seen running, so left stopped until get_queue shows them verified', o.unconfirmed),
+        ...part('no check was seen running yet, so these were not started; look at them again in get_queue', o.unconfirmed),
         ...part('removed while checking', o.gone),
         ...part('finished complete but could not be started', o.resume_failed)
     ].join('; ')}.`;
@@ -157,9 +166,13 @@ function torrentBytes(service: string, base64: string): Buffer {
 /** The hosts a magnet link would have the client contact, and nothing else of it. */
 const magnetHosts = (magnet: string): string[] => {
     const params = [...new URLSearchParams(magnet.slice('magnet:?'.length))];
-    const hosts = params.filter(([key]) => ['tr', 'ws', 'xs', 'as'].includes(key)).flatMap(([, value]) => trackerHost(value) ?? []);
+    // libtorrent reads `tr.1` as `tr`, and any case.
+    const hosts = params.filter(([key]) => ['tr', 'ws', 'xs', 'as'].includes(key.toLowerCase().replace(/\.\d+$/, ''))).flatMap(([, value]) => trackerHost(value) ?? []);
     return [...new Set(hosts)];
 };
+
+/** A v1, v2 or hybrid magnet. No whitespace at all: qBittorrent splits `urls` on newlines and fetches every part. */
+const MAGNET = /^magnet:\?\S*xt=urn:(?:btih:[0-9a-zA-Z]+|btmh:1220[0-9a-fA-F]{64})\S*$/;
 
 type AddSource = {
     request: TorrentSource;
@@ -178,7 +191,7 @@ function addSource(service: string, args: { magnet?: string | undefined; url?: s
     }
     if (args.magnet !== undefined) {
         if (args.magnet.length > 8192 || !MAGNET.test(args.magnet)) {
-            throw new ServiceError('NotFound', service, 'that is not a magnet link', { remedy: 'A magnet starts `magnet:?` and carries `xt=urn:btih:<hash>`.' });
+            throw new ServiceError('NotFound', service, 'that is not a magnet link', { remedy: 'A magnet starts `magnet:?` and carries `xt=urn:btih:<hash>` or `xt=urn:btmh:1220<hash>`.' });
         }
         // A hybrid torrent goes by its truncated SHA-256, as an uploaded one does.
         const v2 = /xt=urn:btmh:1220([0-9a-fA-F]{64})/.exec(args.magnet)?.[1];
@@ -282,14 +295,16 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             if (missing.length > 0) {
                 throw new ServiceError('NotFound', client.id, `no torrent with hash ${missing.join(', ')}`, { remedy: 'Take current ids from get_queue.' });
             }
-            const toCheck = states.filter(s => !s.checking).map(s => s.id).sort();
+            const skipped = states.filter(s => NO_METADATA.has(s.state));
+            const toCheck = states.filter(s => !s.checking && !NO_METADATA.has(s.state)).map(s => s.id).sort();
             const target = `${client.id}:${toCheck.length === 0 ? wanted.join(',') : toCheck.join(',')}`;
-            if (toCheck.length === 0) return { target, summary: `Every one of those torrents is already being checked on ${client.id}.`, effects: [], noop: true };
+            if (toCheck.length === 0) return { target, summary: `None of those torrents can be checked on ${client.id}: each is already checking or still fetching its metadata.`, effects: [], noop: true };
             return {
                 target,
                 summary: `Recheck ${toCheck.length} torrent(s) on ${client.id}.`,
                 effects: [
                     ...states.filter(s => toCheck.includes(s.id)).slice(0, 10).map(s => `Checks ${s.title} (${s.id}).`),
+                    ...skipped.map(s => `Skips ${s.title} (${s.id}), which has no metadata to check yet.`),
                     'Reads all their data again, which can take a long time on large torrents and adds disk load while it runs.',
                     resume_if_complete
                         ? 'Starts each stopped torrent that comes back complete. An incomplete one stays stopped.'
@@ -344,6 +359,9 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             };
         },
 
+        applied: (outcome, plan) =>
+            (outcome as { pending: boolean }).pending ? `qBittorrent accepted ${plan.target} and is still fetching it. get_queue lists it once it arrives.` : undefined,
+
         async apply(plan, args) {
             const client = clientOf(adapters, args.instance);
             const source = addSource(client.id, args);
@@ -375,29 +393,36 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 throw new ServiceError('NotFound', client.id, 'that torrent is already being moved', { remedy: 'Wait for the move to finish, then look at it again in get_queue.' });
             }
             // The state alone decides. `completed: 0` is no proof: preallocated files count as nothing downloaded, and they move.
-            const noData = details.state === 'missingFiles' || details.state === 'metaDL' || details.state === 'forcedMetaDL';
-            if (!noData && !move_files) {
+            const noData = details.state === 'missingFiles' || NO_METADATA.has(details.state);
+            // Unfinished data in the incomplete-downloads folder stays there: qBittorrent only records where it goes when finished.
+            const heldElsewhere = details.downloadPath !== undefined && (details.remainingBytes ?? 0) > 0;
+            const moves = !noData && !heldElsewhere;
+            if (moves && !move_files) {
                 throw new ServiceError('NotFound', client.id, `${details.title} has data at its current path, and qBittorrent would move it`, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_location again with `move_files: true`.'
                 });
             }
             return {
                 target,
-                summary: `${noData ? 'Point' : 'Move'} ${details.title} ${noData ? 'at' : 'to'} ${path} on ${client.id}.`,
+                summary: `${moves ? 'Move' : 'Point'} ${details.title} ${moves ? 'to' : 'at'} ${path} on ${client.id}.`,
                 effects: [
-                    noData
+                    heldElsewhere
+                        ? `Its unfinished data stays in ${details.downloadPath}. Only where it goes once finished changes.`
+                        : noData
                         ? `qBittorrent reports its data missing from ${details.savePath ?? 'its current path'}. It has no call that changes the path alone, so any file of this torrent still there moves too.`
                         : `Physically moves ${size(details.completedBytes)} from ${details.savePath ?? 'its current path'} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
-                    ...(noData ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
+                    ...(noData && !heldElsewhere ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
                 // `moves`, so a token from a preview that promised no move cannot apply to data that has since come back.
-                args: { id: details.id, location: path, moveFiles: move_files, moves: !noData }
+                args: { id: details.id, location: path, moveFiles: move_files, moves }
             };
         },
 
         applied: (_outcome, plan) =>
-            `qBittorrent accepted the new location for ${plan.target} and works on it in the background. get_queue shows the torrent at \`moving\` until it is done.`,
+            plan.args?.moves === true
+                ? `qBittorrent accepted the new location for ${plan.target} and moves the data in the background. get_queue shows the torrent at \`moving\` until it is done.`
+                : undefined,
 
         async apply(plan, { instance }) {
             const { id, location } = plan.args as { id: string; location: string };
@@ -472,6 +497,18 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_category again with `move_files: true`.'
                 });
             }
+            if (relocates && (details.remainingBytes ?? 0) > 0 && (details.downloadPath !== undefined || (await client.incompleteFolderApplies(category)))) {
+                throw new ServiceError('NotFound', client.id, `${details.title} is unfinished, and this change would move its data between incomplete-downloads folders`, {
+                    remedy: 'Nothing was changed. Try again once the torrent has finished downloading.'
+                });
+            }
+            const removesAtLimit = categories.get(category)?.removesAtLimit === true;
+            const protection = removesAtLimit ? protectionOf(client, details) : undefined;
+            if (protection !== undefined) {
+                throw new ServiceError('PermissionDenied', client.id, `category "${category}" removes torrents at its share limits, and ${protection}`, {
+                    remedy: 'Nothing was changed. Pick another category, or change that category\'s share limit action in qBittorrent.'
+                });
+            }
             const watchers = [...new Set([
                 ...(await categoryWatchers(adapters, 'QBittorrent', category)),
                 ...(await categoryWatchers(adapters, 'QBittorrent', details.category))
@@ -480,6 +517,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 target,
                 summary: `Set the category of ${details.title} to ${category === '' ? 'none' : `"${category}"`} on ${client.id}.`,
                 effects: [
+                    ...(removesAtLimit ? [`Warning: category "${category}" removes a torrent once it reaches that category's share limits, which can delete this one.`] : []),
                     ...watchers,
                     destination === undefined
                         ? 'The data stays where it is.'
@@ -487,7 +525,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
-                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '' }
+                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '', removesAtLimit }
             };
         },
 
