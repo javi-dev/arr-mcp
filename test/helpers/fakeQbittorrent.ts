@@ -36,6 +36,8 @@ export const torrent = (over: Partial<RawTorrent> = {}): RawTorrent => ({
     name: 'Some.Film.2026-GROUP',
     state: 'stalledUP',
     save_path: '/data/torrents/movies',
+    content_path: '/data/torrents/movies/Some.Film',
+    has_metadata: true,
     category: 'movies',
     auto_tmm: false,
     private: true,
@@ -50,7 +52,7 @@ export const torrent = (over: Partial<RawTorrent> = {}): RawTorrent => ({
 
 export type FakeOptions = {
     torrents?: RawTorrent[];
-    categories?: Record<string, { savePath?: string; download_path?: string | boolean | null; share_limit_action?: string }>;
+    categories?: Record<string, Record<string, unknown>>;
     files?: unknown[];
     trackers?: unknown[];
     properties?: Record<string, unknown>;
@@ -119,7 +121,17 @@ export function fakeQbittorrent(opts: FakeOptions = {}) {
                 return textResponse('/data/torrents');
             case '/app/preferences':
                 // The defaults of a fresh qBittorrent 5.3.0 install.
-                return jsonResponse(opts.preferences ?? { torrent_changed_tmm_enabled: true, category_changed_tmm_enabled: false, temp_path_enabled: false });
+                return jsonResponse(opts.preferences ?? {
+                        torrent_changed_tmm_enabled: true,
+                        category_changed_tmm_enabled: false,
+                        temp_path_enabled: false,
+                        temp_path: '/data/torrents/incomplete',
+                        max_ratio_enabled: false,
+                        max_ratio: -1,
+                        max_seeding_time_enabled: false,
+                        max_seeding_time: -1,
+                        max_ratio_act: 0
+                    });
             default:
                 return jsonResponse({ message: 'not found' }, 404);
         }

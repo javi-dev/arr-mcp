@@ -31,9 +31,11 @@ import {
     type TorrentAdded,
     type TorrentCategory,
     type TorrentCheckState,
+    type TorrentClientDefaults,
     type TorrentDetails,
     type TorrentEndpoint,
     type TorrentManageCapable,
+    type TorrentShareRule,
     type TorrentSource,
     type TorrentTrackerRow,
     PAUSE_MARK
@@ -77,6 +79,10 @@ type RawTorrent = {
     save_path?: string;
     auto_tmm?: boolean;
     download_path?: string;
+    content_path?: string;
+    has_metadata?: boolean;
+    share_limit_action?: string;
+    inactive_seeding_time_limit?: number;
     progress?: number;
     completed?: number;
 };
@@ -96,7 +102,10 @@ type RawFile = { name?: string; size?: number; progress?: number };
 type RawTracker = { url?: string; status?: number; updating?: boolean };
 
 /** `download_path` is a folder, `false` for none, or `null` to follow the global setting. */
-type RawCategories = Record<string, { savePath?: string; download_path?: string | boolean | null; share_limit_action?: string }>;
+type RawCategories = Record<
+    string,
+    { savePath?: string; download_path?: string | boolean | null; share_limit_action?: string; ratio_limit?: number; seeding_time_limit?: number; inactive_seeding_time_limit?: number }
+>;
 
 type RawMainData = { server_state?: { free_space_on_disk?: number } };
 type RawPreferences = {
@@ -105,6 +114,9 @@ type RawPreferences = {
     torrent_changed_tmm_enabled?: boolean;
     /** "Keep incomplete torrents in". */
     temp_path_enabled?: boolean;
+    temp_path?: string;
+    max_inactive_seeding_time_enabled?: boolean;
+    max_inactive_seeding_time?: number;
     max_ratio_enabled?: boolean;
     max_ratio?: number;
     max_seeding_time_enabled?: boolean;
@@ -215,6 +227,19 @@ const TRACKER_STATUS: Record<number, string> = {
     6: 'unreachable'
 };
 
+/** A stopped magnet has no metadata either, which only `has_metadata` says; a build too old to send it still has the states. */
+const hasMetadataOf = (t: RawTorrent): boolean => t.has_metadata !== false && t.state !== 'metaDL' && t.state !== 'forcedMetaDL';
+
+/** `max_ratio_act` as the action names categories and torrents use. Unknown counts as removing: the guard fails closed. */
+const SHARE_ACTION_NAME: Record<number, string> = { 0: 'Stop', 1: 'Remove', 2: 'EnableSuperSeeding', 3: 'RemoveWithContent' };
+
+const shareRuleOf = (raw: { share_limit_action?: string; ratio_limit?: number; seeding_time_limit?: number; inactive_seeding_time_limit?: number }): TorrentShareRule => ({
+    action: raw.share_limit_action ?? 'Default',
+    ratio: raw.ratio_limit ?? -2,
+    seedingMinutes: raw.seeding_time_limit ?? -2,
+    inactiveMinutes: raw.inactive_seeding_time_limit ?? -2
+});
+
 /** qBittorrent's ceiling, which it reports as -1 once a ratio reaches it. */
 const MAX_RATIO = 9999;
 
@@ -226,7 +251,7 @@ const shownRatio = (ratio: number | undefined): number | undefined => (ratio ===
  * is absent altogether, on a build too old to have it.
  */
 const privateOf = (info: RawTorrent, props: RawProperties | undefined): boolean | null => {
-    if (info.state === 'metaDL' || info.state === 'forcedMetaDL') return null;
+    if (!hasMetadataOf(info)) return null;
     if (typeof info.private === 'boolean' || info.private === null) return info.private;
     if (props === undefined) return null;
     return props.private !== undefined ? props.private : (props.is_private ?? null);
@@ -270,6 +295,16 @@ function addAccepted(body: string): boolean {
         if (typeof counts !== 'object' || counts === null) return false;
         const n = (v: unknown) => (typeof v === 'number' ? v : 0);
         return n(counts.success_count) + n(counts.pending_count) > 0 || n(counts.failure_count) === 0;
+    } catch {
+        return false;
+    }
+}
+
+/** Only 5.2 and later say; an older build's `Ok.` promises nothing either way. */
+function stillPending(body: string): boolean {
+    try {
+        const counts = JSON.parse(body) as { pending_count?: unknown };
+        return typeof counts.pending_count === 'number' && counts.pending_count > 0;
     } catch {
         return false;
     }
@@ -633,7 +668,8 @@ export class QbittorrentAdapter
             }
             throw err;
         };
-        const [info] = await this.#torrents(hash).catch(listed);
+        // `getArray`, because only a real empty list proves the torrent is absent.
+        const [info] = await this.#http.getArray<RawTorrent>(`${API}/torrents/info?hashes=${hash}`).catch(listed);
         if (info === undefined) throw this.#notFound(id);
 
         const incomplete = info.save_path === undefined || typeof info.private !== 'boolean' || info.ratio === undefined || info.seeding_time === undefined;
@@ -659,6 +695,9 @@ export class QbittorrentAdapter
             state: info.state ?? '',
             ...(savePath === undefined ? {} : { savePath }),
             ...(info.download_path === undefined || info.download_path === '' ? {} : { downloadPath: info.download_path }),
+            ...(info.content_path === undefined || info.content_path === '' ? {} : { contentPath: info.content_path }),
+            hasMetadata: hasMetadataOf(info),
+            share: shareRuleOf(info),
             private: privateOf(info, props),
             ...(ratio === undefined ? {} : { ratio }),
             ...(seedingSeconds === undefined || seedingSeconds < 0 ? {} : { seedingSeconds }),
@@ -690,7 +729,8 @@ export class QbittorrentAdapter
                 state,
                 checking: CHECKING_STATES.has(state),
                 complete: t.amount_left === 0 && t.progress === 1,
-                stopped: PAUSED_STATES.has(state)
+                stopped: PAUSED_STATES.has(state),
+                hasMetadata: hasMetadataOf(t)
             }];
         });
     }
@@ -708,21 +748,29 @@ export class QbittorrentAdapter
         return new Map(
             Object.entries(raw ?? {}).map(([name, c]) => [
                 name,
-                { savePath: c.savePath ?? '', removesAtLimit: c.share_limit_action === 'Remove' || c.share_limit_action === 'RemoveWithContent' }
+                {
+                    savePath: c.savePath ?? '',
+                    downloadPath: typeof c.download_path === 'string' ? c.download_path : c.download_path === false ? false : null,
+                    share: shareRuleOf(c)
+                }
             ])
         );
     }
 
-    /** Read fresh, and unknown counts as yes: this decides whether a category change may move unfinished data. */
-    async incompleteFolderApplies(category: string): Promise<boolean> {
-        const [categories, prefs] = await Promise.all([
-            this.#http.get<RawCategories>(`${API}/torrents/categories`),
-            this.#http.get<RawPreferences>(`${API}/app/preferences`)
-        ]);
-        const own = categories?.[category]?.download_path;
-        if (typeof own === 'string') return true;
-        if (own === false) return false;
-        return prefs.temp_path_enabled !== false;
+    /** Read fresh, and what is missing counts against the write: these decide where data may move and whether it may be deleted. */
+    async torrentClientDefaults(): Promise<TorrentClientDefaults> {
+        const prefs = await this.#http.get<RawPreferences>(`${API}/app/preferences`);
+        const limit = (enabled: boolean | undefined, value: number | undefined): number => (enabled === true ? (value ?? -1) : -1);
+        return {
+            incompleteEnabled: prefs.temp_path_enabled !== false,
+            incompletePath: prefs.temp_path ?? '',
+            share: {
+                action: SHARE_ACTION_NAME[prefs.max_ratio_act ?? -1] ?? 'Remove',
+                ratio: limit(prefs.max_ratio_enabled, prefs.max_ratio),
+                seedingMinutes: limit(prefs.max_seeding_time_enabled, prefs.max_seeding_time),
+                inactiveMinutes: limit(prefs.max_inactive_seeding_time_enabled, prefs.max_inactive_seeding_time)
+            }
+        };
     }
 
     async defaultSavePath(): Promise<string> {
@@ -767,7 +815,7 @@ export class QbittorrentAdapter
             });
         }
         if (!addAccepted(answer)) throw new ServiceError('UpstreamError', this.id, 'qBittorrent did not add the torrent', { remedy });
-        return { accepted: true, pending: source.kind === 'url' };
+        return { accepted: true, pending: stillPending(answer) };
     }
 
     async setTorrentLocation(id: string, location: string): Promise<void> {

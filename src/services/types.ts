@@ -2032,8 +2032,13 @@ export type TorrentDetails = {
     /** qBittorrent's raw state, which the location and recheck rules read. */
     state: string;
     savePath?: string;
-    /** Where an unfinished torrent keeps its data, when that is not `savePath`. */
+    /** The incomplete-downloads folder this torrent is set to use. */
     downloadPath?: string;
+    /** Where its files are right now. */
+    contentPath?: string;
+    hasMetadata: boolean;
+    /** Its own share limits, before any category or client default applies. */
+    share: TorrentShareRule;
     /** `null` when the torrent has no metadata yet, so nobody can say. */
     private: boolean | null;
     ratio?: number;
@@ -2052,13 +2057,20 @@ export type TorrentDetails = {
     trackers: TorrentTrackerRow[];
 };
 
+/** Share limits as qBittorrent stores them: -2 and `Default` inherit, -1 means no limit. */
+export type TorrentShareRule = { action: string; ratio: number; seedingMinutes: number; inactiveMinutes: number };
+
 /** A qBittorrent category, as the torrent tools need to reason about it. */
 export type TorrentCategory = {
     /** As configured: may be empty or relative. */
     savePath: string;
-    /** Whether this category's own settings remove a torrent at its share limits. */
-    removesAtLimit: boolean;
+    /** Its incomplete-downloads folder: a path, `false` for none, or `null` to inherit. */
+    downloadPath: string | false | null;
+    share: TorrentShareRule;
 };
+
+/** What a category inherits from once its parents run out. */
+export type TorrentClientDefaults = { incompleteEnabled: boolean; incompletePath: string; share: TorrentShareRule };
 
 /** What a torrent is added from. The source reaches only the adapter's request and is never echoed. */
 export type TorrentSource = { kind: 'url'; url: string } | { kind: 'file'; bytes: Buffer; filename: string };
@@ -2066,7 +2078,7 @@ export type TorrentSource = { kind: 'url'; url: string } | { kind: 'file'; bytes
 export type TorrentAdded = { accepted: true; pending: boolean };
 
 /** One row of `recheck_torrents`' watch. */
-export type TorrentCheckState = { id: string; /** Fenced. */ title: string; state: string; checking: boolean; complete: boolean; stopped: boolean };
+export type TorrentCheckState = { id: string; /** Fenced. */ title: string; state: string; checking: boolean; complete: boolean; stopped: boolean; hasMetadata: boolean };
 
 export interface TorrentManageCapable {
     /** Roots a location may sit under, from `allowed_paths`. */
@@ -2078,8 +2090,7 @@ export interface TorrentManageCapable {
     recheckTorrents(ids: readonly string[]): Promise<void>;
     startTorrents(ids: readonly string[]): Promise<void>;
     torrentCategories(): Promise<Map<string, TorrentCategory>>;
-    /** Whether unfinished data of this category sits in qBittorrent's incomplete-downloads folder. */
-    incompleteFolderApplies(category: string): Promise<boolean>;
+    torrentClientDefaults(): Promise<TorrentClientDefaults>;
     defaultSavePath(): Promise<string>;
     /** Whether a category change relocates an automatically managed torrent. */
     categoryChangeRelocates(): Promise<boolean>;

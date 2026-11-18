@@ -203,7 +203,8 @@ describe('update_client_settings', () => {
         const h = harness();
         const args = { action_on_unwanted_extensions: 'abort', fail_hopeless_jobs: true };
         const preview = await h.call('update_client_settings', args);
-        expect(preview.structuredContent.effects).toEqual(['action_on_unwanted_extensions: pause becomes abort.']);
+        expect(preview.structuredContent.effects[0]).toBe('action_on_unwanted_extensions: pause becomes abort.');
+        expect(preview.structuredContent.effects.join(' ')).not.toContain('fail_hopeless_jobs');
         expect(h.sent('set_config')).toEqual([]);
 
         await h.call('update_client_settings', { ...args, confirm: preview.structuredContent.confirm_token });
@@ -281,6 +282,27 @@ describe('update_client_settings', () => {
         const args = { unwanted_extensions: ['mkv'] };
         const preview = await h.call('update_client_settings', args);
         h.settings.unwanted_extensions_mode = 1;
+        const late = await h.call('update_client_settings', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.sent('set_config')).toEqual([]);
+    });
+
+    it('does not let a token apply once the action on the list has changed', async () => {
+        const h = harness();
+        const args = { unwanted_extensions: ['mkv'] };
+        const preview = await h.call('update_client_settings', args);
+        expect(preview.structuredContent.effects.join(' ')).toContain('Unwanted extensions afterwards: mkv, action pause.');
+        h.settings.action_on_unwanted_extensions = 2;
+        const late = await h.call('update_client_settings', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.sent('set_config')).toEqual([]);
+    });
+
+    it('does not let a token for the action apply once the list has changed', async () => {
+        const h = harness();
+        const args = { action_on_unwanted_extensions: 'abort' };
+        const preview = await h.call('update_client_settings', args);
+        h.settings.unwanted_extensions = ['mkv'];
         const late = await h.call('update_client_settings', { ...args, confirm: preview.structuredContent.confirm_token });
         expect(late.structuredContent.applied).toBe(false);
         expect(h.sent('set_config')).toEqual([]);

@@ -233,19 +233,26 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
             const target = `${client.id}:settings`;
             if (Object.keys(changes).length === 0) return { target, summary: `${client.id} already has those settings.`, effects: [], noop: true };
             const retentionChanges = 'history_retention_option' in changes || 'history_retention_number' in changes;
+            const unwantedChanges = 'unwanted_extensions' in changes || 'action_on_unwanted_extensions' in changes;
+            const unwanted = {
+                extensions: requested.unwanted_extensions ?? current.unwanted_extensions,
+                mode: current.unwanted_extensions_mode,
+                action: requested.action_on_unwanted_extensions ?? current.action_on_unwanted_extensions
+            };
             return {
                 target,
                 summary: `Change ${Object.keys(changes).length} setting(s) on ${client.id}.`,
                 effects: [
                     ...Object.entries(changes).map(([name, value]) => `${name}: ${shown(current[name as keyof SabClientSettings])} becomes ${shown(value)}.`),
-                    ...('unwanted_extensions' in changes ? [unwantedMeaning(current.unwanted_extensions_mode)] : []),
+                    ...(unwantedChanges ? [unwantedMeaning(unwanted.mode), `Unwanted extensions afterwards: ${shown(unwanted.extensions)}, action ${shown(unwanted.action)}.`] : []),
                     ...(retentionChanges ? [`History retention afterwards: ${shown(option)}, counting ${shown(number)}.`] : [])
                 ],
                 // The retention in force, so a token cannot outlive a change to the half of it this call leaves alone.
                 args: {
                     changes,
                     ...(retentionChanges ? { retention: { option, number } } : {}),
-                    ...('unwanted_extensions' in changes ? { unwantedMode: current.unwanted_extensions_mode } : {})
+                    // All three, because each changes what the other two do.
+                    ...(unwantedChanges ? { unwanted } : {})
                 }
             };
         },

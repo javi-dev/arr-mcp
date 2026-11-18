@@ -5,7 +5,7 @@ import { PENDING_STATUSES } from '../services/arrRecord.ts';
 import { hasQueue, hasQueueRemove, type QueueItem, type QueueRemoveCapable, type ServiceAdapter } from '../services/types.ts';
 import { canListOrphans, planOrphaned } from './orphanedQueue.ts';
 import { checkTorrentDelete } from './torrentDelete.ts';
-import { outcomeText, registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
+import { outcomeText, rawTarget, registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
 import { targetInput, serviceTarget } from './serviceTarget.ts';
 
 /**
@@ -164,7 +164,7 @@ export function registerRemoveQueueItem(
             }
             const item = (await adapter.getQueue()).find(q => q.id === id);
             if (item === undefined) {
-                throw new ServiceError('NotFound', adapter.id, `nothing in ${adapter.id}'s queue has id "${id}"`, {
+                throw new ServiceError('NotFound', adapter.id, `nothing in ${adapter.id}'s queue has id "${rawTarget({ id })}"`, {
                     remedy:
                         'It may have finished or already been removed. Call get_queue for a current list; queue ids are not stable once an item leaves the queue.'
                 });

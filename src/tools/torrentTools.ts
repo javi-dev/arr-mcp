@@ -9,6 +9,7 @@ import { allowedPath, downloadHost, renamedPath, trackerHost } from '../core/tor
 import { btihToHex } from '../services/qbittorrent.ts';
 import { hasTorrentManage, type ServiceAdapter, type TorrentCategory, type TorrentCheckState, type TorrentManageCapable, type TorrentSource } from '../services/types.ts';
 import { INSTANCE_PARAM_DESCRIPTION, resolveInstance } from './resolveInstance.ts';
+import { NO_OWN_SHARE_RULE, categoryIncompletePath, categorySavePath, removalAtLimit } from './torrentCategoryRules.ts';
 import { protectionOf } from './torrentDelete.ts';
 import { categoryWatchers } from './watchedCategory.ts';
 import { registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
@@ -42,22 +43,6 @@ const size = (bytes: number | undefined): string => (bytes === undefined ? 'an u
 
 const digestOf = (source: string | Buffer): string => createHash('sha256').update(source).digest('hex');
 
-/**
- * Where qBittorrent puts a torrent of this category under automatic management,
- * as `SessionImpl::categorySavePath` works it out: a category with no path of
- * its own sits under its parent's, named for its last segment.
- */
-const categoryPath = (base: string, categories: ReadonlyMap<string, TorrentCategory>, category: string): string => {
-    const trimmed = base.replace(/\/+$/, '');
-    if (category === '') return trimmed;
-    const own = categories.get(category)?.savePath ?? '';
-    if (own !== '') return own.startsWith('/') ? own.replace(/\/+$/, '') : `${trimmed}/${own}`;
-    const slash = category.lastIndexOf('/');
-    const parent = categoryPath(base, categories, slash < 0 ? '' : category.slice(0, slash));
-    const leaf = category.slice(slash + 1);
-    return leaf === '' ? parent : `${parent}/${leaf}`;
-};
-
 /** Every category of the client, once `category` is known to be among them. */
 async function categoriesWith(client: Client, category: string): Promise<ReadonlyMap<string, TorrentCategory>> {
     const categories = await client.torrentCategories();
@@ -78,8 +63,11 @@ const WATCH_POLL_MS = 2_000;
 /** How long a complete torrent may show no checking state before the watch stops waiting for one. */
 const GRACE_MS = 4_000;
 
-/** qBittorrent accepts a recheck of these and does nothing: there is no data to check until the metadata arrives. */
-const NO_METADATA = new Set(['metaDL', 'forcedMetaDL']);
+/** While these run, the amount left says nothing about where the data is, and a finished torrent can read as unfinished. */
+const CHECKING_STATES = new Set(['checkingUP', 'checkingDL', 'checkingResumeData']);
+
+const removalWarning = (action: 'Remove' | 'RemoveWithContent'): string =>
+    `Warning: at this category's share limits qBittorrent removes this torrent${action === 'RemoveWithContent' ? ' and deletes its files' : ''}.`;
 
 type TorrentToolOptions = { sleep?: (ms: number) => Promise<void> };
 
@@ -119,11 +107,14 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
 
     const finished = [...settled.entries()];
     const wholeAndStopped = finished.flatMap(([id, s]) => (s?.complete === true && s.stopped ? [id] : []));
-    const toStart = wholeAndStopped.filter(id => seenChecking.has(id));
+    let toStart = wholeAndStopped.filter(id => seenChecking.has(id));
     let resumeFailed = false;
     if (toStart.length > 0) {
         try {
-            await client.startTorrents(toStart);
+            // Read again at the last moment: a batch can outlast what the watch saw of its first torrent.
+            const fresh = await client.torrentCheckStates(toStart);
+            toStart = fresh.filter(s => s.complete && s.stopped && !s.checking).map(s => s.id);
+            if (toStart.length > 0) await client.startTorrents(toStart);
         } catch (err) {
             logger.warn({ service: client.id, err }, 'a recheck finished but the torrents could not be started');
             resumeFailed = true;
@@ -135,7 +126,7 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         ...list(resumeFailed ? 'resume_failed' : 'resumed', toStart),
         ...list('incomplete', finished.flatMap(([id, s]) => (s !== undefined && !s.complete ? [id] : []))),
         ...list('still_checking', ids.filter(id => !settled.has(id) && seenChecking.has(id))),
-        ...list('unconfirmed', [...wholeAndStopped.filter(id => !seenChecking.has(id)), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id))]),
+        ...list('unconfirmed', [...wholeAndStopped.filter(id => !toStart.includes(id)), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id))]),
         ...list('gone', finished.flatMap(([id, s]) => (s === undefined ? [id] : [])))
     };
 }
@@ -171,13 +162,30 @@ const magnetHosts = (magnet: string): string[] => {
     return [...new Set(hosts)];
 };
 
-/** A v1, v2 or hybrid magnet. No whitespace at all: qBittorrent splits `urls` on newlines and fetches every part. */
-const MAGNET = /^magnet:\?\S*xt=urn:(?:btih:[0-9a-zA-Z]+|btmh:1220[0-9a-fA-F]{64})\S*$/;
+/** No whitespace at all: qBittorrent splits `urls` on newlines and fetches every part. */
+const MAGNET = /^magnet:\?\S+$/;
+const BTIH_TOPIC = /^urn:btih:([0-9a-fA-F]{40}|[A-Za-z2-7]{32})$/;
+const BTMH_TOPIC = /^urn:btmh:1220([0-9a-fA-F]{64})$/;
+
+/**
+ * The id qBittorrent will list a magnet under, read from its real `xt` fields so
+ * that text inside another field cannot name a different torrent. A hybrid goes
+ * by its truncated SHA-256. Undefined when the link names no torrent, or two.
+ */
+function magnetHash(magnet: string): string | undefined {
+    const topics = [...new URLSearchParams(magnet.slice('magnet:?'.length))].filter(([key]) => /^xt(?:\.\d+)?$/i.test(key)).map(([, value]) => value);
+    const v1 = [...new Set(topics.flatMap(t => BTIH_TOPIC.exec(t)?.[1] ?? []).map(btihToHex))];
+    const v2 = [...new Set(topics.flatMap(t => BTMH_TOPIC.exec(t)?.[1]?.toLowerCase() ?? []))];
+    if (v1.length > 1 || v2.length > 1 || v1.length + v2.length === 0) return undefined;
+    return v2[0]?.slice(0, 40) ?? v1[0];
+}
 
 type AddSource = {
     request: TorrentSource;
     digest: string;
     hash?: string;
+    /** `null` when the source does not say. */
+    private: boolean | null;
     label: string;
     effects: string[];
 };
@@ -190,17 +198,16 @@ function addSource(service: string, args: { magnet?: string | undefined; url?: s
         });
     }
     if (args.magnet !== undefined) {
-        if (args.magnet.length > 8192 || !MAGNET.test(args.magnet)) {
+        const hash = args.magnet.length > 8192 || !MAGNET.test(args.magnet) ? undefined : magnetHash(args.magnet);
+        if (hash === undefined) {
             throw new ServiceError('NotFound', service, 'that is not a magnet link', { remedy: 'A magnet starts `magnet:?` and carries `xt=urn:btih:<hash>` or `xt=urn:btmh:1220<hash>`.' });
         }
-        // A hybrid torrent goes by its truncated SHA-256, as an uploaded one does.
-        const v2 = /xt=urn:btmh:1220([0-9a-fA-F]{64})/.exec(args.magnet)?.[1];
-        const hash = v2 === undefined ? btihToHex(/xt=urn:btih:([0-9a-zA-Z]+)/.exec(args.magnet)?.[1] ?? '') : v2.slice(0, 40).toLowerCase();
         const hosts = magnetHosts(args.magnet);
         return {
             request: { kind: 'url', url: args.magnet },
             digest: digestOf(args.magnet),
             hash,
+            private: null,
             label: `torrent ${hash}`,
             effects: hosts.length === 0 ? [] : [`The client will contact: ${hosts.join(', ')}.`]
         };
@@ -210,6 +217,7 @@ function addSource(service: string, args: { magnet?: string | undefined; url?: s
         return {
             request: { kind: 'url', url: args.url },
             digest: digestOf(args.url),
+            private: null,
             label: `the torrent file at ${host}`,
             effects: [`qBittorrent fetches the torrent file from ${host}.`]
         };
@@ -225,6 +233,7 @@ function addSource(service: string, args: { magnet?: string | undefined; url?: s
         request: { kind: 'file', bytes, filename: 'upload.torrent' },
         digest: digestOf(bytes),
         hash: facts.hash,
+        private: facts.private,
         label: fenceText(facts.name, { service, field: 'name' }),
         effects: [
             `${facts.fileCount} file(s), ${size(facts.sizeBytes)}, private ${facts.private ? 'yes' : 'no'}.`,
@@ -295,8 +304,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             if (missing.length > 0) {
                 throw new ServiceError('NotFound', client.id, `no torrent with hash ${missing.join(', ')}`, { remedy: 'Take current ids from get_queue.' });
             }
-            const skipped = states.filter(s => NO_METADATA.has(s.state));
-            const toCheck = states.filter(s => !s.checking && !NO_METADATA.has(s.state)).map(s => s.id).sort();
+            const skipped = states.filter(s => !s.hasMetadata);
+            const toCheck = states.filter(s => !s.checking && s.hasMetadata).map(s => s.id).sort();
             const target = `${client.id}:${toCheck.length === 0 ? wanted.join(',') : toCheck.join(',')}`;
             if (toCheck.length === 0) return { target, summary: `None of those torrents can be checked on ${client.id}: each is already checking or still fetching its metadata.`, effects: [], noop: true };
             return {
@@ -338,24 +347,32 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const client = clientOf(adapters, args.instance);
             const source = addSource(client.id, args);
             const categories = await categoriesWith(client, args.category ?? '');
-            const resolved = args.save_path ?? categoryPath(await client.defaultSavePath(), categories, args.category ?? '');
+            const resolved = args.save_path ?? categorySavePath(await client.defaultSavePath(), categories, args.category ?? '');
             const savePath = allowedPath(client.id, resolved, client.allowedPaths);
             const target = `${client.id}:${source.hash ?? `url-${source.digest.slice(0, 12)}`}`;
 
             if (source.hash !== undefined && (await client.hasTorrent(source.hash))) {
                 return { target, summary: `${client.id} already has ${source.label}.`, effects: [], noop: true };
             }
+            const removal = removalAtLimit(NO_OWN_SHARE_RULE, categories, await client.torrentClientDefaults(), args.category ?? '');
+            const protection = removal === undefined ? undefined : protectionOf(client, { private: source.private });
+            if (protection !== undefined) {
+                throw new ServiceError('PermissionDenied', client.id, `that category removes torrents at its share limits, and ${protection}`, {
+                    remedy: 'Nothing was changed. Pick another category, or change its share limit action in qBittorrent.'
+                });
+            }
             return {
                 target,
                 summary: `Add ${source.label} to ${client.id}, saving to ${savePath}${args.category === undefined ? '' : ` in category "${args.category}"`}.`,
                 effects: [
+                    ...(removal === undefined ? [] : [removalWarning(removal)]),
                     ...(await categoryWatchers(adapters, 'QBittorrent', args.category)),
                     `Starts downloading into ${savePath}. Nothing vetted this torrent.`,
                     ...source.effects,
                     'It appears in get_queue and can be removed again with remove_queue_item.'
                 ],
                 // A digest and never the source: this object is written to the audit log.
-                args: { source_sha256: source.digest, category: args.category ?? '', savePath }
+                args: { source_sha256: source.digest, category: args.category ?? '', savePath, removal: removal ?? '' }
             };
         },
 
@@ -392,10 +409,14 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             if (details.state === 'moving') {
                 throw new ServiceError('NotFound', client.id, 'that torrent is already being moved', { remedy: 'Wait for the move to finish, then look at it again in get_queue.' });
             }
+            if (CHECKING_STATES.has(details.state)) {
+                throw new ServiceError('NotFound', client.id, 'that torrent is being checked, so where its data is cannot be told yet', { remedy: 'Wait for the check to finish, then look at it again in get_queue.' });
+            }
             // The state alone decides. `completed: 0` is no proof: preallocated files count as nothing downloaded, and they move.
-            const noData = details.state === 'missingFiles' || NO_METADATA.has(details.state);
+            const noData = details.state === 'missingFiles' || !details.hasMetadata;
             // Unfinished data in the incomplete-downloads folder stays there: qBittorrent only records where it goes when finished.
-            const heldElsewhere = details.downloadPath !== undefined && (details.remainingBytes ?? 0) > 0;
+            const heldElsewhere =
+                details.downloadPath !== undefined && (details.remainingBytes ?? 0) > 0 && details.contentPath?.startsWith(`${details.downloadPath.replace(/\/+$/, '')}/`) === true;
             const moves = !noData && !heldElsewhere;
             if (moves && !move_files) {
                 throw new ServiceError('NotFound', client.id, `${details.title} has data at its current path, and qBittorrent would move it`, {
@@ -444,7 +465,9 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         async plan({ instance, id, old_path, new_path }): Promise<WritePlan> {
             const client = clientOf(adapters, instance);
             const details = await client.getTorrentDetails(id);
-            for (const stored of [details.savePath ?? '', ...(details.downloadPath === undefined ? [] : [details.downloadPath])]) {
+            // The incomplete folder counts only while data is there: a finished torrent keeps its setting after leaving it.
+            const unfinishedIn = details.downloadPath !== undefined && (details.remainingBytes ?? 0) > 0 ? [details.downloadPath] : [];
+            for (const stored of [details.savePath ?? '', ...unfinishedIn]) {
                 allowedPath(client.id, stored, client.allowedPaths);
             }
             const oldPath = unfence(old_path);
@@ -487,26 +510,35 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
 
             const categories = await categoriesWith(client, category);
             const relocates = details.autoManaged && (await client.categoryChangeRelocates());
+            const defaults = await client.torrentClientDefaults();
             let destination: string | undefined;
+            let finishedAt: string | undefined;
             if (relocates) {
-                const path = categoryPath(await client.defaultSavePath(), categories, category);
-                if (path !== details.savePath?.replace(/\/+$/, '')) destination = allowedPath(client.id, path, client.allowedPaths);
+                if (CHECKING_STATES.has(details.state)) {
+                    throw new ServiceError('NotFound', client.id, 'that torrent is being checked, so where its data is cannot be told yet', {
+                        remedy: 'Nothing was changed. Wait for the check to finish, then try again.'
+                    });
+                }
+                const savedAt = details.savePath?.replace(/\/+$/, '');
+                const finalPath = categorySavePath(await client.defaultSavePath(), categories, category);
+                if (finalPath !== savedAt) allowedPath(client.id, finalPath, client.allowedPaths);
+                const unfinished = (details.remainingBytes ?? 0) > 0;
+                const incomplete = unfinished ? categoryIncompletePath(categories, defaults, category) : undefined;
+                const now = unfinished ? (details.downloadPath?.replace(/\/+$/, '') ?? savedAt) : savedAt;
+                const target = incomplete ?? finalPath;
+                if (target !== now) destination = allowedPath(client.id, target, client.allowedPaths);
+                else if (incomplete !== undefined) finishedAt = finalPath;
+            }
+            const removal = removalAtLimit(details.share, categories, defaults, category);
+            const protection = removal === undefined ? undefined : protectionOf(client, details);
+            if (protection !== undefined) {
+                throw new ServiceError('PermissionDenied', client.id, `at the share limits of that category qBittorrent would remove this torrent, and ${protection}`, {
+                    remedy: 'Nothing was changed. Pick another category, or change its share limit action in qBittorrent.'
+                });
             }
             if (destination !== undefined && !move_files) {
                 throw new ServiceError('NotFound', client.id, `that category would move ${details.title} to ${destination}`, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_category again with `move_files: true`.'
-                });
-            }
-            if (relocates && (details.remainingBytes ?? 0) > 0 && (details.downloadPath !== undefined || (await client.incompleteFolderApplies(category)))) {
-                throw new ServiceError('NotFound', client.id, `${details.title} is unfinished, and this change would move its data between incomplete-downloads folders`, {
-                    remedy: 'Nothing was changed. Try again once the torrent has finished downloading.'
-                });
-            }
-            const removesAtLimit = categories.get(category)?.removesAtLimit === true;
-            const protection = removesAtLimit ? protectionOf(client, details) : undefined;
-            if (protection !== undefined) {
-                throw new ServiceError('PermissionDenied', client.id, `category "${category}" removes torrents at its share limits, and ${protection}`, {
-                    remedy: 'Nothing was changed. Pick another category, or change that category\'s share limit action in qBittorrent.'
                 });
             }
             const watchers = [...new Set([
@@ -517,15 +549,17 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 target,
                 summary: `Set the category of ${details.title} to ${category === '' ? 'none' : `"${category}"`} on ${client.id}.`,
                 effects: [
-                    ...(removesAtLimit ? [`Warning: category "${category}" removes a torrent once it reaches that category's share limits, which can delete this one.`] : []),
+                    ...(removal === undefined ? [] : [removalWarning(removal)]),
                     ...watchers,
                     destination === undefined
-                        ? 'The data stays where it is.'
+                        ? finishedAt === undefined
+                            ? 'The data stays where it is.'
+                            : `Its unfinished data stays where it is, and goes to ${finishedAt} once finished.`
                         : `Physically moves ${size(details.completedBytes)} to ${destination}, because qBittorrent manages this torrent's path by category.`,
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
-                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '', removesAtLimit }
+                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '', finishedAt: finishedAt ?? '', removal: removal ?? '' }
             };
         },
 

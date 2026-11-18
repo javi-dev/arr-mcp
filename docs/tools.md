@@ -3480,7 +3480,8 @@ without moving what it finds there, so without `move_files` this is refused unle
 the torrent is at `missing files` or still fetching metadata. Any file of a
 `missing files` torrent still at the old path moves too, and the preview says so.
 Follow it with `recheck_torrents`. `move_files: true` needs `destructive`. The
-move runs in the background after the call returns.
+move runs in the background after the call returns. A torrent being checked is
+refused until the check ends.
 
 **Unverified live** (qBittorrent): pointing a torrent at a new path, with and without moving its data.
 
@@ -3497,9 +3498,12 @@ own folder. The rename finishes in the background after the call returns.
 Sets an existing category, or clears it with an empty string. The preview warns
 when an *arr watches the old or new category, and when the new category removes
 torrents at its share limits; an instance protecting the torrent refuses that
-change outright. If the change would relocate an automatically managed torrent
-it is refused without `move_files: true`, which needs `destructive`, and it is
-refused while the torrent is unfinished and uses an incomplete-downloads folder.
+change outright. Limits and folders are resolved as qBittorrent resolves them:
+the torrent's own setting, then the category, its parents and the client. If the
+change would relocate an automatically managed torrent it is refused without
+`move_files: true`, which needs `destructive`, and every folder the data would
+reach has to be inside `allowed_paths`. A torrent being checked cannot be
+relocated until the check ends.
 
 **Unverified live** (qBittorrent): changing a category, and reading whether the change relocates the torrent.
 
