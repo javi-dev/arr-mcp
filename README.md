@@ -49,8 +49,8 @@ check rather than guessing across the hole.
 | 🛡️ **Indexer text is data, never instruction** | Release names from public indexers are attacker-controllable and flow straight into model context. arr-mcp fences every one of them. |
 | ✋ **Writes are opt-in, previewed, recorded** | Off until you turn them on, per service. Every write shows you exactly what it would do and waits for confirmation, and lands in an audit trail either way. |
 | 🖥️ **A config page that diagnoses** | Add services from a browser, see what is broken *and what to do about it*, read the logs and the write audit. No YAML required. |
-| 📚 **Forty-four tools, one vocabulary** | Every list pages the same way and answers readably whether or not your client reads `structuredContent`, every error names the config key that would fix it, every write takes ids rather than titles. |
-| 🪶 **It is careful with your context** | Nineteen services behind one server, and a four-service stack still lists 36 tools for about 20,700 tokens. Tools your stack cannot use, kinds it does not hold and sentences about services you do not run are never sent. |
+| 📚 **Fifty-three tools, one vocabulary** | Every list pages the same way and answers readably whether or not your client reads `structuredContent`, every error names the config key that would fix it, every write takes ids rather than titles. |
+| 🪶 **It is careful with your context** | Nineteen services behind one server, and a four-service stack still lists 39 tools for about 22,200 tokens. Tools your stack cannot use, kinds it does not hold and sentences about services you do not run are never sent. |
 
 ## Quick start: about two minutes
 
@@ -150,7 +150,7 @@ ARM NAS runs the same build as everything else.
 
 ## What you can ask it
 
-Forty-four tools, but you never name them. You ask, and the model picks:
+Fifty-three tools, but you never name them. You ask, and the model picks:
 
 > *"What's downloading right now, and is anything stuck?"*
 > *"What aired this week that I haven't watched?"*
@@ -204,16 +204,16 @@ poor trade if it arrived as a wall of text. Every tool's name, description and
 schemas sit in your client's context from the moment it connects, so that bill
 is measured and capped rather than left to grow:
 
-- **Forty-four tools, and a forty-fifth fails the build.** Accuracy drops
+- **Fifty-three tools, and a fifty-fourth fails the build.** Accuracy drops
   measurably past roughly forty of them, so new capability extends a tool
   wherever it fits.
-- **A description stays under 1,000 characters**, and 29,000 for all of them
+- **A description stays under 1,000 characters**, and 32,000 for all of them
   together. It says what the tool is for and what makes a call go wrong; the
   field-by-field reference is a resource, read only when a client asks for it.
 - **Your stack decides what is sent.** A write tool for a service you do not
   run is never listed, nor a kind nothing in your library holds, nor a sentence
   about Lidarr on a stack with no Lidarr. Radarr, Sonarr, SABnzbd and Jellyfin
-  come to 36 tools and roughly 20,700 tokens, against 28,000 with everything
+  come to 39 tools and roughly 22,200 tokens, against 32,900 with everything
   listed.
 - **The answers are shaped the same way.** The default `detail` is the cheap
   one, every list is paged and says when it was cut, and the poster cards ride
@@ -226,7 +226,7 @@ stack and everything that is trimmed.
 
 | | |
 | --- | --- |
-| **[Tools](docs/tools.md)** | All forty-four, what each answers, and the fields whose meaning is not obvious |
+| **[Tools](docs/tools.md)** | All fifty-three, what each answers, and the fields whose meaning is not obvious |
 | **[Writes](docs/writes.md)** | Turning them on, the two tiers, and the preview-and-confirm handshake |
 | **[Configuration](docs/configuration.md)** | `config.yaml`, the nine services that take a list, Jellyfin's `default_user`, running Plex and Jellyfin side by side |
 | **[Config UI](docs/config-ui.md)** | The six pages, and what each does that is not obvious |

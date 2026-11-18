@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (javi-dev fork)
+
+### Features
+
+* **qbittorrent:** add `recheck_torrents`, `add_torrent`, `set_torrent_location`, `rename_torrent_file`, `set_torrent_category` and `reannounce_torrent`, each with a preview, a confirm token and `dry_run`
+* **sabnzbd:** add `add_nzb`, `get_client_settings` and `update_client_settings`, limited to a fixed list of settings
+* **queue:** filter `get_queue` by `service`, `instance` and `hash`, and return the save path, private flag, ratio, seed time, files and tracker hostnames of a qBittorrent row at `detail: "full"`
+* **queue:** show private, ratio, seed time and tracker hostnames in the `remove_queue_item` preview, and refuse protected torrents unless `allow_protected` is passed
+* **config:** add `allowed_paths`, `protect_private_torrents`, `protect_all_torrents` and `webui_api_key` to qBittorrent instances
+
 ## [2.3.1](https://github.com/bardesss/arr-mcp/compare/v2.3.0...v2.3.1) (2026-11-17)
 
 

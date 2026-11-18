@@ -592,6 +592,39 @@ with the instance it came from, so a release both of them index comes back once
 per instance. That is intended: the two copies may differ in priority or in
 what they will actually grab.
 
+## qBittorrent guardrails
+
+Each qBittorrent instance takes these keys beside its credentials. All are
+optional, and all are set in `config.yaml` only: neither the config page nor the
+management API can read or change them.
+
+```yaml
+services:
+  qbittorrent:
+    - name: vpn
+      url: http://192.168.1.20:8081
+      username: admin
+      password_file: /run/secrets/qbittorrent_password
+      allowed_paths: [/data/torrents, /data/media]
+      protect_private_torrents: true
+    - name: novpn
+      url: http://192.168.1.20:8082
+      webui_api_key_file: /run/secrets/qbittorrent_novpn_key
+      protect_all_torrents: true
+```
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `allowed_paths` | `/data/torrents`, `/data/media` | The only roots `add_torrent`, `set_torrent_location` and `set_torrent_category` may point this instance at. Absolute, with no trailing slash |
+| `protect_private_torrents` | `false` | `remove_queue_item` refuses a private torrent unless the call passes `allow_protected: true` |
+| `protect_all_torrents` | `false` | The same, for every torrent on this instance |
+| `webui_api_key` | none | The WebUI API key of qBittorrent 5.2 or later, sent as `Authorization: Bearer`. `webui_api_key_file` reads it from a file, and `${NAME}` from the environment |
+
+With a key and a username both set, the key goes first. If qBittorrent refuses it,
+arr-mcp signs in with the username and password until it restarts. Changing an
+instance's `url` on the config page drops its `webui_api_key`, so a key never
+follows an instance to another host.
+
 ## Access
 
 ```yaml

@@ -57,6 +57,14 @@ write, and says which permission to enable.
 | `blocklist_media` | safe; destructive to remove from Seerr | `safe_write`; `destructive` for a Seerr `remove` |
 | `fix_metadata` | destructive | `destructive`, plus `allow_metadata_repair` on Plex |
 | `fix_profile` | destructive | `destructive` |
+| `recheck_torrents` | safe | `safe_write` |
+| `add_torrent` | safe | `safe_write` |
+| `set_torrent_location` | safe; destructive with `move_files` | `safe_write`; `destructive` with `move_files` |
+| `rename_torrent_file` | safe | `safe_write` |
+| `set_torrent_category` | safe; destructive with `move_files` | `safe_write`; `destructive` with `move_files` |
+| `reannounce_torrent` | safe | `safe_write` |
+| `add_nzb` | safe | `safe_write` |
+| `update_client_settings` | destructive | `destructive` |
 
 ### Where the tier boundary falls
 
@@ -383,6 +391,15 @@ exercise. Where the tool has its own section, the same path carries an
 | `pause_downloads` | `qbittorrent` | Pause, resume and the speed limit, on both the v4 and v5 verbs, and the `arr-mcp-paused` tag | No qBittorrent on the maintainer's stack; written from the WebUI API description |
 | `pause_downloads` | `transmission` | The whole-client pause and resume by the `arr-mcp-paused` label, and the alternative speed mode read | Written from the RPC spec; no label has been written on the live Transmission |
 | `grab_release` | `qbittorrent` | A magnet link sent to the client | No qBittorrent on the maintainer's stack |
+| `recheck_torrents` | `qbittorrent` | The recheck and the watch after it | Written from the WebUI API source; not yet run against a live 5.3 |
+| `add_torrent` | `qbittorrent` | Adding from a magnet, a URL and an uploaded file | Written from the WebUI API source; not yet run against a live 5.3 |
+| `set_torrent_location` | `qbittorrent` | Pointing a torrent at a new path, with and without moving its data | Written from the WebUI API source; not yet run against a live 5.3 |
+| `rename_torrent_file` | `qbittorrent` | Renaming a file inside a torrent | Written from the WebUI API source; not yet run against a live 5.3 |
+| `set_torrent_category` | `qbittorrent` | Changing a category, and reading whether the change relocates the torrent | Written from the WebUI API source; not yet run against a live 5.3 |
+| `reannounce_torrent` | `qbittorrent` | The reannounce | Written from the WebUI API source; not yet run against a live 5.3 |
+| `add_nzb` | `sabnzbd` | Adding from a URL and from an uploaded file | Written from SABnzbd's source; not yet run against a live instance |
+| `get_client_settings` | `sabnzbd` | Reading these settings | Written from SABnzbd's source; not yet run against a live instance |
+| `update_client_settings` | `sabnzbd` | Writing these settings and reading them back | Written from SABnzbd's source; not yet run against a live instance |
 | `get_queue` | `qbittorrent` | The torrent list, the seed limits and `by_tracker`; only login and health have met a real server | No qBittorrent on the maintainer's stack; the fixtures were written from the WebUI API description |
 | `get_queue` | `grimmory` | A file waiting in the Bookdrop | The live Bookdrop was empty at capture; the row is tested on a constructed file |
 | `get_stack_health` | `grimmory` | The warning for books left in the Bookdrop over a day | Rests on the same constructed file |

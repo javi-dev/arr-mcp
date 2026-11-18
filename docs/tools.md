@@ -1,6 +1,6 @@
 # Tools
 
-Forty-four of them. The first nineteen read; the last twenty-five write, and are
+Fifty-three of them. Twenty read and thirty-three write, and the writes are
 off until you turn them on; see [writes](writes.md).
 
 | Tool | Answers |
@@ -101,6 +101,15 @@ A write is listed only when one of these is configured, and a read too with `too
 | `delete_indexer` ✎ | Prowlarr |
 | `blocklist_media` ✎ | Radarr, Sonarr, Lidarr, Seerr |
 | `fix_profile` ✎ | Radarr, Sonarr, Whisparr |
+| `recheck_torrents` ✎ | qBittorrent |
+| `add_torrent` ✎ | qBittorrent |
+| `set_torrent_location` ✎ | qBittorrent |
+| `rename_torrent_file` ✎ | qBittorrent |
+| `set_torrent_category` ✎ | qBittorrent |
+| `reannounce_torrent` ✎ | qBittorrent |
+| `add_nzb` ✎ | SABnzbd |
+| `get_client_settings` | SABnzbd |
+| `update_client_settings` ✎ | SABnzbd |
 
 What `kind` means, and which services hold it. A `kind` field offers only the kinds a configured service holds.
 
@@ -256,24 +265,25 @@ tests:
 
 | Stack | Tools listed | `tools/list` | Roughly |
 | --- | --- | --- | --- |
-| Nothing configured yet | 44 | 113,613 bytes | 28,000 tokens |
-| Radarr, Sonarr, SABnzbd, Jellyfin | 36 | 82,962 bytes | 20,700 tokens |
-| Those four, plus Lidarr, Prowlarr, Bazarr and Seerr | 42 | 103,048 bytes | 25,800 tokens |
+| Nothing configured yet | 53 | 131,369 bytes | 32,900 tokens |
+| Radarr, Sonarr, SABnzbd, Jellyfin | 39 | 88,626 bytes | 22,200 tokens |
+| Those four, plus Lidarr, Prowlarr, Bazarr and Seerr | 45 | 108,721 bytes | 27,200 tokens |
 
 Four limits hold it there, each one asserted in `test/app.test.ts`:
 
-- **Forty-four tools, and a forty-fifth fails the build.** Accuracy drops
+- **Fifty-three tools, and a fifty-fourth fails the build.** Accuracy drops
   measurably past roughly forty, so new capability extends a tool wherever it
   fits. Raising the ceiling is a decision a pull request argues for rather than
   a way to make a test pass; see
   [the tool surface](../CONTRIBUTING.md#the-tool-surface-is-the-public-api).
-- **Every description under 1,000 characters**, and 29,000 for all of them
+- **Every description under 1,000 characters**, and 32,000 for all of them
   together. A description says what the tool is for, when to pick it over its
   neighbour, and what makes a call go wrong. Field-by-field detail is a
   resource instead, `arr://docs/<tool>`, read only when a client asks for it.
-- **The whole list under 116,000 bytes.** Declaring only the fields every write
+- **The whole list under 133,000 bytes.** Declaring only the fields every write
   result carries, and cutting the parameter text that each tool repeated, took
-  it from 130,045 bytes to 113,613.
+  it from 130,045 bytes to 113,613; the nine qBittorrent and SABnzbd chores
+  brought it to 131,369.
 - **Nothing in it that does not apply to your stack.** The rest of this section
   is what that means.
 
@@ -1509,6 +1519,21 @@ service lists, so it adds up to `total`. At `full` both rows are listed, since t
 seed state and the client's own error are. A filter is applied first, so a
 client row only it matches (`status: "seeding"`, say) is still returned.
 
+`service`, `instance` and `hash` narrow the read to one service, one named
+instance or one download. `hash` matches a row's `id`, its `downloadId` or its
+torrent hash, and a `service` or `instance` that names nothing is refused rather
+than answered empty.
+
+A qBittorrent row at `detail: "full"` also carries `savePath`, `private`
+(`null` until the torrent has metadata), `ratio`, `seedingSeconds`, `files`
+(`name`, `sizeBytes`, `progress`) and `trackers` (`host` and `status`). These
+come from `torrents/properties` when `torrents/info` lacks them, as it can for a
+torrent at `missing files`. A tracker is its hostname and nothing else: its URL
+holds the passkey and its message can echo it, so neither is read into a row. A
+page lists at most 200 files per torrent and 500 in all, and `filesOmitted` says
+how many were left out. A page of more than 100 torrents skips these reads and
+says so in `torrentDetailsOmitted`, since each torrent costs up to four requests.
+
 **Unverified live** (qBittorrent): the torrent list, the seed limits and `by_tracker`; only login and health have met a real server.
 
 **Unverified live** (Cleanuparr): the seeding rules of a Transmission client.
@@ -2035,6 +2060,15 @@ failed instead, and not tracked again. So `remove_from_client: false` is refused
 for a row `get_queue` marks `orphaned`, and for a Lidarr row with no album,
 unless the release is blocklisted. The refusal changes nothing, so a torrent
 keeps seeding.
+
+On qBittorrent the preview states the torrent's private flag, ratio, seed time
+and tracker hostnames, also for an *arr row whose download is in a configured
+instance. An instance with `protect_private_torrents` or `protect_all_torrents`
+refuses the removal unless the call passes `allow_protected: true`, which the
+preview then names as an override. A private flag nobody can read yet counts as
+private, and a protecting instance that cannot be read blocks the removal. Every
+instance holding the hash is checked, so a cross-seeded torrent is guarded if
+any of its copies is.
 
 **Unverified live** (Radarr): the grab-record read behind `blocklist: true`, read from Radarr's source.
 
@@ -3402,9 +3436,94 @@ Grimmory may write the change into the book file and move it to match its naming
 pattern, when its metadata settings say so, and the preview says that. Safe tier.
 A non-admin account needs `canEditMetadata`.
 
+## qBittorrent chores
+
+`recheck_torrents`, `add_torrent`, `set_torrent_location`, `rename_torrent_file`,
+`set_torrent_category` and `reannounce_torrent` are the routine jobs that used to
+need a shell on the host. Each one previews, and applies only with the confirm
+token from that preview, and each takes `dry_run`.
+
+Every path these send is checked against the instance's
+[`allowed_paths`](configuration.md#qbittorrent-guardrails), `/data/torrents` and
+`/data/media` unless you set it. The checks are on the path as written: arr-mcp
+cannot see qBittorrent's filesystem, so a symlink inside an allowed root is
+outside what they can catch. No tool changes seeding limits.
+
+## `recheck_torrents`
+
+Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
+seconds and starts each stopped torrent that comes back complete; one still
+checking when the watch ends is reported as such and left alone.
+
+**Unverified live** (qBittorrent): the recheck and the watch after it.
+
+## `add_torrent`
+
+Takes exactly one of `magnet`, `url` or `torrent_base64`, plus an existing
+`category` and a `save_path`. Without `save_path` it goes where the category
+saves, and that location has to be allowed too. The torrent is added with
+automatic management off, so it lands where the preview said. The preview warns
+when an *arr watches the category. The source can carry a passkey, so it appears
+in no preview, target, error or audit row: the token binds its SHA-256.
+
+**Unverified live** (qBittorrent): adding from a magnet, a URL and an uploaded file.
+
+## `set_torrent_location`
+
+Points a torrent at a new save path. qBittorrent moves whatever data it finds, so
+without `move_files` this is refused for a torrent with data at its current path
+and works only for one at `missing files` or with nothing downloaded yet. Follow
+it with `recheck_torrents`. `move_files: true` needs `destructive`.
+
+**Unverified live** (qBittorrent): pointing a torrent at a new path, with and without moving its data.
+
+## `rename_torrent_file`
+
+Renames one file. `old_path` comes from `files` on the get_queue row, and
+`new_path` stays inside the torrent's own folder.
+
+**Unverified live** (qBittorrent): renaming a file inside a torrent.
+
+## `set_torrent_category`
+
+Sets an existing category, or clears it with an empty string. The preview warns
+when an *arr watches the old or new category. If the change would relocate an
+automatically managed torrent it is refused without `move_files: true`, which
+needs `destructive`.
+
+**Unverified live** (qBittorrent): changing a category, and reading whether the change relocates the torrent.
+
+## `reannounce_torrent`
+
+Announces one torrent to its trackers now. Trackers rate-limit announces, so do
+not call it in a loop.
+
+**Unverified live** (qBittorrent): the reannounce.
+
+## `add_nzb`
+
+Takes a `url` or the file as `nzb_base64`, and an existing `category`. The preview
+warns when an *arr watches that category. Like `add_torrent`, the source is never
+repeated and the token binds its SHA-256.
+
+**Unverified live** (SABnzbd): adding from a URL and from an uploaded file.
+
+## `get_client_settings` and `update_client_settings`
+
+A fixed list of settings and nothing else: `fail_hopeless_jobs`,
+`unwanted_extensions`, `action_on_unwanted_extensions`, `cleanup_list`,
+`history_retention_option` and `history_retention_number`.
+`unwanted_extensions_mode` is read beside them, because it decides whether the
+list blocks or allows, and is never written. Each setting is read on its own
+request, so no answer can hold a server, a password or an API key. An update needs
+`destructive`, since these settings decide which files and jobs SABnzbd deletes,
+and each value is read back after it is written.
+
+**Unverified live** (SABnzbd): reading and writing these settings.
+
 ## Prompts and resources
 
-Forty-four tools do not tell you which one to reach for, and the questions
+Fifty-three tools do not tell you which one to reach for, and the questions
 people actually ask are rarely one call.
 
 **Five prompts**, which most clients surface as slash commands:
