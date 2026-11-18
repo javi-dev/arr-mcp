@@ -9,7 +9,7 @@ import { allowedPath, downloadHost, renamedPath, trackerHost } from '../core/tor
 import { btihToHex } from '../services/qbittorrent.ts';
 import { hasTorrentManage, type ServiceAdapter, type TorrentCategory, type TorrentCheckState, type TorrentManageCapable, type TorrentShareRule, type TorrentSource } from '../services/types.ts';
 import { INSTANCE_PARAM_DESCRIPTION, resolveInstance } from './resolveInstance.ts';
-import { NO_OWN_SHARE_RULE, categoryIncompletePath, categorySavePath, isStoredIn, removalAtLimit } from './torrentCategoryRules.ts';
+import { NO_OWN_SHARE_RULE, categoryIncompletePath, categorySavePath, removalAtLimit, storageDirectory } from './torrentCategoryRules.ts';
 import { protectionOf } from './torrentDelete.ts';
 import { categoryWatchers } from './watchedCategory.ts';
 import { registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
@@ -72,7 +72,8 @@ const removalWarning = (rule: TorrentShareRule): string => {
         ...(rule.seedingMinutes >= 0 ? [`${rule.seedingMinutes} minutes seeding`] : []),
         ...(rule.inactiveMinutes >= 0 ? [`${rule.inactiveMinutes} minutes inactive`] : [])
     ];
-    return `Warning: at this category's share limits (${limits.join(', ')}) qBittorrent removes this torrent${rule.action === 'RemoveWithContent' ? ' and deletes its files' : ''}.`;
+    const reached = limits.length < 2 ? '' : rule.mode === 'MatchAll' ? 'all of: ' : rule.mode === 'MatchAny' ? 'any of: ' : '';
+    return `Warning: at this category's share limits (${reached}${limits.join(', ')}) qBittorrent removes this torrent${rule.action === 'RemoveWithContent' ? ' and deletes its files' : ''}.`;
 };
 
 type TorrentToolOptions = { sleep?: (ms: number) => Promise<void> };
@@ -420,11 +421,13 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             }
             // The state alone decides. `completed: 0` is no proof: preallocated files count as nothing downloaded, and they move.
             const noData = details.state === 'missingFiles' || !details.hasMetadata;
-            // Unfinished data in the incomplete-downloads folder stays there: qBittorrent only records where it goes when finished.
-            const heldElsewhere =
-                details.downloadPath !== undefined &&
-                (!details.hasMetadata || ((details.remainingBytes ?? 0) > 0 && details.contentPath !== undefined && isStoredIn(details.contentPath, details.downloadPath)));
-            const moves = !noData && !heldElsewhere;
+            // With an incomplete folder set, `setSavePath` only records where an unfinished torrent goes when it finishes.
+            const incompleteDir = details.downloadPath?.replace(/\/+$/, '');
+            const keepsUnfinished = incompleteDir !== undefined && ((details.remainingBytes ?? 0) > 0 || !details.hasMetadata);
+            // But turning automatic management off first puts the files in that folder if they are anywhere else.
+            const strayed = keepsUnfinished && details.autoManaged && details.hasMetadata && storageDirectory(details.contentPath, details.fileNames) !== incompleteDir;
+            if (strayed) allowedPath(client.id, incompleteDir, client.allowedPaths);
+            const moves = strayed || (!noData && !keepsUnfinished);
             if (moves && !move_files) {
                 throw new ServiceError('NotFound', client.id, `${details.title} has data at its current path, and qBittorrent would move it`, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_location again with `move_files: true`.'
@@ -434,13 +437,17 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 target,
                 summary: `${moves ? 'Move' : 'Point'} ${details.title} ${moves ? 'to' : 'at'} ${path} on ${client.id}.`,
                 effects: [
-                    heldElsewhere
-                        ? `Its unfinished data stays in ${details.downloadPath}. Only where it goes once finished changes.`
+                    strayed
+                        ? `Turning off automatic management first moves its files to ${incompleteDir}. After that, only where they go once finished changes.`
+                        : keepsUnfinished
+                        ? 'qBittorrent leaves its unfinished data where it is, and only changes where it goes once finished.'
+                        : !details.hasMetadata
+                        ? 'It has no metadata yet, so there is nothing on disk to move.'
                         : noData
                         ? `qBittorrent reports its data missing from ${details.savePath ?? 'its current path'}. It has no call that changes the path alone, so any file of this torrent still there moves too.`
                         : `Physically moves ${size(details.completedBytes)} from ${details.savePath ?? 'its current path'} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
-                    ...(noData && !heldElsewhere ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
+                    ...(details.state === 'missingFiles' && !keepsUnfinished ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
                 // `moves`, so a token from a preview that promised no move cannot apply to data that has since come back.
                 args: { id: details.id, location: path, moveFiles: move_files, moves }
@@ -474,7 +481,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const details = await client.getTorrentDetails(id);
             // The incomplete folder counts only while data is there: a finished torrent keeps its setting after leaving it.
             const unfinishedIn = details.downloadPath !== undefined && (details.remainingBytes ?? 0) > 0 ? [details.downloadPath] : [];
-            for (const stored of [details.savePath ?? '', ...unfinishedIn]) {
+            const storedIn = storageDirectory(details.contentPath, details.fileNames);
+            for (const stored of [details.savePath ?? '', ...unfinishedIn, ...(storedIn === undefined ? [] : [storedIn])]) {
                 allowedPath(client.id, stored, client.allowedPaths);
             }
             const oldPath = unfence(old_path);
@@ -520,26 +528,34 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const defaults = await client.torrentClientDefaults();
             let destination: string | undefined;
             let finishedAt: string | undefined;
+            let writesTo: string | undefined;
+            if (details.autoManaged && (details.state === 'moving' || CHECKING_STATES.has(details.state))) {
+                throw new ServiceError('NotFound', client.id, 'that torrent is being moved or checked, so where its data is cannot be told yet', {
+                    remedy: 'Nothing was changed. Wait for that to finish, then try again.'
+                });
+            }
+            const savedAt = details.savePath?.replace(/\/+$/, '');
+            const incompleteDir = details.downloadPath?.replace(/\/+$/, '');
+            // Where the files really are: a failed move or a newly wanted file leaves them away from the configured folder.
+            const storedIn = storageDirectory(details.contentPath, details.fileNames);
+            // A magnet reports nothing left to download, yet its data will go to the incomplete folder once it has metadata.
+            const unfinished = (details.remainingBytes ?? 0) > 0 || !details.hasMetadata;
             if (relocates) {
-                if (CHECKING_STATES.has(details.state)) {
-                    throw new ServiceError('NotFound', client.id, 'that torrent is being checked, so where its data is cannot be told yet', {
-                        remedy: 'Nothing was changed. Wait for the check to finish, then try again.'
-                    });
-                }
-                const savedAt = details.savePath?.replace(/\/+$/, '');
                 const finalPath = categorySavePath(await client.defaultSavePath(), categories, category);
                 if (finalPath !== savedAt) allowedPath(client.id, finalPath, client.allowedPaths);
-                // A magnet reports nothing left to download, yet its data will go to the incomplete folder once it has metadata.
-                const unfinished = (details.remainingBytes ?? 0) > 0 || !details.hasMetadata;
                 const incomplete = unfinished ? categoryIncompletePath(categories, defaults, category) : undefined;
                 const target = incomplete ?? finalPath;
-                // Where the files really are: a failed move or a newly wanted file leaves them away from the configured folder.
-                const inPlace =
-                    details.contentPath === undefined
-                        ? target === (unfinished ? (details.downloadPath?.replace(/\/+$/, '') ?? savedAt) : savedAt)
-                        : isStoredIn(details.contentPath, target);
-                if (!inPlace) destination = allowedPath(client.id, target, client.allowedPaths);
+                if (!details.hasMetadata) {
+                    // Nothing is on disk to move yet, but this is where it will be written.
+                    writesTo = allowedPath(client.id, target, client.allowedPaths);
+                } else if (target !== (storedIn ?? (unfinished ? (incompleteDir ?? savedAt) : savedAt))) {
+                    destination = allowedPath(client.id, target, client.allowedPaths);
+                }
                 if (incomplete !== undefined) finishedAt = finalPath;
+            } else if (details.autoManaged && details.hasMetadata && storedIn !== undefined) {
+                // Switching to manual management first puts the files where the old category keeps them.
+                const target = unfinished ? (incompleteDir ?? savedAt) : savedAt;
+                if (target !== undefined && target !== storedIn) destination = allowedPath(client.id, target, client.allowedPaths);
             }
             const removal = removalAtLimit(details.share, categories, defaults, category);
             const protection = removal === undefined ? undefined : protectionOf(client, details);
@@ -564,14 +580,16 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(removal === undefined ? [] : [removalWarning(removal)]),
                     ...watchers,
                     destination === undefined
-                        ? finishedAt === undefined
+                        ? writesTo !== undefined
+                            ? `It has no data yet, and will download to ${writesTo}.`
+                            : finishedAt === undefined
                             ? 'The data stays where it is.'
                             : `Its unfinished data stays where it is, and goes to ${finishedAt} once finished.`
                         : `Physically moves ${size(details.completedBytes)} to ${destination}, because qBittorrent manages this torrent's path by category.${finishedAt === undefined ? '' : ` It goes to ${finishedAt} once finished.`}`,
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
-                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '', finishedAt: finishedAt ?? '', removal: removal ?? '' }
+                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '' }
             };
         },
 

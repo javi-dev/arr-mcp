@@ -116,6 +116,7 @@ type RawPreferences = {
     /** "Keep incomplete torrents in". */
     temp_path_enabled?: boolean;
     temp_path?: string;
+    share_limits_mode?: string;
     max_inactive_seeding_time_enabled?: boolean;
     max_inactive_seeding_time?: number;
     max_ratio_enabled?: boolean;
@@ -768,7 +769,7 @@ export class QbittorrentAdapter
             incompletePath: prefs.temp_path ?? '',
             share: {
                 action: SHARE_ACTION_NAME[prefs.max_ratio_act ?? -1] ?? 'Remove',
-                mode: 'Default',
+                mode: prefs.share_limits_mode ?? 'Default',
                 ratio: limit(prefs.max_ratio_enabled, prefs.max_ratio),
                 seedingMinutes: limit(prefs.max_seeding_time_enabled, prefs.max_seeding_time),
                 inactiveMinutes: limit(prefs.max_inactive_seeding_time_enabled, prefs.max_inactive_seeding_time)

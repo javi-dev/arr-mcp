@@ -75,14 +75,19 @@ export function removalAtLimit(own: TorrentShareRule, categories: Categories, de
 }
 
 /**
- * Whether a torrent's files sit directly in `directory`. `content_path` is the
- * directory itself for a torrent with no root folder, and one level below it for
- * a root folder or a single file.
+ * The directory a torrent's files are really stored in, undone from
+ * `TorrentImpl::contentPath`: the whole file path for a single file, the root
+ * folder for several files sharing one, and the directory itself otherwise.
+ * Undefined when the two do not fit together, so a caller falls back on what is configured.
  */
-export function isStoredIn(contentPath: string, directory: string): boolean {
+export function storageDirectory(contentPath: string | undefined, files: readonly string[]): string | undefined {
+    if (contentPath === undefined || files.length === 0) return undefined;
     const content = trimmed(contentPath);
-    const dir = trimmed(directory);
-    return content === dir || content.slice(0, Math.max(content.lastIndexOf('/'), 0)) === dir;
+    const strip = (suffix: string): string | undefined => (content.endsWith(`/${suffix}`) ? content.slice(0, -suffix.length - 1) : undefined);
+    if (files.length === 1) return strip(files[0]!);
+    const roots = new Set(files.map(file => (file.includes('/') ? file.slice(0, file.indexOf('/')) : '')));
+    const root = roots.size === 1 ? [...roots][0]! : '';
+    return root === '' ? content : strip(root);
 }
 
 /** A torrent being added inherits everything. */

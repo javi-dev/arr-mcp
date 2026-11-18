@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TorrentCategory, TorrentClientDefaults, TorrentShareRule } from '../src/services/types.ts';
-import { NO_OWN_SHARE_RULE, categoryIncompletePath, categorySavePath, isStoredIn, removalAtLimit } from '../src/tools/torrentCategoryRules.ts';
+import { NO_OWN_SHARE_RULE, categoryIncompletePath, categorySavePath, removalAtLimit, storageDirectory } from '../src/tools/torrentCategoryRules.ts';
 
 const share = (over: Partial<TorrentShareRule> = {}): TorrentShareRule => ({ ...NO_OWN_SHARE_RULE, ...over });
 const category = (over: Partial<TorrentCategory> = {}): TorrentCategory => ({ savePath: '', downloadPath: null, share: share(), ...over });
@@ -96,14 +96,17 @@ describe('removalAtLimit', () => {
     });
 });
 
-describe('isStoredIn', () => {
+describe('storageDirectory', () => {
     it.each([
-        ['/data/dl/Root', '/data/dl', true],
-        ['/data/dl/film.mkv', '/data/dl/', true],
-        ['/data/dl', '/data/dl', true],
-        ['/data/dl/sub/Root', '/data/dl', false],
-        ['/data/dl-old/Root', '/data/dl', false]
-    ])('%s in %s is %s', (content, directory, expected) => {
-        expect(isStoredIn(content, directory)).toBe(expected);
+        ['a single file at the top level', '/data/dl/film.mkv', ['film.mkv'], '/data/dl'],
+        ['a single file inside a folder', '/data/dl/Film/film.mkv', ['Film/film.mkv'], '/data/dl'],
+        ['several files under one root folder', '/data/dl/Pack', ['Pack/a.mkv', 'Pack/b.mkv'], '/data/dl'],
+        ['several files with no root folder', '/data/dl', ['a.mkv', 'sub/b.mkv'], '/data/dl'],
+        ['files spread over two folders', '/data/dl', ['a/1.mkv', 'b/2.mkv'], '/data/dl'],
+        ['a path that does not fit the files', '/data/dl/Other', ['Pack/a.mkv', 'Pack/b.mkv'], undefined],
+        ['no files yet', '/data/dl', [], undefined],
+        ['no content path', undefined, ['a.mkv'], undefined]
+    ])('handles %s', (_why, content, files, expected) => {
+        expect(storageDirectory(content, files)).toBe(expected);
     });
 });
