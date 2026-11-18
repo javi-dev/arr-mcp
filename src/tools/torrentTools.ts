@@ -100,6 +100,7 @@ type RecheckOutcome = { rechecking: string[]; resumed?: string[]; incomplete?: s
 async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: number) => Promise<void>): Promise<RecheckOutcome> {
     const seenChecking = new Set<string>();
     const moving = new Set<string>();
+    const failing = new Set<string>();
     const settled = new Map<string, TorrentCheckState | undefined>();
     let waited = 0;
     for (let poll = 0; waited < WATCH_MS && settled.size < ids.length; poll += 1) {
@@ -118,6 +119,9 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
             const state = states.find(s => s.id === id);
             if (state?.state === 'moving') moving.add(id);
             else moving.delete(id);
+            // Not settled on sight: a torrent can show an old error until the check reaches it.
+            if (state?.state === 'error') failing.add(id);
+            else failing.delete(id);
             if (state?.checking === true) seenChecking.add(id);
             // Verified data can be on its way back to the save path, and a move is not the end of the check.
             else if (state?.state === 'moving') continue;
@@ -145,10 +149,10 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         rechecking: [...ids],
         ...list(resumeFailed ? 'resume_failed' : 'resumed', toStart),
         ...list('incomplete', finished.flatMap(([id, s]) => (s !== undefined && !s.complete && s.state !== 'error' ? [id] : []))),
-        ...list('errored', finished.flatMap(([id, s]) => (s?.state === 'error' ? [id] : []))),
-        ...list('still_checking', ids.filter(id => !settled.has(id) && seenChecking.has(id) && !moving.has(id))),
+        ...list('errored', [...finished.flatMap(([id, s]) => (s?.state === 'error' ? [id] : [])), ...ids.filter(id => !settled.has(id) && failing.has(id))]),
+        ...list('still_checking', ids.filter(id => !settled.has(id) && seenChecking.has(id) && !moving.has(id) && !failing.has(id))),
         ...list('still_moving', ids.filter(id => !settled.has(id) && moving.has(id))),
-        ...list('unconfirmed', [...wholeAndStopped.filter(id => !toStart.includes(id)), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id) && !moving.has(id))]),
+        ...list('unconfirmed', [...wholeAndStopped.filter(id => !toStart.includes(id)), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id) && !moving.has(id) && !failing.has(id))]),
         ...list('gone', finished.flatMap(([id, s]) => (s === undefined ? [id] : [])))
     };
 }
@@ -159,7 +163,7 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
     return `Recheck sent. ${[
         ...part('started again', o.resumed),
         ...part('came back incomplete, and any that was not stopped is downloading what is missing', o.incomplete),
-        ...part('stopped on an error during the check, so read its message in get_queue', o.errored),
+        ...part('showing an error after the recheck was sent; get_queue shows only that state, and the reason is in the qBittorrent log', o.errored),
         ...part('still checking, so start these with pause_downloads and `action: "resume"` once get_queue shows them complete', o.still_checking),
         ...part('still moving to the save path and not started, so once get_queue no longer shows them at moving and shows them complete, start them with pause_downloads and `action: "resume"`', o.still_moving),
         ...part('no check was seen running yet, so these were not started; look at them again in get_queue', o.unconfirmed),
@@ -507,6 +511,9 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const gathersTo = gatherTarget !== undefined && storageDirectory(details.contentPath, details.fileNames) !== gatherTarget ? gatherTarget : undefined;
             if (gathersTo !== undefined) allowedPath(client.id, gathersTo, client.allowedPaths);
             const moves = gathersTo !== undefined || (!noData && !keepsUnfinished);
+            // A move empties where the files are now, so that has to be allowed too.
+            const movesFrom = moves ? storageDirectory(details.contentPath, details.fileNames) : undefined;
+            if (movesFrom !== undefined) allowedPath(client.id, movesFrom, client.allowedPaths);
             if (moves && !move_files) {
                 throw new ServiceError('NotFound', client.id, `${details.title} has data at its current path, and qBittorrent would move it`, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_location again with `move_files: true`.'
@@ -534,7 +541,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(details.state === 'missingFiles' && !keepsUnfinished ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
                 // `moves`, so a token from a preview that promised no move cannot apply to data that has since come back.
-                args: { id: details.id, location: path, moveFiles: move_files, moves, gathersTo: gathersTo ?? '', gatheredOnly }
+                args: { id: details.id, location: path, moveFiles: move_files, moves, movesFrom: movesFrom ?? '', gathersTo: gathersTo ?? '', gatheredOnly }
             };
         },
 
@@ -644,6 +651,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 if (target !== undefined && !details.hasMetadata) writesTo = allowedPath(client.id, target, client.allowedPaths);
                 else if (target !== undefined && storedIn !== undefined && target !== storedIn) destination = allowedPath(client.id, target, client.allowedPaths);
             }
+            // A move empties where the files are now, so that has to be allowed too.
+            if (destination !== undefined && storedIn !== undefined) allowedPath(client.id, storedIn, client.allowedPaths);
             const removal = removalAtLimit(details.share, categories, defaults, category);
             // Only a rule this change brings in: moving between categories under the same one exposes the torrent to nothing new.
             const introduced = removal !== undefined && JSON.stringify(removal) !== JSON.stringify(removalAtLimit(details.share, categories, defaults, details.category));
@@ -679,7 +688,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
-                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal, overridesProtection: protection !== undefined }
+                args: { id: details.id, category, moves: destination !== undefined, movesFrom: destination === undefined ? '' : (storedIn ?? ''), destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal, overridesProtection: protection !== undefined }
             };
         },
 

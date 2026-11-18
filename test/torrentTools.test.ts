@@ -277,6 +277,29 @@ describe('recheck_torrents', () => {
         expect(applied.structuredContent.result).toMatchObject({ errored: [HASH] });
         expect(applied.structuredContent.result).not.toHaveProperty('incomplete');
         expect(applied.structuredContent.summary).not.toContain('downloading what is missing');
+        expect(applied.structuredContent.summary).toContain('showing an error after the recheck was sent');
+    });
+
+    it('reports an error that was there at every read as an error', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 500, progress: 0.5 })], recheckStates: ['error'] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toMatchObject({ errored: [HASH] });
+        expect(applied.structuredContent.result).not.toHaveProperty('unconfirmed');
+        expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
+    });
+
+    it('does not settle on an old error the check then clears', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['error', 'checkingUP', 'stoppedUP'] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toMatchObject({ resumed: [HASH] });
+    });
+
+    it('names only the stray of a batch as moving to its save path', async () => {
+        const h = harness({ torrents: [torrent(), torrent({ hash: OTHER, name: 'Stray.Film', save_path: '/data/media/movies' })] });
+        const preview = await h.call('recheck_torrents', { ids: [HASH, OTHER] });
+        const moves = preview.structuredContent.effects.filter(e => e.includes('where it is configured to be'));
+        expect(moves).toHaveLength(1);
+        expect(moves[0]).toContain('Stray.Film');
     });
 
     it.each(['missingFiles', 'stalledUP', 'downloading'])('refuses a torrent at %s that would write to a save path outside the roots', async state => {
@@ -902,6 +925,22 @@ describe('set_torrent_location', () => {
         expect(applied.structuredContent.result).toMatchObject({ pending: true });
     });
 
+    it('refuses to move files out of a folder outside the allowed roots', async () => {
+        const h = harness({ torrents: [torrent({ save_path: '/downloads', content_path: '/downloads/Some.Film/film.mkv' })] });
+        await expect(h.call('set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true })).rejects.toThrow(/outside the locations/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('does not let a token survive the files turning up somewhere else before a move', async () => {
+        const h = harness();
+        const args = { id: HASH, location: '/data/media/movies', move_files: true };
+        const preview = await h.call('set_torrent_location', args);
+        h.torrents[0]!.content_path = '/data/media/other/Some.Film/film.mkv';
+        const late = await h.call('set_torrent_location', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.posts).toEqual([]);
+    });
+
     it('needs the destructive tier to move data', async () => {
         const h = harness({}, { permissions: { safe_write: true, destructive: false } });
         await expect(h.call('set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true })).rejects.toThrow(/destructive/);
@@ -1110,6 +1149,12 @@ describe('set_torrent_category', () => {
             categories: { movies: { download_path: '/data/torrents/incomplete' }, tv: { savePath: '/data/torrents/tv', download_path: '/data/torrents/incomplete' } }
         });
         expect((await h.call('set_torrent_category', { id: HASH, category: 'tv' })).structuredContent.tier).toBe('safe');
+    });
+
+    it('refuses a category move that would empty a folder outside the allowed roots', async () => {
+        const h = harness({ torrents: [torrent({ auto_tmm: true, save_path: '/downloads', content_path: '/downloads/Some.Film/film.mkv' })] });
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv', move_files: true })).rejects.toThrow(/outside the locations/);
+        expect(h.posts).toEqual([]);
     });
 
     it('refuses while an automatically managed torrent is being moved', async () => {

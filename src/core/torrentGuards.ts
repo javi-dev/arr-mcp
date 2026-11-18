@@ -1,4 +1,5 @@
 import { ServiceError } from './errors.ts';
+import { shownValue } from './pastedUrl.ts';
 
 /**
  * The path rules every torrent write goes through. Pure string checks: arr-mcp
@@ -19,6 +20,8 @@ const refuse = (service: string, detail: string, remedy: string): ServiceError =
  */
 export function allowedPath(service: string, path: string, roots: readonly string[]): string {
     const allowed = `Allowed locations: ${roots.join(', ')}.`;
+    // Before anything repeats it: a URL pasted as a path can carry a tracker passkey.
+    if (shownValue(path) !== path) throw refuse(service, 'that path is a URL', allowed);
     if (path !== path.trim() || CONTROL.test(path) || path.includes('\\')) {
         throw refuse(service, 'that path has whitespace at its ends, a control character or a backslash', allowed);
     }

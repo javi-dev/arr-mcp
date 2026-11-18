@@ -413,6 +413,26 @@ describe('grab_release with a magnet', () => {
         expect(JSON.stringify(h.audit.recent())).not.toContain(passkey);
     });
 
+    it('binds the token to the exact magnet, trackers included', async () => {
+        const h = clientHarness({ qbittorrent: true });
+        const first = await h.call({ service: 'qbittorrent', magnet: `${MAGNET}&tr=${encodeURIComponent('https://one.example/a')}` });
+        const other = await h.call({
+            service: 'qbittorrent',
+            magnet: `${MAGNET}&tr=${encodeURIComponent('https://two.example/a')}`,
+            confirm: first.structuredContent.confirm_token
+        });
+        expect(other.structuredContent.applied).toBe(false);
+        expect(h.sent.some(s => s.path === '/api/v2/torrents/add')).toBe(false);
+    });
+
+    it('masks a passkey held in a tracker hostname in the preview', async () => {
+        const passkey = 'd41d8cd98f00b204e9800998ecf8427e';
+        const h = clientHarness({ qbittorrent: true });
+        const preview = await h.call({ service: 'qbittorrent', magnet: `${MAGNET}&tr=${encodeURIComponent(`https://${passkey}.tracker.example/announce`)}`, dry_run: true });
+        expect(JSON.stringify(preview)).not.toContain(passkey);
+        expect(preview.structuredContent.effects.join(' ')).toContain('***.tracker.example');
+    });
+
     it('reports a base32 magnet under the hex hash the client keys on', async () => {
         const hex = 'c12fe1c06bba254a9dc9f519b335aa7c1367a88a';
         const uri = 'magnet:?xt=urn:btih:YEX6DQDLXISUVHOJ6UM3GNNKPQJWPKEK&dn=Some.Release';

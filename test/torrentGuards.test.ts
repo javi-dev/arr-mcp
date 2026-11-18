@@ -26,6 +26,18 @@ describe('allowedPath', () => {
         expect(() => allowedPath('qb', path, ROOTS)).toThrow();
     });
 
+    it('refuses a URL pasted as a path without repeating it', () => {
+        const path = '/https://tracker.example/d41d8cd98f00b204e9800998ecf8427e/announce';
+        let message = '';
+        try {
+            allowedPath('qb', path, ROOTS);
+        } catch (err) {
+            message = (err as Error).message;
+        }
+        expect(message).toContain('is a URL');
+        expect(message).not.toContain('d41d8cd98f00b204e9800998ecf8427e');
+    });
+
     it('names the allowed roots in its remedy', () => {
         expect(() => allowedPath('qb', '/etc', ROOTS)).toThrow(expect.objectContaining({ remedy: expect.stringContaining('/data/torrents, /data/media') }));
     });
