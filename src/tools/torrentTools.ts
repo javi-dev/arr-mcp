@@ -38,6 +38,7 @@ const instanceField = z.string().optional().describe(INSTANCE_PARAM_DESCRIPTION)
 const torrentHash = z.string().regex(/^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/, 'must be a torrent hash: 40 or 64 hex characters');
 const hashField = torrentHash.describe('The torrent hash: `id` on its get_queue row.');
 const moveFilesField = z.boolean().default(false).describe('Allow qBittorrent to physically move the data, which needs `destructive`.');
+const allowRemovalField = z.boolean().default(false).describe('Accept a category whose share limits make qBittorrent remove the torrent, which needs `destructive`.');
 
 const size = (bytes: number | undefined): string => (bytes === undefined ? 'an unknown amount of data' : `${(bytes / 1024 ** 3).toFixed(1)} GB`);
 
@@ -258,6 +259,7 @@ const AddTorrentInput = z.object({
     url: z.string().min(1).optional().describe('An http or https URL of a .torrent file.'),
     torrent_base64: z.string().min(1).max(MAX_TORRENT_BASE64).optional().describe('The contents of a .torrent file, base64 encoded, up to 3 MB.'),
     category: z.string().min(1).optional().describe('An existing qBittorrent category.'),
+    allow_removal: allowRemovalField,
     save_path: z.string().min(1).optional().describe('Where to save it, inside the allowed paths; defaults to where the category saves.')
 });
 
@@ -285,7 +287,8 @@ const CategoryInput = z.object({
     instance: instanceField,
     id: hashField,
     category: z.string().describe('An existing qBittorrent category, or an empty string to clear it.'),
-    move_files: moveFilesField
+    move_files: moveFilesField,
+    allow_removal: allowRemovalField
 });
 
 const ReannounceInput = z.object({ instance: instanceField, id: hashField });
@@ -321,6 +324,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 effects: [
                     ...states.filter(s => toCheck.includes(s.id)).slice(0, 10).map(s => `Checks ${s.title} (${s.id}).`),
                     ...skipped.map(s => `Skips ${s.title} (${s.id}), which has no metadata to check yet.`),
+                    ...states.filter(s => toCheck.includes(s.id) && s.downloadPath !== undefined).map(s => `If ${s.title} comes back incomplete, qBittorrent moves what is left of it to ${s.downloadPath}.`),
                     'Reads all their data again, which can take a long time on large torrents and adds disk load while it runs.',
                     resume_if_complete
                         ? 'Starts each stopped torrent that comes back complete. An incomplete one stays stopped.'
@@ -348,7 +352,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         inputSchema: AddTorrentInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'add_torrent',
-        tier: 'safe',
+        tier: ({ allow_removal }) => (allow_removal ? 'destructive' : 'safe'),
 
         async plan(args): Promise<WritePlan> {
             const client = clientOf(adapters, args.instance);
@@ -363,9 +367,9 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             }
             const removal = removalAtLimit(NO_OWN_SHARE_RULE, categories, await client.torrentClientDefaults(), args.category ?? '');
             const protection = removal === undefined ? undefined : protectionOf(client, { private: source.private });
-            if (protection !== undefined) {
+            if (protection !== undefined && !args.allow_removal) {
                 throw new ServiceError('PermissionDenied', client.id, `that category removes torrents at its share limits, and ${protection}`, {
-                    remedy: 'Nothing was changed. Pick another category, or change its share limit action in qBittorrent.'
+                    remedy: 'Nothing was changed. Pick another category, change its share limit action in qBittorrent, or pass `allow_removal: true`, which needs `destructive`.'
                 });
             }
             return {
@@ -379,7 +383,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     'It appears in get_queue and can be removed again with remove_queue_item.'
                 ],
                 // A digest and never the source: this object is written to the audit log.
-                args: { source_sha256: source.digest, category: args.category ?? '', savePath, removal: removal ?? '' }
+                args: { source_sha256: source.digest, category: args.category ?? '', savePath, removal: removal ?? '', allowRemoval: args.allow_removal }
             };
         },
 
@@ -424,10 +428,11 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             // With an incomplete folder set, `setSavePath` only records where an unfinished torrent goes when it finishes.
             const incompleteDir = details.downloadPath?.replace(/\/+$/, '');
             const keepsUnfinished = incompleteDir !== undefined && ((details.remainingBytes ?? 0) > 0 || !details.hasMetadata);
-            // But turning automatic management off first puts the files in that folder if they are anywhere else.
-            const strayed = keepsUnfinished && details.autoManaged && details.hasMetadata && storageDirectory(details.contentPath, details.fileNames) !== incompleteDir;
-            if (strayed) allowedPath(client.id, incompleteDir, client.allowedPaths);
-            const moves = strayed || (!noData && !keepsUnfinished);
+            // Turning automatic management off first puts the files where the torrent is configured to keep them.
+            const gatherTarget = details.autoManaged && details.hasMetadata ? (keepsUnfinished ? incompleteDir : details.savePath?.replace(/\/+$/, '')) : undefined;
+            const gathersTo = gatherTarget !== undefined && storageDirectory(details.contentPath, details.fileNames) !== gatherTarget ? gatherTarget : undefined;
+            if (gathersTo !== undefined) allowedPath(client.id, gathersTo, client.allowedPaths);
+            const moves = gathersTo !== undefined || (!noData && !keepsUnfinished);
             if (moves && !move_files) {
                 throw new ServiceError('NotFound', client.id, `${details.title} has data at its current path, and qBittorrent would move it`, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_location again with `move_files: true`.'
@@ -437,9 +442,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 target,
                 summary: `${moves ? 'Move' : 'Point'} ${details.title} ${moves ? 'to' : 'at'} ${path} on ${client.id}.`,
                 effects: [
-                    strayed
-                        ? `Turning off automatic management first moves its files to ${incompleteDir}. After that, only where they go once finished changes.`
-                        : keepsUnfinished
+                    ...(gathersTo === undefined ? [] : [`Turning off automatic management first moves its files to ${gathersTo}.`]),
+                    keepsUnfinished
                         ? 'qBittorrent leaves its unfinished data where it is, and only changes where it goes once finished.'
                         : !details.hasMetadata
                         ? 'It has no metadata yet, so there is nothing on disk to move.'
@@ -450,7 +454,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(details.state === 'missingFiles' && !keepsUnfinished ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
                 // `moves`, so a token from a preview that promised no move cannot apply to data that has since come back.
-                args: { id: details.id, location: path, moveFiles: move_files, moves }
+                args: { id: details.id, location: path, moveFiles: move_files, moves, gathersTo: gathersTo ?? '' }
             };
         },
 
@@ -511,13 +515,13 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         name: 'set_torrent_category',
         title: 'Set a torrent category',
         description:
-            'Changes the category of a torrent, or clears it with an empty string. The category must already exist. The preview warns when an *arr watches the old or new category. If the change would relocate an automatically managed torrent it is refused unless `move_files: true`, which needs `destructive`. Previews first; confirm to apply. Field reference: arr://docs/set_torrent_category.',
+            'Changes the category of a torrent, or clears it with an empty string. The category must already exist. The preview warns when an *arr watches the old or new category. If the change would relocate an automatically managed torrent it is refused unless `move_files: true`, and a category whose share limits would remove the torrent unless `allow_removal: true`; each needs `destructive`. Previews first; confirm to apply. Field reference: arr://docs/set_torrent_category.',
         inputSchema: CategoryInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'set_torrent_category',
-        tier: ({ move_files }) => (move_files ? 'destructive' : 'safe'),
+        tier: ({ move_files, allow_removal }) => (move_files || allow_removal ? 'destructive' : 'safe'),
 
-        async plan({ instance, id, category, move_files }): Promise<WritePlan> {
+        async plan({ instance, id, category, move_files, allow_removal }): Promise<WritePlan> {
             const client = clientOf(adapters, instance);
             const details = await client.getTorrentDetails(id);
             const target = `${client.id}:${details.id}`;
@@ -529,7 +533,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             let destination: string | undefined;
             let finishedAt: string | undefined;
             let writesTo: string | undefined;
-            if (details.autoManaged && (details.state === 'moving' || CHECKING_STATES.has(details.state))) {
+            if (details.state === 'moving' || (details.autoManaged && CHECKING_STATES.has(details.state))) {
                 throw new ServiceError('NotFound', client.id, 'that torrent is being moved or checked, so where its data is cannot be told yet', {
                     remedy: 'Nothing was changed. Wait for that to finish, then try again.'
                 });
@@ -552,16 +556,19 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     destination = allowedPath(client.id, target, client.allowedPaths);
                 }
                 if (incomplete !== undefined) finishedAt = finalPath;
-            } else if (details.autoManaged && details.hasMetadata && storedIn !== undefined) {
+            } else if (details.autoManaged) {
                 // Switching to manual management first puts the files where the old category keeps them.
                 const target = unfinished ? (incompleteDir ?? savedAt) : savedAt;
-                if (target !== undefined && target !== storedIn) destination = allowedPath(client.id, target, client.allowedPaths);
+                if (target !== undefined && !details.hasMetadata) writesTo = allowedPath(client.id, target, client.allowedPaths);
+                else if (target !== undefined && storedIn !== undefined && target !== storedIn) destination = allowedPath(client.id, target, client.allowedPaths);
             }
             const removal = removalAtLimit(details.share, categories, defaults, category);
-            const protection = removal === undefined ? undefined : protectionOf(client, details);
-            if (protection !== undefined) {
-                throw new ServiceError('PermissionDenied', client.id, `at the share limits of that category qBittorrent would remove this torrent, and ${protection}`, {
-                    remedy: 'Nothing was changed. Pick another category, or change its share limit action in qBittorrent.'
+            // Only a rule this change brings in: moving between categories under the same one exposes the torrent to nothing new.
+            const introduced = removal !== undefined && JSON.stringify(removal) !== JSON.stringify(removalAtLimit(details.share, categories, defaults, details.category));
+            if (introduced && !allow_removal) {
+                const protection = protectionOf(client, details);
+                throw new ServiceError('PermissionDenied', client.id, `at the share limits of that category qBittorrent would remove this torrent${protection === undefined ? '' : `, and ${protection}`}`, {
+                    remedy: 'Nothing was changed. Pick another category, change its share limit action in qBittorrent, or pass `allow_removal: true`, which needs `destructive`.'
                 });
             }
             if (destination !== undefined && !move_files) {
@@ -589,7 +596,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
-                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '' }
+                args: { id: details.id, category, moves: destination !== undefined, destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal }
             };
         },
 

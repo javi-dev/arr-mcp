@@ -17,6 +17,7 @@ describe('categorySavePath', () => {
         ['rel', category({ savePath: 'relative' })],
         ['tv', category({ savePath: '/mnt/tv' })],
         ['tv/show', category()],
+        ['tv/rel', category({ savePath: 'nested' })],
         ['plain', category()]
     ]);
 
@@ -24,6 +25,7 @@ describe('categorySavePath', () => {
         ['', '/data/dl'],
         ['abs', '/mnt/abs'],
         ['rel', '/data/dl/relative'],
+        ['tv/rel', '/data/dl/nested'],
         ['plain', '/data/dl/plain'],
         ['tv/show', '/mnt/tv/show']
     ])('resolves %j to %s', (name, path) => {

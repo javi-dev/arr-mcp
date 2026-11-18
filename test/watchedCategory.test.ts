@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { KeyedServiceConfig } from '../src/config/schema.ts';
+import { LidarrAdapter } from '../src/services/lidarr.ts';
 import { RadarrAdapter } from '../src/services/radarr.ts';
 import type { ServiceAdapter } from '../src/services/types.ts';
 import { categoryWatchers } from '../src/tools/watchedCategory.ts';
@@ -32,6 +33,16 @@ describe('getDownloadClients', () => {
         const [row] = await radarr([client()]).getDownloadClients();
         expect(row).toEqual({ name: 'qBittorrent', implementation: 'QBittorrent', enabled: true, categories: ['movies', 'movies-done'] });
         expect(JSON.stringify(row)).not.toContain(SECRET);
+    });
+});
+
+describe('getDownloadClients on Lidarr', () => {
+    it('reads the music category', async () => {
+        const lidarr = new LidarrAdapter(
+            { url: 'http://192.0.2.10:8686', api_key: 'k', timeout_ms: 1000, permissions: { safe_write: false, destructive: false } } as KeyedServiceConfig,
+            serving({ '/api/v1/downloadclient': [client({ fields: [{ name: 'musicCategory', value: 'music' }] })] })
+        );
+        expect((await lidarr.getDownloadClients())[0]!.categories).toEqual(['music']);
     });
 });
 

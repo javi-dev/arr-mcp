@@ -29,9 +29,11 @@ function harness(opts: { stores?: boolean; refuses?: string; breaksOn?: string; 
     const requests: URL[] = [];
     const addresses: string[] = [];
     const uploads: FormData[] = [];
+    const uploadHeaders: Headers[] = [];
     const impl = (async (input: string | URL | Request, init?: RequestInit) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
         addresses.push(url.href);
+        if (init?.body instanceof FormData) uploadHeaders.push(new Headers(init.headers));
         if (typeof init?.body === 'string') for (const [key, value] of new URLSearchParams(init.body)) url.searchParams.set(key, value);
         requests.push(url);
         const keyword = url.searchParams.get('keyword') ?? '';
@@ -47,7 +49,7 @@ function harness(opts: { stores?: boolean; refuses?: string; breaksOn?: string; 
                 return jsonResponse({ config: { misc: { [keyword]: settings[keyword] } } });
             }
             case 'addurl':
-                if (opts.addRefusal !== undefined) return jsonResponse({ errorMessage: opts.addRefusal }, 400);
+                if (opts.addRefusal !== undefined) return jsonResponse([{ errorMessage: opts.addRefusal }], 400);
                 return jsonResponse({ status: opts.addStatus ?? true, nzo_ids: ['SABnzbd_nzo_1'] });
             case 'addfile':
                 uploads.push(init?.body as FormData);
@@ -61,7 +63,7 @@ function harness(opts: { stores?: boolean; refuses?: string; breaksOn?: string; 
     const context = writeContext(instancesOf({ sabnzbd: cfg }));
     registerSabnzbdTools(server, context, [new SabnzbdAdapter(cfg, impl), ...(opts.extra ?? [])]);
     const sent = (mode: string) => requests.filter(r => r.searchParams.get('mode') === mode);
-    return { call, context, requests, addresses, uploads, sent, settings };
+    return { call, context, requests, addresses, uploads, uploadHeaders, sent, settings };
 }
 
 const NZB = '<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"></nzb>';
@@ -88,6 +90,13 @@ describe('add_nzb', () => {
         const h = harness();
         await confirmed(h.call, 'add_nzb', { nzb_base64: b64(file), filename });
         expect((h.uploads[0]!.get('name') as File).name).toBe(filename);
+    });
+
+    it('sends the category with an upload, and leaves the multipart boundary to fetch', async () => {
+        const h = harness();
+        await confirmed(h.call, 'add_nzb', { nzb_base64: b64(NZB), filename: 'film.nzb', category: 'movies' });
+        expect(h.sent('addfile')[0]!.searchParams.get('cat')).toBe('movies');
+        expect(h.uploadHeaders[0]!.get('content-type')).toBeNull();
     });
 
     it('keeps the URL out of the address it calls, where access logs would keep it', async () => {
@@ -253,6 +262,20 @@ describe('update_client_settings', () => {
         const h = harness();
         await confirmed(h.call, 'update_client_settings', { history_retention_option: 'number-delete', history_retention_number: 50 });
         expect(h.sent('set_config').map(r => r.searchParams.get('keyword'))).toEqual(['history_retention_number', 'history_retention_option']);
+    });
+
+    it('replaces a policy already deleting before lowering the count it would apply', async () => {
+        const h = harness();
+        h.settings.history_retention_option = 'days-delete';
+        h.settings.history_retention_number = 30;
+        await confirmed(h.call, 'update_client_settings', { history_retention_option: 'number-archive', history_retention_number: 2 });
+        expect(h.sent('set_config').map(r => r.searchParams.get('keyword'))).toEqual(['history_retention_option', 'history_retention_number']);
+    });
+
+    it('refuses a setting this SABnzbd does not have', async () => {
+        const h = harness();
+        delete h.settings.cleanup_list;
+        await expect(h.call('update_client_settings', { cleanup_list: ['nfo'] })).rejects.toThrow(/no setting named cleanup_list/);
     });
 
     it('does not let a token apply once the stored retention count has changed', async () => {

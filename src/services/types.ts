@@ -2078,7 +2078,7 @@ export type TorrentSource = { kind: 'url'; url: string } | { kind: 'file'; bytes
 export type TorrentAdded = { accepted: true; pending: boolean };
 
 /** One row of `recheck_torrents`' watch. */
-export type TorrentCheckState = { id: string; /** Fenced. */ title: string; state: string; checking: boolean; complete: boolean; stopped: boolean; hasMetadata: boolean };
+export type TorrentCheckState = { id: string; /** Fenced. */ title: string; state: string; checking: boolean; complete: boolean; stopped: boolean; hasMetadata: boolean; /** The incomplete-downloads folder it is set to use. */ downloadPath?: string };
 
 export interface TorrentManageCapable {
     /** Roots a location may sit under, from `allowed_paths`. */

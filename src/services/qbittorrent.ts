@@ -733,7 +733,8 @@ export class QbittorrentAdapter
                 checking: CHECKING_STATES.has(state),
                 complete: t.amount_left === 0 && t.progress === 1,
                 stopped: PAUSED_STATES.has(state),
-                hasMetadata: hasMetadataOf(t)
+                hasMetadata: hasMetadataOf(t),
+                ...(t.download_path === undefined || t.download_path === '' ? {} : { downloadPath: t.download_path })
             }];
         });
     }

@@ -100,6 +100,18 @@ describe('get_queue on qBittorrent at detail "full"', () => {
         expect(result.degraded).toContain('qbittorrent:torrent details');
     });
 
+    it('does not mark the page degraded for a torrent removed while it was read', async () => {
+        const qb = fakeQbittorrent({ torrents: [torrent()] });
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            if (String(input).includes('hashes=')) return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const client = new QbittorrentAdapter({ url: 'http://192.0.2.10:8081', timeout_ms: 10_000, permissions: { safe_write: false, destructive: false } } as CredentialServiceConfig, impl);
+        const result = await buildGetQueue([client], full);
+        expect(result.items).toHaveLength(1);
+        expect(result.degraded).toEqual([]);
+    });
+
     it('does not read details below detail "full"', async () => {
         const [row] = (await buildGetQueue([adapter(undefined)], { detail: 'standard', limit: 50 })).items;
         expect(row!.files).toBeUndefined();

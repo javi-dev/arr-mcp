@@ -16,7 +16,7 @@ export const TOOL_DOCS: Readonly<Record<string, string>> = {
     rename_torrent_file:
         'Renames one file of a torrent whose data sits inside `allowed_paths`. `old_path` is a `files` name from get_queue at `detail: "full"`, and `new_path` is relative to the torrent and stays inside its own folder; a single-file torrent keeps the file at the top level.',
     set_torrent_category:
-        'Sets an existing category, or clears it with an empty string. The preview warns when an *arr watches the old or new category. When the client would relocate an automatically managed torrent, the destination must be inside `allowed_paths` and the call needs `move_files: true`, which needs the `destructive` permission.',
+        'Sets an existing category, or clears it with an empty string. The preview warns when an *arr watches the old or new category. When the client would relocate an automatically managed torrent, the destination must be inside `allowed_paths` and the call needs `move_files: true`, which needs the `destructive` permission. A category whose share limits would make qBittorrent remove the torrent, which it did not risk before, is refused unless `allow_removal: true`, which needs `destructive` too.',
     reannounce_torrent:
         'Announces one torrent to its trackers now. The preview names each tracker by hostname with its status. A stopped torrent is a no-op. Trackers rate-limit announces, so this is not for a loop.',
     add_nzb:

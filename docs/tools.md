@@ -265,7 +265,7 @@ tests:
 
 | Stack | Tools listed | `tools/list` | Roughly |
 | --- | --- | --- | --- |
-| Nothing configured yet | 53 | 132,046 bytes | 33,000 tokens |
+| Nothing configured yet | 53 | 132,469 bytes | 33,000 tokens |
 | Radarr, Sonarr, SABnzbd, Jellyfin | 39 | 88,761 bytes | 22,200 tokens |
 | Those four, plus Lidarr, Prowlarr, Bazarr and Seerr | 45 | 108,856 bytes | 27,200 tokens |
 
@@ -283,7 +283,7 @@ Four limits hold it there, each one asserted in `test/app.test.ts`:
 - **The whole list under 133,000 bytes.** Declaring only the fields every write
   result carries, and cutting the parameter text that each tool repeated, took
   it from 130,045 bytes to 113,613; the nine qBittorrent and SABnzbd chores
-  brought it to 132,046.
+  brought it to 132,469.
 - **Nothing in it that does not apply to your stack.** The rest of this section
   is what that means.
 
@@ -3497,9 +3497,9 @@ own folder. The rename finishes in the background after the call returns.
 ## `set_torrent_category`
 
 Sets an existing category, or clears it with an empty string. The preview warns
-when an *arr watches the old or new category, and when the new category removes
-torrents at its share limits; an instance protecting the torrent refuses that
-change outright. Limits and folders are resolved as qBittorrent resolves them:
+when an *arr watches the old or new category. A category whose share limits would
+make qBittorrent remove the torrent, which it did not risk before, is refused unless
+`allow_removal: true`, which needs `destructive`. Limits and folders are resolved as qBittorrent resolves them:
 the torrent's own setting, then the category, its parents and the client. If the
 change would relocate an automatically managed torrent it is refused without
 `move_files: true`, which needs `destructive`, and every folder the data would

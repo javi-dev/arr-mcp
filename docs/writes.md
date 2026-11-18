@@ -58,10 +58,10 @@ write, and says which permission to enable.
 | `fix_metadata` | destructive | `destructive`, plus `allow_metadata_repair` on Plex |
 | `fix_profile` | destructive | `destructive` |
 | `recheck_torrents` | safe | `safe_write` |
-| `add_torrent` | safe | `safe_write` |
+| `add_torrent` | safe; destructive with `allow_removal` | `safe_write`; `destructive` with `allow_removal` |
 | `set_torrent_location` | safe; destructive with `move_files` | `safe_write`; `destructive` with `move_files` |
 | `rename_torrent_file` | safe | `safe_write` |
-| `set_torrent_category` | safe; destructive with `move_files` | `safe_write`; `destructive` with `move_files` |
+| `set_torrent_category` | safe; destructive with `move_files` or `allow_removal` | `safe_write`; `destructive` with `move_files` or `allow_removal` |
 | `reannounce_torrent` | safe | `safe_write` |
 | `add_nzb` | safe | `safe_write` |
 | `update_client_settings` | destructive | `destructive` |
