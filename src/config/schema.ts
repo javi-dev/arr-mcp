@@ -251,7 +251,7 @@ const TorrentRootSchema = z
  */
 const QbittorrentServiceSchema = z.strictObject({
     ...CredentialServiceSchema.shape,
-    webui_api_key: z.string().min(1).optional(),
+    webui_api_key: z.string().regex(/^[\x21-\x7e]+$/, 'must be printable characters with no spaces').optional(),
     webui_api_key_file: z.string().min(1, 'must name a file').optional(),
     allowed_paths: z.array(TorrentRootSchema).min(1, 'list at least one path, or remove the key for the defaults').optional(),
     protect_private_torrents: z.boolean().optional(),

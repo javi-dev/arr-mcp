@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CredentialServiceConfig } from '../src/config/schema.ts';
 import { QbittorrentAdapter } from '../src/services/qbittorrent.ts';
 import { buildGetQueue } from '../src/tools/getQueue.ts';
+import type { ServiceAdapter } from '../src/services/types.ts';
 import { HASH, OTHER, PASSKEY, fakeQbittorrent, torrent, type FakeOptions } from './helpers/fakeQbittorrent.ts';
 import { expectWithinBudget } from './helpers/budget.ts';
 
@@ -55,9 +56,21 @@ describe('get_queue on qBittorrent at detail "full"', () => {
 
     it('caps the files of one torrent and says how many are left out', async () => {
         const files = Array.from({ length: 250 }, (_, i) => ({ name: `Pack/${i}.mkv`, size: 1, progress: 1 }));
-        const [row] = (await buildGetQueue([adapter(undefined, { files })], full)).items;
+        const [row] = (await buildGetQueue([adapter(undefined, { torrents: [torrent(), torrent({ hash: OTHER })], files })], full)).items;
         expect(row!.files).toHaveLength(200);
         expect(row!.filesOmitted).toBe(50);
+    });
+
+    it('lets a single torrent use the whole page allowance', async () => {
+        const files = Array.from({ length: 250 }, (_, i) => ({ name: `Pack/${i}.mkv`, size: 1, progress: 1 }));
+        const { items } = await buildGetQueue([adapter(undefined, { torrents: [torrent()], files })], { detail: 'full', limit: 50, filter: { hash: HASH } });
+        expect(items[0]!.files).toHaveLength(250);
+        expect(items[0]!.filesOmitted).toBeUndefined();
+    });
+
+    it('reports a ratio past the ceiling, which qBittorrent answers with -1, as the ceiling', async () => {
+        const [row] = (await buildGetQueue([adapter(undefined, { torrents: [torrent({ ratio: -1 })] })], full)).items;
+        expect(row!.ratio).toBe(9999);
     });
 
     it('shares a file budget across the page', async () => {
@@ -109,6 +122,12 @@ describe('get_queue filters', () => {
     it('narrows to one hash, whatever its case', async () => {
         const { items } = await buildGetQueue(stack(), { detail: 'standard', limit: 50, filter: { hash: OTHER.toUpperCase() } });
         expect(items.map(i => i.id)).toEqual([OTHER]);
+    });
+
+    it('finds an *arr row by its download id', async () => {
+        const radarr = { id: 'radarr', type: 'radarr', getQueue: () => Promise.resolve([{ service: 'radarr', id: '7', title: 'Film', status: 'downloading', protocol: 'torrent', downloadId: OTHER.toUpperCase() }]) } as unknown as ServiceAdapter;
+        const { items } = await buildGetQueue([radarr], { detail: 'standard', limit: 50, filter: { hash: OTHER } });
+        expect(items.map(i => i.id)).toEqual(['7']);
     });
 
     it('refuses an instance that does not exist rather than answering empty', async () => {

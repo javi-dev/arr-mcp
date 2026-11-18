@@ -265,7 +265,8 @@ async function withTorrentDetails(rows: QueueItem[], adapters: readonly ServiceA
     const items = rows.map((row, i) => {
         const d = details.get(i);
         if (d === undefined) return row;
-        const shown = Math.min(d.files.length, TORRENT_FILES_SHOWN, filesLeft);
+        // Asked about one torrent, the whole page's allowance is its own.
+        const shown = Math.min(d.files.length, wanted.length === 1 ? DETAIL_FILES_PER_PAGE : TORRENT_FILES_SHOWN, filesLeft);
         filesLeft -= shown;
         return {
             ...row,

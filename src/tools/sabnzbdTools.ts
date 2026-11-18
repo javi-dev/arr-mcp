@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { gunzipSync } from 'node:zlib';
+import { constants, gunzipSync } from 'node:zlib';
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { ServiceError } from '../core/errors.ts';
 import { fenceText } from '../core/fence.ts';
 import { READ_ONLY, toolInput } from '../core/shape.ts';
 import { downloadHost } from '../core/torrentGuards.ts';
-import { hasNzbAdd, type NzbAddCapable, type NzbSource, type SabClientSettings, type SabSettingChange, type ServiceAdapter } from '../services/types.ts';
+import { hasNzbAdd, type NzbAddCapable, type NzbSource, type SabClientSettings, type SabClientSettingsRead, type SabSettingChange, type ServiceAdapter } from '../services/types.ts';
 import { INSTANCE_PARAM_DESCRIPTION, resolveInstance } from './resolveInstance.ts';
 import { categoryWatchers } from './watchedCategory.ts';
 import { registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
@@ -27,20 +27,26 @@ const clientOf = (adapters: readonly ServiceAdapter[], instance: string | undefi
 
 const instanceField = z.string().optional().describe(INSTANCE_PARAM_DESCRIPTION);
 
-const MAX_NZB_BYTES = 20 * 1024 * 1024;
+/** What still fits the server's 4 MiB request limit once base64 encoded. */
+const MAX_NZB_BYTES = 3_000_000;
 
-/** Enough of the decompressed file to find the root element, and no more: a gzip bomb stops here. */
+/** 3 MB of file, base64 encoded, which leaves the request inside that limit. */
+export const MAX_NZB_BASE64 = 4_000_000;
+
+/** Enough of a file to find the root element. */
 const NZB_SNIFF_BYTES = 64 * 1024;
+
+/** Only the start of a gzip is inflated, and its output is capped, so a gzip bomb stops here. */
+const GZIP_SNIFF_INPUT = 16 * 1024;
+const GZIP_SNIFF_OUTPUT = 32 * 1024 * 1024;
 
 const looksLikeNzb = (bytes: Buffer): boolean => {
     let head = bytes.subarray(0, NZB_SNIFF_BYTES);
     if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
         try {
-            head = gunzipSync(bytes, { maxOutputLength: NZB_SNIFF_BYTES, finishFlush: 2 });
-        } catch (err) {
-            // Stopping at the cap is the expected outcome for a large NZB.
-            if ((err as NodeJS.ErrnoException).code !== 'ERR_BUFFER_TOO_LARGE') return false;
-            return true;
+            head = gunzipSync(bytes.subarray(0, GZIP_SNIFF_INPUT), { finishFlush: constants.Z_SYNC_FLUSH, maxOutputLength: GZIP_SNIFF_OUTPUT }).subarray(0, NZB_SNIFF_BYTES);
+        } catch {
+            return false;
         }
     }
     return /<nzb[\s>]/i.test(head.toString('utf8'));
@@ -61,7 +67,7 @@ function nzbSource(service: string, args: { url?: string | undefined; nzb_base64
         throw new ServiceError('NotFound', service, '`nzb_base64` is not valid base64', { remedy: 'Send the whole .nzb file, base64 encoded.' });
     }
     const bytes = Buffer.from(encoded, 'base64');
-    if (bytes.length > MAX_NZB_BYTES) throw new ServiceError('NotFound', service, 'that NZB is larger than the 20 MiB limit');
+    if (bytes.length > MAX_NZB_BYTES) throw new ServiceError('NotFound', service, 'that NZB is larger than the 3 MB limit', { remedy: 'Pass its `url` instead.' });
     if (!looksLikeNzb(bytes)) throw new ServiceError('NotFound', service, 'that file is not an NZB', { remedy: 'Send a .nzb or .nzb.gz file, base64 encoded.' });
     const filename = args.filename ?? 'upload.nzb';
     if (!/^[\w .()[\]-]{1,200}\.nzb(?:\.gz)?$/i.test(filename)) {
@@ -77,7 +83,7 @@ function nzbSource(service: string, args: { url?: string | undefined; nzb_base64
 const AddNzbInput = z.object({
     instance: instanceField,
     url: z.string().min(1).optional().describe('An http or https URL of an NZB.'),
-    nzb_base64: z.string().min(1).max(28_000_000).optional().describe('The contents of a .nzb or .nzb.gz file, base64 encoded, up to 20 MiB.'),
+    nzb_base64: z.string().min(1).max(MAX_NZB_BASE64).optional().describe('The contents of a .nzb or .nzb.gz file, base64 encoded, up to 3 MB.'),
     filename: z.string().min(1).optional().describe('The name of the uploaded file, ending in .nzb or .nzb.gz.'),
     category: z.string().min(1).optional().describe('An existing SABnzbd category.')
 });
@@ -123,6 +129,13 @@ const shown = (value: unknown): string => (Array.isArray(value) ? (value.length 
 
 const same = (a: unknown, b: unknown): boolean => shown(a) === shown(b);
 
+/** What the list means, which the mode decides and this tool cannot change. */
+const unwantedMeaning = (mode: SabClientSettingsRead['unwanted_extensions_mode']): string => {
+    if (mode === 'whitelist') return 'SABnzbd is in whitelist mode: only these extensions are allowed, and everything else counts as unwanted.';
+    if (mode === 'blacklist') return 'SABnzbd is in blacklist mode: these extensions count as unwanted.';
+    return 'SABnzbd did not say whether this list blocks these extensions or allows only these.';
+};
+
 const SettingsOutput = z.looseObject({ service: z.string(), settings: z.looseObject({}) });
 
 export function registerSabnzbdTools(server: McpServer, context: WriteContext, adapters: readonly ServiceAdapter[]): void {
@@ -130,7 +143,7 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
         name: 'add_nzb',
         title: 'Add an NZB',
         description:
-            'Adds an NZB to SABnzbd from a `url` or the file itself as `nzb_base64`, into an existing `category`. The preview warns when an *arr watches that category. Safe tier: undo with remove_queue_item. Previews first; the confirm token is bound to that exact source.',
+            'Adds an NZB to SABnzbd from a `url` or the file itself as `nzb_base64`, into an existing `category`. The preview warns when an *arr watches that category. Safe tier: undo with remove_queue_item. Previews first; the confirm token is bound to that exact source. Field reference: arr://docs/add_nzb.',
         inputSchema: AddNzbInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'add_nzb',
@@ -173,7 +186,7 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
             title: 'Download client settings',
             annotations: READ_ONLY,
             description:
-                'The SABnzbd settings update_client_settings can change: aborting hopeless jobs, unwanted extensions and what happens to them, the cleanup list and history retention. Servers and credentials are never read.',
+                'The SABnzbd settings update_client_settings can change: aborting hopeless jobs, unwanted extensions and what happens to them, the cleanup list and history retention. Servers and credentials are never read. Field reference: arr://docs/get_client_settings.',
             inputSchema: toolInput({ instance: instanceField }),
             outputSchema: SettingsOutput
         },
@@ -192,7 +205,7 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
         name: 'update_client_settings',
         title: 'Update download client settings',
         description:
-            'Changes the SABnzbd settings get_client_settings lists, and only those: aborting hopeless jobs, unwanted extensions and the action on them, the cleanup list, and history retention. Destructive tier, because these decide which files and jobs SABnzbd deletes. The preview lists each old and new value. Previews first; confirm to apply.',
+            'Changes the SABnzbd settings get_client_settings lists, and only those: aborting hopeless jobs, unwanted extensions and the action on them, the cleanup list, and history retention. Destructive tier, because these decide which files and jobs SABnzbd deletes. The preview lists each old and new value. Previews first; confirm to apply. Field reference: arr://docs/update_client_settings.',
         inputSchema: UpdateSettingsInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'update_client_settings',
@@ -219,11 +232,17 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
             const changes = Object.fromEntries(Object.entries(requested).filter(([name, value]) => !same(value, current[name as keyof SabClientSettings])));
             const target = `${client.id}:settings`;
             if (Object.keys(changes).length === 0) return { target, summary: `${client.id} already has those settings.`, effects: [], noop: true };
+            const retentionChanges = 'history_retention_option' in changes || 'history_retention_number' in changes;
             return {
                 target,
                 summary: `Change ${Object.keys(changes).length} setting(s) on ${client.id}.`,
-                effects: Object.entries(changes).map(([name, value]) => `${name}: ${shown(current[name as keyof SabClientSettings])} becomes ${shown(value)}.`),
-                args: { changes }
+                effects: [
+                    ...Object.entries(changes).map(([name, value]) => `${name}: ${shown(current[name as keyof SabClientSettings])} becomes ${shown(value)}.`),
+                    ...('unwanted_extensions' in changes ? [unwantedMeaning(current.unwanted_extensions_mode)] : []),
+                    ...(retentionChanges ? [`History retention afterwards: ${shown(option)}, counting ${shown(number)}.`] : [])
+                ],
+                // The retention in force, so a token cannot outlive a change to the half of it this call leaves alone.
+                args: { changes, ...(retentionChanges ? { retention: { option, number } } : {}) }
             };
         },
 

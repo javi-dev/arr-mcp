@@ -52,8 +52,23 @@ describe('remove_queue_item on qBittorrent', () => {
     });
 
     it('counts an unknown private flag as private', async () => {
-        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ private: undefined })], properties: { private: null } });
+        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ private: undefined })], properties: { private: null, is_private: false } });
         await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/not known yet/);
+    });
+
+    it('does not believe the deprecated flag while a magnet is still fetching metadata', async () => {
+        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ state: 'metaDL', private: null })], properties: { private: null, is_private: false } });
+        await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/not known yet/);
+    });
+
+    it('fails closed when a proxy answers 404 for a torrent qBittorrent has just listed', async () => {
+        const qb = fakeQbittorrent();
+        const impl = ((input: string | URL | Request, init?: RequestInit) =>
+            String(input).includes('/torrents/files') ? Promise.resolve(new Response('', { status: 404 })) : qb.impl(input, init)) as typeof fetch;
+        const cfg = config('vpn', { protect_all_torrents: true });
+        const { server, call } = toolServer();
+        registerRemoveQueueItem(server, writeContext(namedInstances('qbittorrent', [cfg])), [new QbittorrentAdapter(cfg, impl)]);
+        await expect(call('remove_queue_item', ARGS)).rejects.toThrow(/could not be read/);
     });
 
     it('fails closed when a protecting instance cannot be read', async () => {
@@ -89,6 +104,7 @@ describe('remove_queue_item on an *arr row', () => {
             id: 'radarr',
             type: 'radarr',
             supportsBlocklist: true,
+            grabRecorded: () => Promise.resolve(true),
             getQueue: () => Promise.resolve([arrRow]),
             removeQueueItem: (_id: string, opts: unknown) => {
                 removed.push(opts);
@@ -111,6 +127,17 @@ describe('remove_queue_item on an *arr row', () => {
     it('guards a cross-seeded torrent when only the second instance protects it', async () => {
         const h = arrHarness([{ name: 'vpn' }, { name: 'novpn', over: { protect_all_torrents: true } }]);
         await expect(h.call('remove_queue_item', { service: 'radarr', id: '7' })).rejects.toThrow(/qbittorrent\/novpn protects/);
+        expect(h.removed).toEqual([]);
+    });
+
+    it('guards a blocklist-only removal, since the *arr can still delete the download', async () => {
+        const h = arrHarness([{ name: 'vpn', over: { protect_all_torrents: true } }]);
+        await expect(h.call('remove_queue_item', { service: 'radarr', id: '7', remove_from_client: false, blocklist: true })).rejects.toThrow(/protected from deletion/);
+    });
+
+    it('fails closed when a protecting instance cannot be read', async () => {
+        const h = arrHarness([{ name: 'vpn', over: { protect_all_torrents: true }, opts: { failing: ['/torrents/info'] } }]);
+        await expect(h.call('remove_queue_item', { service: 'radarr', id: '7' })).rejects.toThrow(/could not be read/);
         expect(h.removed).toEqual([]);
     });
 

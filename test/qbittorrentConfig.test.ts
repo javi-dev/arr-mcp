@@ -4,6 +4,7 @@ import { ConfigSchema } from '../src/config/schema.ts';
 import { resolveSecrets } from '../src/config/secretSources.ts';
 import { qbittorrentSession } from '../src/core/auth.ts';
 import { QbittorrentAdapter } from '../src/services/qbittorrent.ts';
+import { fakeQbittorrent } from './helpers/fakeQbittorrent.ts';
 import { textResponse } from './helpers/serve.ts';
 
 const AUTH = { bearer_token: 'a'.repeat(64), username: 'admin', allowed_hosts: [], allow_token_in_url: false };
@@ -29,6 +30,22 @@ describe('qBittorrent config keys', () => {
         ['the key both inline and from a file', { webui_api_key: 'k', webui_api_key_file: '/run/secrets/k' }]
     ])('refuses %s', (_why, entry) => {
         expect(parse(entry).success).toBe(false);
+    });
+
+    it.each(['with a space', 'with\na line break'])('refuses a key %s', key => {
+        expect(parse({ webui_api_key: key }).success).toBe(false);
+    });
+
+    it('refuses a key from a file that a header could not carry, without quoting it', () => {
+        const parsed = parse({ webui_api_key_file: '/run/secrets/qb' });
+        let message = '';
+        try {
+            resolveSecrets(parsed.data!, { readFile: () => 'first-line\nsecret-second-line' });
+        } catch (err) {
+            message = (err as Error).message;
+        }
+        expect(message).toContain('webui_api_key');
+        expect(message).not.toContain('secret-second-line');
     });
 
     it('does not offer the keys to another service', () => {
@@ -64,6 +81,11 @@ describe('editing a qBittorrent instance on the config page', () => {
         expect(next).toMatchObject({ webui_api_key: 'the-key', allowed_paths: ['/srv/dl'], protect_all_torrents: true });
     });
 
+    it('drops a key file too when the instance moves to another host', () => {
+        const fromFile = ConfigSchema.parse({ auth: AUTH, services: { qbittorrent: { url: 'http://192.0.2.10:8081', webui_api_key_file: '/run/secrets/qb' } } });
+        expect(entry(updateInstance(fromFile, 'qbittorrent', { url: 'http://192.0.2.99:8081' })).webui_api_key_file).toBeUndefined();
+    });
+
     it('drops the key when the instance moves to another host, and keeps the guardrails', () => {
         const next = entry(updateInstance(config(), 'qbittorrent', { url: 'http://192.0.2.99:8081', password: 'retyped' }));
         expect(next.webui_api_key).toBeUndefined();
@@ -85,6 +107,26 @@ describe('qBittorrent API key auth', () => {
         qbittorrentSession({ id: 'qb', url: BASE, timeoutMs: 1000, apiKey: 'the-key' }).apply(c as never);
         expect(c.headers.get('Authorization')).toBe('Bearer the-key');
         expect(c.headers.get('Cookie')).toBeNull();
+    });
+
+    it('reaches the wire through the adapter', async () => {
+        const qb = fakeQbittorrent();
+        const adapter = new QbittorrentAdapter({ url: BASE, webui_api_key: 'the-key', timeout_ms: 1000, permissions: { safe_write: false, destructive: false } } as never, qb.impl);
+        await adapter.getQueue();
+        expect(qb.seen[0]!.get('Authorization')).toBe('Bearer the-key');
+    });
+
+    it('refuses a key a header cannot carry without quoting it', () => {
+        const c = ctx();
+        const auth = qbittorrentSession({ id: 'qb', url: BASE, timeoutMs: 1000, apiKey: 'bad\nsecret-part' });
+        let message = '';
+        try {
+            auth.apply(c as never);
+        } catch (err) {
+            message = (err as Error).message;
+        }
+        expect(message).toContain('webui_api_key');
+        expect(message).not.toContain('secret-part');
     });
 
     it('falls back to the cookie login when the key is refused', async () => {

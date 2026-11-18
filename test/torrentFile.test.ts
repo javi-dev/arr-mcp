@@ -41,6 +41,12 @@ describe('readTorrentFile', () => {
         expect(readTorrentFile(bencode({ info: v2 })).hash).toBe(createHash('sha256').update(bencode(v2)).digest('hex').slice(0, 40));
     });
 
+    it('counts and sizes the files of a v2 file tree', () => {
+        const tree = { Season: { 'a.mkv': { '': { length: 10, 'pieces root': 'x' } }, 'b.mkv': { '': { length: 32, 'pieces root': 'y' } } } };
+        const v2 = { 'file tree': tree, 'meta version': 2, name: 'Pack', 'piece length': 16384 };
+        expect(readTorrentFile(bencode({ info: v2 }))).toMatchObject({ fileCount: 2, sizeBytes: 42 });
+    });
+
     it.each([
         ['an empty file', Buffer.alloc(0)],
         ['something that is not bencode', Buffer.from('<html>nope</html>')],
@@ -54,7 +60,7 @@ describe('readTorrentFile', () => {
     });
 
     it('refuses a file over the limit before parsing it', () => {
-        expect(() => readTorrentFile(Buffer.alloc(MAX_TORRENT_BYTES + 1))).toThrow(/10 MiB/);
+        expect(() => readTorrentFile(Buffer.alloc(MAX_TORRENT_BYTES + 1))).toThrow(/3 MB/);
     });
 
     it('never quotes the file in a refusal', () => {

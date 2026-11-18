@@ -2032,6 +2032,8 @@ export type TorrentDetails = {
     /** qBittorrent's raw state, which the location and recheck rules read. */
     state: string;
     savePath?: string;
+    /** Where an unfinished torrent keeps its data, when that is not `savePath`. */
+    downloadPath?: string;
     /** `null` when the torrent has no metadata yet, so nobody can say. */
     private: boolean | null;
     ratio?: number;

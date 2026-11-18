@@ -75,6 +75,7 @@ type RawTorrent = {
     tracker?: string;
     save_path?: string;
     auto_tmm?: boolean;
+    download_path?: string;
     progress?: number;
     completed?: number;
 };
@@ -98,8 +99,8 @@ type RawCategories = Record<string, { savePath?: string }>;
 type RawMainData = { server_state?: { free_space_on_disk?: number } };
 type RawPreferences = {
     save_path?: string;
-    /** "When category changed": true relocates the torrent, false switches it to manual mode. */
-    category_changed_tmm_enabled?: boolean;
+    /** "When Torrent Category changed": true relocates the torrent, false switches it to manual mode. */
+    torrent_changed_tmm_enabled?: boolean;
     max_ratio_enabled?: boolean;
     max_ratio?: number;
     max_seeding_time_enabled?: boolean;
@@ -208,6 +209,23 @@ const TRACKER_STATUS: Record<number, string> = {
     4: 'not working',
     5: 'tracker error',
     6: 'unreachable'
+};
+
+/** qBittorrent's ceiling, which it reports as -1 once a ratio reaches it. */
+const MAX_RATIO = 9999;
+
+const shownRatio = (ratio: number | undefined): number | undefined => (ratio === undefined ? undefined : ratio < 0 ? MAX_RATIO : ratio);
+
+/**
+ * `null` until a torrent has metadata. `is_private` is the deprecated spelling
+ * and reads false while nobody can know yet, so it answers only where `private`
+ * is absent altogether, on a build too old to have it.
+ */
+const privateOf = (info: RawTorrent, props: RawProperties | undefined): boolean | null => {
+    if (info.state === 'metaDL' || info.state === 'forcedMetaDL') return null;
+    if (typeof info.private === 'boolean' || info.private === null) return info.private;
+    if (props === undefined) return null;
+    return props.private !== undefined ? props.private : (props.is_private ?? null);
 };
 
 const trackerRows = (rows: readonly RawTracker[]): TorrentTrackerRow[] =>
@@ -613,13 +631,19 @@ export class QbittorrentAdapter
                   return undefined;
               })
             : undefined;
+        // A 404 here is not "no such torrent": `torrents/info` has just listed it,
+        // and the delete guard reads NotFound as permission to go ahead.
         const [files, trackers] = await Promise.all([
             this.#http.get<RawFile[]>(`${API}/torrents/files?hash=${hash}`),
             this.#http.get<RawTracker[]>(`${API}/torrents/trackers?hash=${hash}`)
-        ]);
+        ]).catch((err: unknown) => {
+            if (err instanceof ServiceError && err.kind === 'NotFound') {
+                throw new ServiceError('UpstreamError', this.id, 'qBittorrent listed this torrent but would not describe it');
+            }
+            throw err;
+        });
 
-        const privateFlag = typeof info.private === 'boolean' ? info.private : (props?.private ?? props?.is_private ?? null);
-        const ratio = info.ratio ?? props?.share_ratio;
+        const ratio = shownRatio(info.ratio ?? props?.share_ratio);
         const seedingSeconds = info.seeding_time ?? props?.seeding_time;
         const savePath = info.save_path ?? props?.save_path;
         const named = (Array.isArray(files) ? files : []).filter((f): f is RawFile & { name: string } => typeof f.name === 'string');
@@ -629,8 +653,9 @@ export class QbittorrentAdapter
             status: TORRENT_STATE[info.state ?? ''] ?? 'unknown',
             state: info.state ?? '',
             ...(savePath === undefined ? {} : { savePath }),
-            private: privateFlag,
-            ...(ratio === undefined || ratio < 0 ? {} : { ratio }),
+            ...(info.download_path === undefined || info.download_path === '' ? {} : { downloadPath: info.download_path }),
+            private: privateOf(info, props),
+            ...(ratio === undefined ? {} : { ratio }),
             ...(seedingSeconds === undefined || seedingSeconds < 0 ? {} : { seedingSeconds }),
             category: info.category ?? '',
             autoManaged: info.auto_tmm === true,
@@ -686,7 +711,7 @@ export class QbittorrentAdapter
     /** Read fresh: this decides whether a category change may move files. Unknown counts as moving. */
     async categoryChangeRelocates(): Promise<boolean> {
         const prefs = await this.#http.get<RawPreferences>(`${API}/app/preferences`);
-        return prefs.category_changed_tmm_enabled !== false;
+        return prefs.torrent_changed_tmm_enabled !== false;
     }
 
     async hasTorrent(hash: string): Promise<boolean> {
@@ -737,7 +762,8 @@ export class QbittorrentAdapter
     #hash(id: string): string {
         const hash = id.trim().toLowerCase();
         if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) {
-            throw new ServiceError('NotFound', this.id, `"${id}" is not a torrent info hash`, {
+            // Not repeated: whatever was passed here may be a tracker URL with its passkey.
+            throw new ServiceError('NotFound', this.id, 'that is not a torrent info hash', {
                 remedy: 'qBittorrent torrent ids are 40 or 64 hex characters. Take one from get_queue.'
             });
         }

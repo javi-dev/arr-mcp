@@ -213,7 +213,7 @@ is measured and capped rather than left to grow:
 - **Your stack decides what is sent.** A write tool for a service you do not
   run is never listed, nor a kind nothing in your library holds, nor a sentence
   about Lidarr on a stack with no Lidarr. Radarr, Sonarr, SABnzbd and Jellyfin
-  come to 39 tools and roughly 22,200 tokens, against 32,900 with everything
+  come to 39 tools and roughly 22,200 tokens, against 33,000 with everything
   listed.
 - **The answers are shaped the same way.** The default `detail` is the cheap
   one, every list is paged and says when it was cut, and the poster cards ride

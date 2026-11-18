@@ -439,16 +439,20 @@ export class SabnzbdAdapter
     }
 
     /**
-     * `addurl` is a write over GET like the rest of this API, and `addfile` the
-     * one POST. Both answer 200 with `status: false` when SABnzbd refuses, so
-     * the body decides. The URL is in the query string, which `ServiceHttp`
-     * keeps out of every error it raises.
+     * Both are POSTs, so an indexer's key in the URL stays out of the query
+     * string and every access log on the way. Both answer 200 with
+     * `status: false` when SABnzbd refuses, so the body decides.
      */
     async addNzb(source: NzbSource, opts: { category?: string }): Promise<{ ids: string[] }> {
         const cat = opts.category === undefined ? '' : `&cat=${encodeURIComponent(opts.category)}`;
         let body: { status?: boolean; nzo_ids?: unknown };
         if (source.kind === 'url') {
-            body = await this.#http.getAsWrite(`/api?mode=addurl&name=${encodeURIComponent(source.url)}${cat}&output=json`);
+            body = await this.#http.postForm('/api', {
+                mode: 'addurl',
+                name: source.url,
+                output: 'json',
+                ...(opts.category === undefined ? {} : { cat: opts.category })
+            });
         } else {
             const form = new FormData();
             form.set('name', new Blob([new Uint8Array(source.bytes)], { type: 'application/x-nzb' }), source.filename);
@@ -493,19 +497,28 @@ export class SabnzbdAdapter
     /**
      * One `set_config` per setting, each checked against what SABnzbd says it
      * stored. A failure part-way names what already changed, since nothing rolls
-     * those back.
+     * those back. The retention count goes first, so a policy that counts is
+     * never switched on against the old number.
      */
     async updateClientSettings(changes: SabSettingChange): Promise<void> {
         const applied: string[] = [];
-        for (const [keyword, value] of Object.entries(changes)) {
+        const earlier = (): string => (applied.length === 0 ? 'Nothing else was changed.' : `Already changed before this failed: ${applied.join(', ')}.`);
+        const ordered = Object.entries(changes).sort(([a], [b]) => Number(b === 'history_retention_number') - Number(a === 'history_retention_number'));
+        for (const [keyword, value] of ordered) {
             if (!WRITABLE_KEYWORDS.has(keyword)) throw new ServiceError('PermissionDenied', this.id, `${keyword} is not a setting this server may change`);
-            const body = await this.#http.getAsWrite<{ config?: { misc?: Record<string, unknown> } }>(
-                `/api?mode=set_config&section=misc&keyword=${keyword}&value=${encodeURIComponent(settingValue(keyword, value))}&output=json`
-            );
+            let body: { config?: { misc?: Record<string, unknown> } };
+            try {
+                body = await this.#http.getAsWrite(`/api?mode=set_config&section=misc&keyword=${keyword}&value=${encodeURIComponent(settingValue(keyword, value))}&output=json`);
+            } catch (err) {
+                if (!(err instanceof ServiceError)) throw err;
+                throw new ServiceError(err.kind, this.id, `SABnzbd did not confirm ${keyword}: ${err.detail}`, {
+                    remedy: `${keyword} may or may not have changed. ${earlier()} Read them back with get_client_settings.`
+                });
+            }
             const stored = body.config?.misc?.[keyword];
             if (stored === undefined || !sameSetting(keyword, value, stored)) {
                 throw new ServiceError('UpstreamError', this.id, `SABnzbd did not store ${keyword}`, {
-                    remedy: applied.length === 0 ? 'Nothing was changed. Check the value and try again.' : `Already changed before this failed: ${applied.join(', ')}. Read them back with get_client_settings.`
+                    remedy: `${earlier()} Check the value, and read them back with get_client_settings.`
                 });
             }
             applied.push(keyword);

@@ -2,7 +2,8 @@ import { gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import type { KeyedServiceConfig } from '../src/config/schema.ts';
 import { SabnzbdAdapter } from '../src/services/sabnzbd.ts';
-import { registerSabnzbdTools } from '../src/tools/sabnzbdTools.ts';
+import { MAX_BODY_BYTES } from '../src/app.ts';
+import { MAX_NZB_BASE64, registerSabnzbdTools } from '../src/tools/sabnzbdTools.ts';
 import type { ServiceAdapter } from '../src/services/types.ts';
 import { PASSKEY, confirmed, toolServer, writeContext } from './helpers/fakeQbittorrent.ts';
 import { instancesOf } from './helpers/instances.ts';
@@ -23,14 +24,18 @@ const SETTINGS: Record<string, unknown> = {
     history_retention_number: 1
 };
 
-function harness(opts: { stores?: boolean; addStatus?: boolean; extra?: ServiceAdapter[]; over?: Record<string, unknown> } = {}) {
+function harness(opts: { stores?: boolean; refuses?: string; breaksOn?: string; addStatus?: boolean; extra?: ServiceAdapter[]; over?: Record<string, unknown> } = {}) {
     const settings = { ...SETTINGS };
     const requests: URL[] = [];
+    const addresses: string[] = [];
     const uploads: FormData[] = [];
     const impl = (async (input: string | URL | Request, init?: RequestInit) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
+        addresses.push(url.href);
+        if (typeof init?.body === 'string') for (const [key, value] of new URLSearchParams(init.body)) url.searchParams.set(key, value);
         requests.push(url);
         const keyword = url.searchParams.get('keyword') ?? '';
+        if (keyword === opts.breaksOn && url.searchParams.get('mode') === 'set_config') return jsonResponse({ error: 'broken' }, 500);
         switch (url.searchParams.get('mode')) {
             case 'get_cats':
                 return jsonResponse({ categories: ['*', 'movies', 'tv'] });
@@ -38,7 +43,7 @@ function harness(opts: { stores?: boolean; addStatus?: boolean; extra?: ServiceA
                 return jsonResponse({ config: { misc: { [keyword]: settings[keyword] } } });
             case 'set_config': {
                 const value = url.searchParams.get('value') ?? '';
-                if (opts.stores !== false) settings[keyword] = keyword === 'unwanted_extensions' || keyword === 'cleanup_list' ? value.split(',').filter(v => v !== '') : value;
+                if (opts.stores !== false && keyword !== opts.refuses) settings[keyword] = keyword === 'unwanted_extensions' || keyword === 'cleanup_list' ? value.split(',').filter(v => v !== '') : value;
                 return jsonResponse({ config: { misc: { [keyword]: settings[keyword] } } });
             }
             case 'addurl':
@@ -55,7 +60,7 @@ function harness(opts: { stores?: boolean; addStatus?: boolean; extra?: ServiceA
     const context = writeContext(instancesOf({ sabnzbd: cfg }));
     registerSabnzbdTools(server, context, [new SabnzbdAdapter(cfg, impl), ...(opts.extra ?? [])]);
     const sent = (mode: string) => requests.filter(r => r.searchParams.get('mode') === mode);
-    return { call, context, requests, uploads, sent, settings };
+    return { call, context, requests, addresses, uploads, sent, settings };
 }
 
 const NZB = '<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"></nzb>';
@@ -82,6 +87,27 @@ describe('add_nzb', () => {
         const h = harness();
         await confirmed(h.call, 'add_nzb', { nzb_base64: b64(file), filename });
         expect((h.uploads[0]!.get('name') as File).name).toBe(filename);
+    });
+
+    it('keeps the URL out of the address it calls, where access logs would keep it', async () => {
+        const h = harness();
+        await confirmed(h.call, 'add_nzb', { url: `https://indexer.example/get/1.nzb?apikey=${PASSKEY}` });
+        expect(h.sent('addurl')).toHaveLength(1);
+        expect(h.addresses.join(' ')).not.toContain(PASSKEY);
+    });
+
+    it('accepts a gzipped NZB too large to inflate whole', async () => {
+        const padding = Array.from({ length: 40_000 }, (_, i) => `<file subject="${i}"/>`).join('');
+        await expect(harness().call('add_nzb', { nzb_base64: b64(gzipSync(`<nzb>${padding}</nzb>`)), filename: 'big.nzb.gz' })).resolves.toBeDefined();
+    });
+
+    it('refuses a gzip of something else, however large', async () => {
+        const html = `<html>${'x'.repeat(500_000)}</html>`;
+        await expect(harness().call('add_nzb', { nzb_base64: b64(gzipSync(html)), filename: 'big.nzb.gz' })).rejects.toThrow(/not an NZB/);
+    });
+
+    it('keeps an upload inside what one request can carry', () => {
+        expect(MAX_NZB_BASE64 + 64 * 1024).toBeLessThan(MAX_BODY_BYTES);
     });
 
     it('never repeats a URL that carries a key', async () => {
@@ -190,9 +216,52 @@ describe('update_client_settings', () => {
         expect(h.settings.unwanted_extensions).toEqual(['exe', 'bat']);
     });
 
-    it('fails when SABnzbd did not store the value, and names what already changed', async () => {
-        const h = harness({ stores: false });
-        await expect(confirmed(h.call, 'update_client_settings', { fail_hopeless_jobs: false })).rejects.toThrow(/did not store fail_hopeless_jobs/);
+    it('fails when SABnzbd did not store a value, and names what already changed', async () => {
+        const h = harness({ refuses: 'action_on_unwanted_extensions' });
+        await expect(confirmed(h.call, 'update_client_settings', { fail_hopeless_jobs: false, action_on_unwanted_extensions: 'abort' })).rejects.toMatchObject({
+            detail: expect.stringContaining('did not store action_on_unwanted_extensions'),
+            remedy: expect.stringContaining('Already changed before this failed: fail_hopeless_jobs')
+        });
+    });
+
+    it('names what already changed when a later request fails outright', async () => {
+        const h = harness({ breaksOn: 'action_on_unwanted_extensions' });
+        await expect(confirmed(h.call, 'update_client_settings', { fail_hopeless_jobs: false, action_on_unwanted_extensions: 'abort' })).rejects.toMatchObject({
+            remedy: expect.stringMatching(/action_on_unwanted_extensions may or may not have changed.*fail_hopeless_jobs/)
+        });
+    });
+
+    it('stores the retention count before the policy that counts it', async () => {
+        const h = harness();
+        await confirmed(h.call, 'update_client_settings', { history_retention_option: 'number-delete', history_retention_number: 50 });
+        expect(h.sent('set_config').map(r => r.searchParams.get('keyword'))).toEqual(['history_retention_number', 'history_retention_option']);
+    });
+
+    it('does not let a token apply once the stored retention count has changed', async () => {
+        const h = harness();
+        h.settings.history_retention_number = 100;
+        const args = { history_retention_option: 'number-delete' };
+        const preview = await h.call('update_client_settings', args);
+        expect(preview.structuredContent.effects.join(' ')).toContain('number-delete, counting 100');
+        h.settings.history_retention_number = 1;
+        const late = await h.call('update_client_settings', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.sent('set_config')).toEqual([]);
+    });
+
+    it.each([
+        [0, 'blacklist mode: these extensions count as unwanted'],
+        [1, 'whitelist mode: only these extensions are allowed']
+    ])('says what the extension list means in mode %i', async (mode, meaning) => {
+        const h = harness();
+        h.settings.unwanted_extensions_mode = mode;
+        const preview = await h.call('update_client_settings', { unwanted_extensions: ['iso'] });
+        expect(preview.structuredContent.effects.join(' ')).toContain(meaning);
+    });
+
+    it('refuses a keyword outside the list at the adapter too', async () => {
+        const adapter = new SabnzbdAdapter(config(), (async () => jsonResponse({})) as unknown as typeof fetch);
+        await expect(adapter.updateClientSettings({ api_key: 'x' } as never)).rejects.toThrow(/not a setting this server may change/);
     });
 
     it.each([

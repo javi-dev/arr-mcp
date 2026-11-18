@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CredentialServiceConfig } from '../src/config/schema.ts';
 import { QbittorrentAdapter } from '../src/services/qbittorrent.ts';
-import { registerTorrentTools } from '../src/tools/torrentTools.ts';
+import { MAX_BODY_BYTES } from '../src/app.ts';
+import { MAX_TORRENT_BASE64, registerTorrentTools } from '../src/tools/torrentTools.ts';
 import type { ServiceAdapter } from '../src/services/types.ts';
 import { HASH, OTHER, PASSKEY, bencode, confirmed, fakeQbittorrent, toolServer, torrent, writeContext, type FakeOptions } from './helpers/fakeQbittorrent.ts';
 import { instancesOf } from './helpers/instances.ts';
@@ -46,6 +47,16 @@ describe('every torrent write', () => {
         expect(h.posts).toEqual([]);
     });
 
+    it.each([
+        ['reannounce_torrent', { id: `https://tracker.example.org/announce?passkey=${PASSKEY}` }],
+        ['recheck_torrents', { ids: [`https://tracker.example.org/announce?passkey=${PASSKEY}`] }]
+    ])('%s refuses something that is not a hash without repeating it', async (tool, args) => {
+        const h = harness();
+        const refusal = await h.call(tool, args).catch((err: Error) => err.message);
+        expect(refusal).not.toContain(PASSKEY);
+        expect(JSON.stringify(h.context.audit.recent())).not.toContain(PASSKEY);
+    });
+
     it('refuses a token from a different request', async () => {
         const h = harness();
         const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/media/a', move_files: true });
@@ -78,30 +89,50 @@ describe('recheck_torrents', () => {
         await expect(harness().call('recheck_torrents', { ids: ['all'] })).rejects.toThrow();
     });
 
-    it('starts a stopped torrent that comes back complete', async () => {
-        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })] });
+    it('starts a stopped torrent it saw checking that comes back complete', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingResumeData', 'checkingUP', 'stoppedUP'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
         expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck', '/torrents/start']);
         expect(applied.structuredContent.result).toMatchObject({ resumed: [HASH] });
     });
 
+    it('does not start a torrent on the verdict of an earlier check', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
+        expect(applied.structuredContent.result).toMatchObject({ unconfirmed: [HASH] });
+    });
+
     it('leaves an incomplete torrent stopped', async () => {
-        const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 10, progress: 0.9 })] });
+        const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 10, progress: 0.9 })], recheckStates: ['checkingDL', 'stoppedDL'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
         expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
         expect(applied.structuredContent.result).toMatchObject({ incomplete: [HASH] });
     });
 
     it('reports a torrent still checking when the watch ends, and starts nothing', async () => {
-        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckLeaves: 'checkingUP' });
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
         expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
         expect(applied.structuredContent.result).toMatchObject({ still_checking: [HASH] });
         expect(applied.structuredContent.summary).toContain('still checking');
     });
 
+    it('reports a torrent removed while it was being checked', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', null] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toMatchObject({ gone: [HASH] });
+    });
+
+    it('still reports the recheck when the watch loses sight of the client', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckLosesSight: true });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.applied).toBe(true);
+        expect(applied.structuredContent.result).toMatchObject({ still_checking: [HASH] });
+    });
+
     it('says when a finished torrent could not be started', async () => {
-        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], failing: ['/torrents/start'] });
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'], failing: ['/torrents/start'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
         expect(applied.structuredContent.result).toMatchObject({ resume_failed: [HASH] });
     });
@@ -185,6 +216,24 @@ describe('add_torrent', () => {
         await expect(h.call('add_torrent', { magnet: `magnet:?xt=urn:btih:${OTHER}`, category: 'odd' })).rejects.toThrow(/outside the locations/);
     });
 
+    it('recognises a base32 magnet of a torrent the client already holds', async () => {
+        const preview = await harness().call('add_torrent', { magnet: `magnet:?xt=urn:btih:${'VK'.repeat(16)}`, save_path: '/data/torrents' });
+        expect(preview.structuredContent.noop).toBe(true);
+    });
+
+    it('goes by the truncated SHA-256 of a hybrid magnet', async () => {
+        const v2 = 'c'.repeat(64);
+        const h = harness({ torrents: [torrent({ hash: v2.slice(0, 40) })] });
+        const preview = await h.call('add_torrent', { magnet: `magnet:?xt=urn:btih:${OTHER}&xt=urn:btmh:1220${v2}`, save_path: '/data/torrents' });
+        expect(preview.structuredContent.noop).toBe(true);
+    });
+
+    it('keeps an upload inside what one request can carry', async () => {
+        expect(MAX_TORRENT_BASE64 + 64 * 1024).toBeLessThan(MAX_BODY_BYTES);
+        const tooBig = Buffer.alloc(3_000_001).toString('base64');
+        await expect(harness().call('add_torrent', { torrent_base64: tooBig })).rejects.toThrow();
+    });
+
     it('honours configured allowed_paths in place of the defaults', async () => {
         const h = harness({}, { allowed_paths: ['/srv/dl'] });
         await expect(h.call('add_torrent', { magnet: `magnet:?xt=urn:btih:${OTHER}`, save_path: '/data/torrents' })).rejects.toThrow(/outside the locations/);
@@ -218,6 +267,38 @@ describe('set_torrent_location', () => {
         const h = harness();
         await expect(h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' })).rejects.toThrow(/would move it/);
         expect(h.posts).toEqual([]);
+    });
+
+    it.each(['downloading', 'stalledDL', 'stoppedDL', 'queuedDL', 'allocating'])('refuses a torrent at %s with nothing downloaded, whose files could still move', async state => {
+        const h = harness({ torrents: [torrent({ state, completed: 0 })] });
+        await expect(h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' })).rejects.toThrow(/would move it/);
+    });
+
+    it('refuses while the torrent is already moving', async () => {
+        const h = harness({ torrents: [torrent({ state: 'moving' })] });
+        await expect(h.call('set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true })).rejects.toThrow(/already being moved/);
+    });
+
+    it('says that a file still at the old path moves too', async () => {
+        const preview = await harness({ torrents: [missing] }).call('set_torrent_location', { id: HASH, location: '/data/media/movies' });
+        expect(preview.structuredContent.effects[0]).toContain('any file of this torrent still there moves too');
+    });
+
+    it('does not let a token that promised no move apply once the data is back', async () => {
+        const h = harness({ torrents: [torrent({ state: 'missingFiles', completed: 0 })] });
+        const args = { id: HASH, location: '/data/media/movies', move_files: true };
+        const preview = await h.call('set_torrent_location', args);
+        h.torrents[0]!.state = 'stalledUP';
+        const late = await h.call('set_torrent_location', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(late.structuredContent.effects.join(' ')).toContain('Physically moves');
+        expect(h.posts).toEqual([]);
+    });
+
+    it('reports a move as accepted rather than finished', async () => {
+        const applied = await confirmed(harness({ torrents: [missing] }).call, 'set_torrent_location', { id: HASH, location: '/data/media/movies' });
+        expect(applied.structuredContent.summary).toContain('in the background');
+        expect(applied.structuredContent.result).toMatchObject({ pending: true });
     });
 
     it('needs the destructive tier to move data', async () => {
@@ -264,6 +345,15 @@ describe('rename_torrent_file', () => {
         expect(h.posts).toEqual([{ path: '/torrents/renameFile', form: { hash: HASH, oldPath: 'Some.Film/film.mkv', newPath: 'Some.Film/renamed.mkv' } }]);
     });
 
+    it.each([
+        ['saved', { save_path: '/downloads' }],
+        ['still downloading', { download_path: '/incomplete' }]
+    ])('refuses a torrent %s outside the allowed roots', async (_why, over) => {
+        const h = harness({ torrents: [torrent(over)] });
+        await expect(h.call('rename_torrent_file', { id: HASH, old_path: 'Some.Film/film.mkv', new_path: 'Some.Film/renamed.mkv' })).rejects.toThrow(/outside the locations/);
+        expect(h.posts).toEqual([]);
+    });
+
     it.each(['../film.mkv', 'Other/film.mkv', '/etc/passwd', 'Some.Film/../../x'])('refuses to leave the folder with %s', async new_path => {
         const h = harness();
         await expect(h.call('rename_torrent_file', { id: HASH, old_path: 'Some.Film/film.mkv', new_path })).rejects.toThrow();
@@ -297,10 +387,54 @@ describe('set_torrent_category', () => {
         await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(/would move/);
     });
 
-    it('does not ask for move_files when the client only switches the torrent to manual', async () => {
-        const h = harness({ torrents: [torrent({ auto_tmm: true })], preferences: { category_changed_tmm_enabled: false } });
+    it('reads the preference that governs a category change, not the one for a category path', async () => {
+        const h = harness({ torrents: [torrent({ auto_tmm: true })], preferences: { torrent_changed_tmm_enabled: true, category_changed_tmm_enabled: false } });
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(/would move/);
+    });
+
+    it('does not ask for move_files when the client only switches the torrent to manual, and says so', async () => {
+        const h = harness({ torrents: [torrent({ auto_tmm: true })], preferences: { torrent_changed_tmm_enabled: false, category_changed_tmm_enabled: true } });
         const preview = await h.call('set_torrent_category', { id: HASH, category: 'tv' });
         expect(preview.structuredContent.confirm_token).toBeDefined();
+        expect(preview.structuredContent.effects).toContain('Switches the torrent to manual management, so its category no longer decides its path.');
+    });
+
+    it('puts a subcategory with no path under its parent, as qBittorrent does', async () => {
+        const h = harness({
+            torrents: [torrent({ auto_tmm: true })],
+            categories: { movies: { savePath: '/data/torrents/movies' }, tv: { savePath: '/data/media/tv' }, 'tv/Show': { savePath: '' } }
+        });
+        const preview = await h.call('set_torrent_category', { id: HASH, category: 'tv/Show', move_files: true });
+        expect(preview.structuredContent.effects.join(' ')).toContain('/data/media/tv/Show');
+    });
+
+    it('refuses a subcategory whose parent saves outside the allowed roots', async () => {
+        const h = harness({
+            torrents: [torrent({ auto_tmm: true, save_path: '/data/torrents/tv/Show' })],
+            categories: { movies: {}, tv: { savePath: '/mnt/cold/tv' }, 'tv/Show': { savePath: '' } }
+        });
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv/Show', move_files: true })).rejects.toThrow(/outside the locations/);
+    });
+
+    it('does not let a token apply once the category saves somewhere else', async () => {
+        const categories = { movies: { savePath: '/data/torrents/movies' }, tv: { savePath: '/data/media/tv' } };
+        const h = harness({ torrents: [torrent({ auto_tmm: true })], categories });
+        const args = { id: HASH, category: 'tv', move_files: true };
+        const preview = await h.call('set_torrent_category', args);
+        categories.tv.savePath = '/data/media/archive';
+        const late = await h.call('set_torrent_category', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('warns about an *arr watching the category the torrent leaves', async () => {
+        const radarr = {
+            id: 'radarr',
+            type: 'radarr',
+            getDownloadClients: () => Promise.resolve([{ name: 'qb', implementation: 'QBittorrent', enabled: true, categories: ['movies'] }])
+        } as unknown as ServiceAdapter;
+        const preview = await harness({}, {}, [radarr]).call('set_torrent_category', { id: HASH, category: 'tv' });
+        expect(preview.structuredContent.effects[0]).toContain('radarr watches category "movies"');
     });
 
     it('refuses a relocation outside the allowed roots, even with move_files', async () => {

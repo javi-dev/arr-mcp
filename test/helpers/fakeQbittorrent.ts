@@ -56,8 +56,10 @@ export type FakeOptions = {
     properties?: Record<string, unknown>;
     preferences?: Record<string, unknown>;
     addAnswer?: string;
-    /** The state every torrent takes once a recheck is posted. */
-    recheckLeaves?: string;
+    /** After a recheck, the state each read of the torrents shows in turn; the last one stays, and `null` removes them. */
+    recheckStates?: (string | null)[];
+    /** After a recheck, every read of the torrents fails. */
+    recheckLosesSight?: boolean;
     /** Paths that answer 500. */
     failing?: string[];
 };
@@ -67,9 +69,13 @@ export type Post = { path: string; form: Record<string, string>; multipart?: For
 export function fakeQbittorrent(opts: FakeOptions = {}) {
     const torrents = opts.torrents ?? [torrent()];
     const posts: Post[] = [];
+    const seen: Headers[] = [];
+    let script: (string | null)[] = [];
+    let blind = false;
     const impl = (async (input: string | URL | Request, init?: RequestInit) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
         const path = url.pathname.replace('/api/v2', '');
+        seen.push(new Headers(init?.headers));
         if (opts.failing?.includes(path) === true) return textResponse('broken', 500);
         if (init?.method === 'POST') {
             const body = init.body;
@@ -78,11 +84,18 @@ export function fakeQbittorrent(opts: FakeOptions = {}) {
                     ? { path, form: {}, multipart: body }
                     : { path, form: Object.fromEntries(new URLSearchParams(typeof body === 'string' ? body : '')) }
             );
-            if (path === '/torrents/recheck' && opts.recheckLeaves !== undefined) for (const t of torrents) t.state = opts.recheckLeaves;
+            if (path === '/torrents/recheck') {
+                script = [...(opts.recheckStates ?? [])];
+                blind = opts.recheckLosesSight === true;
+            }
             return textResponse(path === '/torrents/add' ? (opts.addAnswer ?? 'Ok.') : '');
         }
         switch (path) {
             case '/torrents/info': {
+                if (blind) return textResponse('broken', 500);
+                const next = script.length > 1 ? script.shift() : script[0];
+                if (next === null) torrents.length = 0;
+                else if (next !== undefined) for (const t of torrents) t.state = next;
                 const wanted = url.searchParams.get('hashes')?.split('|');
                 return jsonResponse(wanted === undefined ? torrents : torrents.filter(t => wanted.includes(t.hash)));
             }
@@ -102,12 +115,13 @@ export function fakeQbittorrent(opts: FakeOptions = {}) {
             case '/app/defaultSavePath':
                 return textResponse('/data/torrents');
             case '/app/preferences':
-                return jsonResponse(opts.preferences ?? { category_changed_tmm_enabled: true });
+                // The defaults of a fresh qBittorrent 5.3.0 install.
+                return jsonResponse(opts.preferences ?? { torrent_changed_tmm_enabled: true, category_changed_tmm_enabled: false });
             default:
                 return jsonResponse({ message: 'not found' }, 404);
         }
     }) as unknown as typeof fetch;
-    return { impl, posts, torrents };
+    return { impl, posts, torrents, seen };
 }
 
 type Handler = (args: Record<string, unknown>) => Promise<{ content: { type: 'text'; text: string }[]; structuredContent: WriteToolResult }>;

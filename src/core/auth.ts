@@ -184,6 +184,9 @@ export function transmissionRpc(creds: { username?: string; password?: string })
 
 const QB_LOGIN_PATH = '/api/v2/auth/login';
 
+/** Printable ASCII with no spaces: all a bearer token can be. */
+const HEADER_VALUE = /^[\x21-\x7e]+$/;
+
 /**
  * qBittorrent's WebUI: POST the credentials to `/api/v2/auth/login`, keep the
  * session cookie, send it back on every call.
@@ -230,8 +233,11 @@ export function qbittorrentSession(creds: {
         id: 'qbittorrent-session',
         remedy: `Check ${creds.apiKey === undefined ? 'username and password' : 'webui_api_key, username and password'} against Options → Web UI in qBittorrent, and that its Host header validation accepts this url.`,
         apply(ctx) {
-            if (bearer !== undefined) ctx.headers.set('Authorization', `Bearer ${bearer}`);
-            else if (cookie !== undefined) ctx.headers.set('Cookie', `${cookie.name}=${cookie.value}`);
+            if (bearer !== undefined) {
+                // Checked here because `Headers` quotes a value it refuses in its own error.
+                if (!HEADER_VALUE.test(bearer)) throw new ServiceError('AuthFailed', creds.id, 'webui_api_key holds characters an HTTP header cannot carry');
+                ctx.headers.set('Authorization', `Bearer ${bearer}`);
+            } else if (cookie !== undefined) ctx.headers.set('Cookie', `${cookie.name}=${cookie.value}`);
         },
         async recover(response, signal) {
             if (response.status !== 403) return false;

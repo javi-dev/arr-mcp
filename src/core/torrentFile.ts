@@ -7,8 +7,8 @@ import { trackerHost } from './torrentGuards.ts';
  * what the bytes are. Tracker URLs are reduced to hosts here and go no further.
  */
 
-/** Far above any real metainfo file, and small enough to hold in memory on every preview. */
-export const MAX_TORRENT_BYTES = 10 * 1024 * 1024;
+/** Far above any real metainfo file, and what still fits the 4 MiB request limit once base64 encoded. */
+export const MAX_TORRENT_BYTES = 3_000_000;
 
 const MAX_DEPTH = 32;
 
@@ -95,9 +95,19 @@ function hosts(root: Map<string, Value>): string[] {
     return [...new Set(urls.flatMap(u => (u === undefined ? [] : (trackerHost(u) ?? []))))];
 }
 
+/** The file sizes of a v2 `file tree`, where the empty key marks a file. */
+function treeSizes(tree: Map<string, Value>): number[] {
+    return [...tree.entries()].flatMap(([key, value]) => {
+        if (!(value instanceof Map)) return [];
+        if (key !== '') return treeSizes(value);
+        const length = value.get('length');
+        return [typeof length === 'number' ? length : 0];
+    });
+}
+
 /** Throws a plain `Error` naming what is wrong; the bytes themselves never reach the message. */
 export function readTorrentFile(bytes: Buffer): TorrentFileFacts {
-    if (bytes.length > MAX_TORRENT_BYTES) throw new Error('larger than the 10 MiB limit');
+    if (bytes.length > MAX_TORRENT_BYTES) throw new Error('larger than the 3 MB limit');
     const reader = new Reader(bytes);
     let root: Value;
     try {
@@ -116,12 +126,17 @@ export function readTorrentFile(bytes: Buffer): TorrentFileFacts {
     const hash = v2 ? createHash('sha256').update(reader.info).digest('hex').slice(0, 40) : createHash('sha1').update(reader.info).digest('hex');
 
     const files = info.get('files');
-    const sizes = Array.isArray(files) ? files.map(f => (f instanceof Map ? f.get('length') : undefined)) : [info.get('length')];
+    const tree = info.get('file tree');
+    const sizes = Array.isArray(files)
+        ? files.map(f => (f instanceof Map ? f.get('length') : undefined))
+        : tree instanceof Map
+          ? treeSizes(tree)
+          : [info.get('length')];
     return {
         hash,
         name,
         private: info.get('private') === 1,
-        fileCount: Array.isArray(files) ? files.length : 1,
+        fileCount: sizes.length,
         sizeBytes: sizes.reduce<number>((sum, n) => sum + (typeof n === 'number' ? n : 0), 0),
         trackers: hosts(root)
     };

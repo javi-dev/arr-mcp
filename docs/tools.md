@@ -265,9 +265,9 @@ tests:
 
 | Stack | Tools listed | `tools/list` | Roughly |
 | --- | --- | --- | --- |
-| Nothing configured yet | 53 | 131,369 bytes | 32,900 tokens |
-| Radarr, Sonarr, SABnzbd, Jellyfin | 39 | 88,626 bytes | 22,200 tokens |
-| Those four, plus Lidarr, Prowlarr, Bazarr and Seerr | 45 | 108,721 bytes | 27,200 tokens |
+| Nothing configured yet | 53 | 131,984 bytes | 33,000 tokens |
+| Radarr, Sonarr, SABnzbd, Jellyfin | 39 | 88,761 bytes | 22,200 tokens |
+| Those four, plus Lidarr, Prowlarr, Bazarr and Seerr | 45 | 108,856 bytes | 27,200 tokens |
 
 Four limits hold it there, each one asserted in `test/app.test.ts`:
 
@@ -283,7 +283,7 @@ Four limits hold it there, each one asserted in `test/app.test.ts`:
 - **The whole list under 133,000 bytes.** Declaring only the fields every write
   result carries, and cutting the parameter text that each tool repeated, took
   it from 130,045 bytes to 113,613; the nine qBittorrent and SABnzbd chores
-  brought it to 131,369.
+  brought it to 131,984.
 - **Nothing in it that does not apply to your stack.** The rest of this section
   is what that means.
 
@@ -1530,8 +1530,9 @@ A qBittorrent row at `detail: "full"` also carries `savePath`, `private`
 come from `torrents/properties` when `torrents/info` lacks them, as it can for a
 torrent at `missing files`. A tracker is its hostname and nothing else: its URL
 holds the passkey and its message can echo it, so neither is read into a row. A
-page lists at most 200 files per torrent and 500 in all, and `filesOmitted` says
-how many were left out. A page of more than 100 torrents skips these reads and
+page lists at most 200 files per torrent and 500 in all (a single torrent may use
+all 500), and `filesOmitted` says how many were left out. A ratio qBittorrent
+reports as infinite reads 9999. A page of more than 100 torrents skips these reads and
 says so in `torrentDetailsOmitted`, since each torrent costs up to four requests.
 
 **Unverified live** (qBittorrent): the torrent list, the seed limits and `by_tracker`; only login and health have met a real server.
@@ -3452,14 +3453,16 @@ outside what they can catch. No tool changes seeding limits.
 ## `recheck_torrents`
 
 Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
-seconds and starts each stopped torrent that comes back complete; one still
-checking when the watch ends is reported as such and left alone.
+seconds and starts each stopped torrent it saw checking that comes back complete.
+One still checking when the watch ends, or never seen checking, is reported as
+such and stays stopped.
 
 **Unverified live** (qBittorrent): the recheck and the watch after it.
 
 ## `add_torrent`
 
-Takes exactly one of `magnet`, `url` or `torrent_base64`, plus an existing
+Takes exactly one of `magnet`, `url` or `torrent_base64` (up to 3 MB, the most a
+request can carry once encoded), plus an existing
 `category` and a `save_path`. Without `save_path` it goes where the category
 saves, and that location has to be allowed too. The torrent is added with
 automatic management off, so it lands where the preview said. The preview warns
@@ -3470,17 +3473,20 @@ in no preview, target, error or audit row: the token binds its SHA-256.
 
 ## `set_torrent_location`
 
-Points a torrent at a new save path. qBittorrent moves whatever data it finds, so
-without `move_files` this is refused for a torrent with data at its current path
-and works only for one at `missing files` or with nothing downloaded yet. Follow
-it with `recheck_torrents`. `move_files: true` needs `destructive`.
+Points a torrent at a new save path. qBittorrent has no call that changes a path
+without moving what it finds there, so without `move_files` this is refused unless
+the torrent is at `missing files` or still fetching metadata. Any file of a
+`missing files` torrent still at the old path moves too, and the preview says so.
+Follow it with `recheck_torrents`. `move_files: true` needs `destructive`. The
+move runs in the background after the call returns.
 
 **Unverified live** (qBittorrent): pointing a torrent at a new path, with and without moving its data.
 
 ## `rename_torrent_file`
 
-Renames one file. `old_path` comes from `files` on the get_queue row, and
-`new_path` stays inside the torrent's own folder.
+Renames one file of a torrent whose data sits inside `allowed_paths`. `old_path`
+comes from `files` on the get_queue row, and `new_path` stays inside the torrent's
+own folder. The rename finishes in the background after the call returns.
 
 **Unverified live** (qBittorrent): renaming a file inside a torrent.
 
@@ -3502,7 +3508,8 @@ not call it in a loop.
 
 ## `add_nzb`
 
-Takes a `url` or the file as `nzb_base64`, and an existing `category`. The preview
+Takes a `url` or the file as `nzb_base64` (up to 3 MB, the most a request can
+carry once encoded), and an existing `category`. The preview
 warns when an *arr watches that category. Like `add_torrent`, the source is never
 repeated and the token binds its SHA-256.
 

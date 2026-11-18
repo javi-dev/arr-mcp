@@ -93,6 +93,10 @@ function resolveEntry(
             else if (value === '') problems.push(`${where}.${field}: environment variable ${source.name} is empty`);
         }
         if (value === undefined || value === '') continue;
+        if (field === 'webui_api_key' && !/^[\x21-\x7e]+$/.test(value)) {
+            problems.push(`${where}.${field}: the value holds characters an HTTP header cannot carry`);
+            continue;
+        }
         const { [`${field}_file`]: _file, ...rest } = out;
         out = { ...rest, [field]: value };
     }
