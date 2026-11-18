@@ -25,7 +25,7 @@ const capabilities = (adapter: unknown): string[] =>
         .sort();
 
 const radarr = [
-    'hasBlocklist', 'hasCalendar', 'hasCommandStatus', 'hasDiskSpace', 'hasDownloadTrace', 'hasHealthChecks',
+    'hasBlocklist', 'hasCalendar', 'hasCommandStatus', 'hasDiskSpace', 'hasDownloadClientList', 'hasDownloadTrace', 'hasHealthChecks',
     'hasHistory', 'hasImportExclusions', 'hasLibrary', 'hasLibraryMaintenance', 'hasLibraryScan', 'hasLogs', 'hasManualImport',
     'hasMediaAdd', 'hasMediaDelete', 'hasMediaDetails', 'hasMediaUpdate', 'hasProfileDiagnostics', 'hasProfileFix', 'hasQueue',
     'hasQueueRemove', 'hasReleaseGrab', 'hasReleaseSearch', 'hasScanState', 'hasSearch', 'hasSearchTrigger',
@@ -37,14 +37,14 @@ describe('*arr adapter capabilities', () => {
         ['radarr', () => new RadarrAdapter(cfg), radarr],
         ['sonarr', () => new SonarrAdapter(cfg), [...radarr, 'hasEpisodeFiles', 'hasEpisodeRemap', 'hasMonitoring'].sort()],
         ['whisparr', () => new WhisparrAdapter(cfg), [
-            'hasBlocklist', 'hasCalendar', 'hasCommandStatus', 'hasDiskSpace', 'hasDownloadTrace', 'hasEpisodeFiles',
+            'hasBlocklist', 'hasCalendar', 'hasCommandStatus', 'hasDiskSpace', 'hasDownloadClientList', 'hasDownloadTrace', 'hasEpisodeFiles',
             'hasHealthChecks', 'hasHistory', 'hasLibrary', 'hasLibraryMaintenance', 'hasLibraryScan', 'hasLogs',
             'hasMediaAdd', 'hasMediaDelete', 'hasMediaDetails', 'hasMonitoring', 'hasProfileDiagnostics', 'hasProfileFix', 'hasQueue',
             'hasQueueRemove', 'hasReleaseGrab', 'hasReleaseSearch', 'hasScanState', 'hasSearch', 'hasSearchTrigger',
             'hasSeedCriteria'
         ]],
         ['lidarr', () => new LidarrAdapter(cfg), [
-            'hasArtistMonitor', 'hasBlocklist', 'hasCalendar', 'hasCommandStatus', 'hasDiskSpace', 'hasDownloadTrace',
+            'hasArtistMonitor', 'hasBlocklist', 'hasCalendar', 'hasCommandStatus', 'hasDiskSpace', 'hasDownloadClientList', 'hasDownloadTrace',
             'hasHealthChecks', 'hasHistory', 'hasImportExclusions', 'hasLibrary', 'hasLibraryMaintenance', 'hasLibraryScan',
             'hasLogs', 'hasManualImport', 'hasMediaAdd', 'hasMediaDelete', 'hasMediaDetails', 'hasMediaUpdate', 'hasMetadataProfiles',
             'hasMonitorState', 'hasMonitoring', 'hasProfileDiagnostics', 'hasProfileFix', 'hasQueue', 'hasQueueRemove', 'hasReleaseGrab',

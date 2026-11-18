@@ -131,6 +131,7 @@ describe('LidarrAdapter', () => {
             'findReleases',
             'getCalendar',
             'getDiskSpace',
+            'getDownloadClients',
             'getFailedHealthChecks',
             'getMediaDetails',
             'getMonitorState',

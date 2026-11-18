@@ -52,7 +52,14 @@ const SERVICE_FIELDS: Record<string, { read: string[]; write: string[] }> = {
     allow_other_users: { read: ['allowOtherUsers'], write: ['allowOtherUsers'] },
     username: { read: ['username'], write: ['username'] },
     password: { read: ['passwordSet'], write: ['password'] },
-    allow_metadata_repair: { read: ['allowMetadataRepair'], write: ['allowMetadataRepair'] }
+    allow_metadata_repair: { read: ['allowMetadataRepair'], write: ['allowMetadataRepair'] },
+    // qBittorrent's guardrails and second credential are config.yaml only: an
+    // API that could widen them would defeat the point of having them.
+    webui_api_key: { read: [], write: [] },
+    webui_api_key_file: { read: [], write: [] },
+    allowed_paths: { read: [], write: [] },
+    protect_private_torrents: { read: [], write: [] },
+    protect_all_torrents: { read: [], write: [] }
 };
 
 type Def = { type: string; shape?: Record<string, unknown>; innerType?: unknown; element?: unknown; in?: unknown; out?: unknown; options?: unknown[] };

@@ -1,0 +1,123 @@
+import { describe, expect, it } from 'vitest';
+import type { CredentialServiceConfig } from '../src/config/schema.ts';
+import { QbittorrentAdapter } from '../src/services/qbittorrent.ts';
+import { registerRemoveQueueItem } from '../src/tools/removeQueueItem.ts';
+import type { ServiceAdapter } from '../src/services/types.ts';
+import { HASH, PASSKEY, confirmed, fakeQbittorrent, toolServer, torrent, writeContext, type FakeOptions } from './helpers/fakeQbittorrent.ts';
+import { namedInstances } from './helpers/instances.ts';
+
+const config = (name: string, over: Record<string, unknown> = {}) =>
+    ({ name, url: `http://192.0.2.10:${name === 'vpn' ? 8081 : 8082}`, timeout_ms: 10_000, permissions: { safe_write: true, destructive: true }, ...over }) as CredentialServiceConfig;
+
+function harness(over: Record<string, unknown> = {}, opts: FakeOptions = {}) {
+    const qb = fakeQbittorrent(opts);
+    const cfg = config('vpn', over);
+    const { server, call } = toolServer();
+    registerRemoveQueueItem(server, writeContext(namedInstances('qbittorrent', [cfg])), [new QbittorrentAdapter(cfg, qb.impl)]);
+    return { ...qb, call };
+}
+
+const ARGS = { service: 'qbittorrent', instance: 'vpn', id: HASH };
+
+describe('remove_queue_item on qBittorrent', () => {
+    it('shows private, ratio, seed time and tracker host in the preview', async () => {
+        const preview = await harness().call('remove_queue_item', ARGS);
+        expect(preview.structuredContent.effects.join(' ')).toContain('Torrent facts: private yes, ratio 1.50, seeded 2.0 days, tracker tracker.example.org (working).');
+    });
+
+    it('never shows a passkey from a tracker URL or message', async () => {
+        const preview = await harness().call('remove_queue_item', ARGS);
+        expect(JSON.stringify(preview)).not.toContain(PASSKEY);
+    });
+
+    it('removes an unprotected torrent as before', async () => {
+        const h = harness();
+        const applied = await confirmed(h.call, 'remove_queue_item', ARGS);
+        expect(applied.structuredContent.applied).toBe(true);
+        expect(h.posts.map(p => p.path)).toEqual(['/torrents/delete']);
+    });
+
+    it.each([
+        ['protect_all_torrents', { protect_all_torrents: true }, torrent({ private: false })],
+        ['protect_private_torrents', { protect_private_torrents: true }, torrent({ private: true })]
+    ])('refuses a torrent %s guards', async (_key, over, row) => {
+        const h = harness(over, { torrents: [row] });
+        await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/protected from deletion/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('leaves a public torrent alone under protect_private_torrents', async () => {
+        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ private: false })] });
+        expect((await h.call('remove_queue_item', ARGS)).structuredContent.confirm_token).toBeDefined();
+    });
+
+    it('counts an unknown private flag as private', async () => {
+        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ private: undefined })], properties: { private: null } });
+        await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/not known yet/);
+    });
+
+    it('fails closed when a protecting instance cannot be read', async () => {
+        const h = harness({ protect_private_torrents: true }, { failing: ['/torrents/trackers'] });
+        await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/could not be read/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('removes a protected torrent only with allow_protected, and says it is overriding', async () => {
+        const h = harness({ protect_all_torrents: true });
+        const args = { ...ARGS, allow_protected: true };
+        const preview = await h.call('remove_queue_item', args);
+        expect(preview.structuredContent.effects[0]).toContain('Overrides the delete protection');
+        await h.call('remove_queue_item', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(h.posts.map(p => p.path)).toEqual(['/torrents/delete']);
+    });
+
+    it('does not let a token from an unprotected preview apply once protection applies', async () => {
+        const h = harness({ protect_private_torrents: true }, { torrents: [torrent({ private: false })] });
+        const preview = await h.call('remove_queue_item', ARGS);
+        h.torrents[0]!.private = true;
+        await expect(h.call('remove_queue_item', { ...ARGS, confirm: preview.structuredContent.confirm_token })).rejects.toThrow(/protected from deletion/);
+        expect(h.posts).toEqual([]);
+    });
+});
+
+describe('remove_queue_item on an *arr row', () => {
+    const arrRow = { service: 'radarr', id: '7', title: 'Film', status: 'downloading', protocol: 'torrent', downloadId: HASH.toUpperCase() };
+
+    function arrHarness(instances: { name: string; over?: Record<string, unknown>; opts?: FakeOptions }[]) {
+        const removed: unknown[] = [];
+        const radarr = {
+            id: 'radarr',
+            type: 'radarr',
+            supportsBlocklist: true,
+            getQueue: () => Promise.resolve([arrRow]),
+            removeQueueItem: (_id: string, opts: unknown) => {
+                removed.push(opts);
+                return Promise.resolve();
+            }
+        } as unknown as ServiceAdapter;
+        const clients = instances.map(i => new QbittorrentAdapter(config(i.name, i.over), fakeQbittorrent(i.opts).impl));
+        const { server, call } = toolServer();
+        const radarrInstance = { id: 'radarr', type: 'radarr', config: { url: 'http://192.0.2.10:7878', api_key: 'k', timeout_ms: 1000, permissions: { safe_write: true, destructive: true } } };
+        registerRemoveQueueItem(server, writeContext([radarrInstance as never]), [radarr, ...clients]);
+        return { call, removed };
+    }
+
+    it('traces the row to the torrent and guards it', async () => {
+        const h = arrHarness([{ name: 'vpn', over: { protect_all_torrents: true } }]);
+        await expect(h.call('remove_queue_item', { service: 'radarr', id: '7' })).rejects.toThrow(/protected from deletion/);
+        expect(h.removed).toEqual([]);
+    });
+
+    it('guards a cross-seeded torrent when only the second instance protects it', async () => {
+        const h = arrHarness([{ name: 'vpn' }, { name: 'novpn', over: { protect_all_torrents: true } }]);
+        await expect(h.call('remove_queue_item', { service: 'radarr', id: '7' })).rejects.toThrow(/qbittorrent\/novpn protects/);
+        expect(h.removed).toEqual([]);
+    });
+
+    it('lets a removal through that leaves the download in the client', async () => {
+        const h = arrHarness([{ name: 'vpn', over: { protect_all_torrents: true } }]);
+        const preview = await h.call('remove_queue_item', { service: 'radarr', id: '7', remove_from_client: false });
+        expect(preview.structuredContent.confirm_token).toBeDefined();
+        expect(preview.structuredContent.effects.join(' ')).toContain('Torrent facts');
+    });
+});
