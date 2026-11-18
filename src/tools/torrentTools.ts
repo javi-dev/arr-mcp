@@ -5,7 +5,7 @@ import { ServiceError } from '../core/errors.ts';
 import { fenceText, unfence } from '../core/fence.ts';
 import { logger } from '../core/logger.ts';
 import { MAX_TORRENT_BYTES, readTorrentFile } from '../core/torrentFile.ts';
-import { allowedPath, downloadHost, renamedPath, trackerHost } from '../core/torrentGuards.ts';
+import { allowedPath, downloadHost, isInsideRoots, renamedPath, trackerHost } from '../core/torrentGuards.ts';
 import { btihToHex } from '../services/qbittorrent.ts';
 import { hasTorrentManage, type ServiceAdapter, type TorrentCategory, type TorrentCheckState, type TorrentDetails, type TorrentManageCapable, type TorrentShareRule, type TorrentSource } from '../services/types.ts';
 import { INSTANCE_PARAM_DESCRIPTION, resolveInstance } from './resolveInstance.ts';
@@ -125,7 +125,7 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
             if (state?.checking === true) seenChecking.add(id);
             // Verified data can be on its way back to the save path, and a move is not the end of the check.
             else if (state?.state === 'moving') continue;
-            else if (state === undefined || seenChecking.has(id) || (state.complete && waited >= GRACE_MS)) settled.set(id, state);
+            else if (state === undefined || seenChecking.has(id) || (state.complete && state.state !== 'error' && waited >= GRACE_MS)) settled.set(id, state);
         }
     }
 
@@ -508,12 +508,21 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const keepsUnfinished = incompleteDir !== undefined && isUnfinished(details);
             // Turning automatic management off first puts the files where the torrent is configured to keep them.
             const gatherTarget = details.autoManaged && details.hasMetadata ? (keepsUnfinished ? incompleteDir : details.savePath?.replace(/\/+$/, '')) : undefined;
-            const gathersTo = gatherTarget !== undefined && storageDirectory(details.contentPath, details.fileNames) !== gatherTarget ? gatherTarget : undefined;
+            const storedIn = storageDirectory(details.contentPath, details.fileNames);
+            const gathersTo = gatherTarget !== undefined && storedIn !== gatherTarget ? gatherTarget : undefined;
             if (gathersTo !== undefined) allowedPath(client.id, gathersTo, client.allowedPaths);
             const moves = gathersTo !== undefined || (!noData && !keepsUnfinished);
-            // A move empties where the files are now, so that has to be allowed too.
-            const movesFrom = moves ? storageDirectory(details.contentPath, details.fileNames) : undefined;
-            if (movesFrom !== undefined) allowedPath(client.id, movesFrom, client.allowedPaths);
+            // A move empties where the files are now, so that has to be allowed too. Repointing a torrent at
+            // missing files is the exception, since its old home is often why it is missing: whatever survives
+            // there moves as well, so leaving a folder outside the roots takes an explicit `move_files`.
+            const movesFrom = moves || (details.hasMetadata && !keepsUnfinished) ? storedIn : undefined;
+            const leavesOutside = !moves && movesFrom !== undefined && !isInsideRoots(movesFrom, client.allowedPaths);
+            if (movesFrom !== undefined && !leavesOutside) allowedPath(client.id, movesFrom, client.allowedPaths);
+            if (leavesOutside && !move_files) {
+                throw new ServiceError('NotFound', client.id, `any file of ${details.title} still in ${movesFrom} would move too, and that folder is outside the allowed locations`, {
+                    remedy: 'Nothing was changed. If that is what you want, call set_torrent_location again with `move_files: true`, which needs `destructive`.'
+                });
+            }
             if (moves && !move_files) {
                 throw new ServiceError('NotFound', client.id, `${details.title} has data at its current path, and qBittorrent would move it`, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_location again with `move_files: true`.'
@@ -535,8 +544,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                         : !details.hasMetadata
                         ? 'It has no metadata yet, so there is nothing on disk to move.'
                         : noData
-                        ? `qBittorrent reports its data missing from ${details.savePath ?? 'its current path'}. It has no call that changes the path alone, so any file of this torrent still there moves too.`
-                        : `Physically moves ${size(details.completedBytes)} from ${details.savePath ?? 'its current path'} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
+                        ? `qBittorrent reports its data missing from ${movesFrom ?? details.savePath ?? 'its current path'}. It has no call that changes the path alone, so any file of this torrent still there moves too.`
+                        : `Physically moves ${size(details.completedBytes)} from ${movesFrom ?? details.savePath ?? 'its current path'} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
                     ...(details.state === 'missingFiles' && !keepsUnfinished ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],

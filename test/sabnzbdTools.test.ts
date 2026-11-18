@@ -302,6 +302,11 @@ describe('update_client_settings', () => {
         ]);
     });
 
+    it('fails when SABnzbd did not store a list', async () => {
+        const h = harness({ refuses: 'unwanted_extensions' });
+        await expect(confirmed(h.call, 'update_client_settings', { unwanted_extensions: ['iso'] })).rejects.toThrow(/did not store unwanted_extensions/);
+    });
+
     it('leaves the action alone when only the list changes', async () => {
         const h = harness();
         h.settings.action_on_unwanted_extensions = 2;

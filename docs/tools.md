@@ -3454,9 +3454,9 @@ outside what they can catch. No tool changes seeding limits.
 
 Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
-One still checking or still moving to its save path when the watch ends, or never
-seen checking because it is queued behind another, is reported as such and left
-alone. A torrent still fetching
+One still checking or still moving to its save path when the watch ends, showing
+an error, or never seen checking because it is queued behind another, is reported
+as such and left alone. A torrent still fetching
 metadata or being moved is skipped. A check can write where the files are, and can
 send a torrent to its incomplete folder or its save path, so all of those have to be
 inside `allowed_paths`. A
@@ -3486,7 +3486,9 @@ Points a torrent at a new save path. qBittorrent has no call that changes a path
 without moving what it finds there, so without `move_files` this is refused unless
 the torrent is at `missing files`, still fetching metadata, or has its unfinished
 data in the incomplete-downloads folder, where that data stays. Any file of a
-`missing files` torrent still at the old path moves too, and the preview says so.
+`missing files` torrent still at the old path moves too, and the preview says so;
+if that old folder is outside `allowed_paths`, the repoint needs `move_files: true`.
+Any other move out of a folder outside `allowed_paths` is refused.
 Follow it with `recheck_torrents`. `move_files: true` needs `destructive`. The
 move runs in the background after the call returns. A torrent being checked is
 refused until the check ends.
@@ -3510,7 +3512,7 @@ make qBittorrent remove the torrent, which it did not risk before, is refused un
 the torrent's own setting, then the category, its parents and the client. If the
 change would relocate an automatically managed torrent it is refused without
 `move_files: true`, which needs `destructive`, and every folder the data would
-reach has to be inside `allowed_paths`. A torrent being checked cannot be
+leave or reach has to be inside `allowed_paths`. A torrent being checked cannot be
 relocated until the check ends.
 
 **Unverified live** (qBittorrent): changing a category, and reading whether the change relocates the torrent.

@@ -190,7 +190,18 @@ export function queueLine(item: QueueItem): string {
     }
     if (c?.dueAt !== undefined) facts.push(`Cleanuparr ${c.action} due ${c.dueAt}${c.dryRun === true ? ' (dry run)' : ''}`);
 
-    return `${item.title}: ${facts.join(', ')}`;
+    // Per-torrent details, in the text too: not every client forwards structuredContent.
+    if (item.trackers !== undefined) {
+        if (item.savePath !== undefined) facts.push(`saved in ${item.savePath}`);
+        facts.push(`private ${item.private === true ? 'yes' : item.private === false ? 'no' : 'unknown'}`);
+        if (item.ratio !== undefined) facts.push(`ratio ${item.ratio.toFixed(2)}`);
+        if (item.seedingSeconds !== undefined) facts.push(`seeded ${(item.seedingSeconds / 86_400).toFixed(1)} days`);
+        if (item.trackers.length > 0) facts.push(`trackers ${item.trackers.map(t => `${t.host} (${t.status})`).join(', ')}`);
+    }
+    const files = (item.files ?? []).map(f => `\n  - ${f.name} (${f.sizeBytes} bytes, ${Math.round(f.progress * 100)}%)`).join('');
+    const omitted = item.filesOmitted === undefined ? '' : `\n  - ${item.filesOmitted} more file(s) not listed`;
+
+    return `${item.title}: ${facts.join(', ')}${files}${omitted}`;
 }
 
 /** Server-side filters (#530), all optional and combined with AND. */

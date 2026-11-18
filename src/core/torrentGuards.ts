@@ -13,6 +13,9 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const refuse = (service: string, detail: string, remedy: string): ServiceError =>
     new ServiceError('NotFound', service, detail, { remedy });
 
+/** Whether an already normal path sits at or under one of the roots. */
+export const isInsideRoots = (path: string, roots: readonly string[]): boolean => roots.some(root => path === root || path.startsWith(`${root}/`));
+
 /**
  * `path` as qBittorrent should receive it, or a refusal. Dot segments are
  * refused rather than resolved, because a path that needs resolving was not
@@ -29,7 +32,7 @@ export function allowedPath(service: string, path: string, roots: readonly strin
     const parts = path.split('/').filter(part => part !== '');
     if (parts.some(part => part === '.' || part === '..')) throw refuse(service, 'that path contains . or .. segments', allowed);
     const normal = `/${parts.join('/')}`;
-    if (!roots.some(root => normal === root || normal.startsWith(`${root}/`))) {
+    if (!isInsideRoots(normal, roots)) {
         throw refuse(service, `${normal} is outside the locations this instance allows`, `${allowed} Change allowed_paths in config.yaml to widen them.`);
     }
     return normal;
@@ -43,6 +46,8 @@ export function allowedPath(service: string, path: string, roots: readonly strin
 export function renamedPath(service: string, oldPath: string, newPath: string, existing: readonly string[]): string {
     const remedy = 'Take `old_path` from get_queue at `detail: "full"`, and give `new_path` relative to the torrent, keeping its folder.';
     if (!existing.includes(oldPath)) throw refuse(service, 'that torrent has no such file', remedy);
+    // Before the preview repeats it: a URL or magnet pasted as a name can carry a tracker passkey.
+    if (shownValue(newPath) !== newPath) throw refuse(service, '`new_path` is a URL', remedy);
     const parts = newPath.split('/');
     if (CONTROL.test(newPath) || newPath.includes('\\') || parts.some(part => part === '' || part === '.' || part === '..')) {
         throw refuse(service, '`new_path` must be a relative path with no empty, . or .. segments and no backslash', remedy);

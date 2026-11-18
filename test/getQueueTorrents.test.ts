@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CredentialServiceConfig } from '../src/config/schema.ts';
 import { QbittorrentAdapter } from '../src/services/qbittorrent.ts';
-import { buildGetQueue } from '../src/tools/getQueue.ts';
+import { buildGetQueue, queueLine } from '../src/tools/getQueue.ts';
 import type { ServiceAdapter } from '../src/services/types.ts';
 import { HASH, OTHER, PASSKEY, fakeQbittorrent, torrent, type FakeOptions } from './helpers/fakeQbittorrent.ts';
 import { expectWithinBudget } from './helpers/budget.ts';
@@ -91,7 +91,10 @@ describe('get_queue on qBittorrent at detail "full"', () => {
     it('stays within the response budget at the longest page that is read in detail', async () => {
         const files = Array.from({ length: 200 }, (_, i) => ({ name: `Some.Long.Release.Name.2026/episode.${i}.mkv`, size: 1, progress: 1 }));
         const torrents = Array.from({ length: 100 }, (_, i) => torrent({ hash: i.toString(16).padStart(40, '0') }));
-        expectWithinBudget(await buildGetQueue([adapter(undefined, { torrents, files })], { detail: 'full', limit: 100 }), 40_000);
+        const result = await buildGetQueue([adapter(undefined, { torrents, files })], { detail: 'full', limit: 100 });
+        expect(result.torrentDetailsOmitted).toBeUndefined();
+        expect(result.items[0]!.trackers).toBeDefined();
+        expectWithinBudget(result, 40_000);
     });
 
     it('keeps the page when one read fails, and names the instance', async () => {
@@ -110,6 +113,21 @@ describe('get_queue on qBittorrent at detail "full"', () => {
         const result = await buildGetQueue([client], full);
         expect(result.items).toHaveLength(1);
         expect(result.degraded).toEqual([]);
+    });
+
+    it('puts the details in the text, for a client that reads only that', async () => {
+        const [row] = (await buildGetQueue([adapter(undefined)], full)).items;
+        const line = queueLine(row!);
+        for (const part of ['saved in /data/torrents/movies', 'private yes', 'ratio 1.50', 'seeded 2.0 days', 'trackers tracker.example.org (working)', 'Some.Film/film.mkv']) {
+            expect(line).toContain(part);
+        }
+        expect(line).not.toContain(PASSKEY);
+    });
+
+    it('says in the text how many files were left out', async () => {
+        const files = Array.from({ length: 250 }, (_, i) => ({ name: `Pack/${i}.mkv`, size: 1, progress: 1 }));
+        const [row] = (await buildGetQueue([adapter(undefined, { torrents: [torrent(), torrent({ hash: OTHER })], files })], full)).items;
+        expect(queueLine(row!)).toContain('50 more file(s) not listed');
     });
 
     it('does not read details below detail "full"', async () => {
