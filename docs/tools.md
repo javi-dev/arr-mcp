@@ -3468,7 +3468,9 @@ request can carry once encoded), plus an existing
 saves, and that location has to be allowed too. The torrent is added with
 automatic management and the incomplete-downloads folder off, so it lands where
 the preview said. The preview warns
-when an *arr watches the category. The source can carry a passkey, so it appears
+when an *arr watches the category. A category whose share limits would remove a
+torrent the instance protects needs `allow_removal: true`, which needs
+`destructive`. The source can carry a passkey, so it appears
 in no preview, target, error or audit row: the token binds its SHA-256.
 
 **Unverified live** (qBittorrent): adding from a magnet, a URL and an uploaded file.

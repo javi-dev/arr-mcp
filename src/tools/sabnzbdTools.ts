@@ -250,6 +250,8 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
                 // The retention in force, so a token cannot outlive a change to the half of it this call leaves alone.
                 args: {
                     changes,
+                    // What this replaces, so a token cannot overwrite an edit made since the preview.
+                    replaces: Object.fromEntries(Object.keys(changes).map(name => [name, current[name as keyof SabClientSettings]])),
                     ...(retentionChanges ? { retention: { option, number } } : {}),
                     // All three, because each changes what the other two do.
                     ...(unwantedChanges ? { unwanted } : {})

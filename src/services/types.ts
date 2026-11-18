@@ -2037,6 +2037,8 @@ export type TorrentDetails = {
     /** Where its files are right now. */
     contentPath?: string;
     hasMetadata: boolean;
+    /** Whether it has ever finished: a finished torrent whose data went missing reads as having everything left. */
+    finishedOnce: boolean;
     /** Its own share limits, before any category or client default applies. */
     share: TorrentShareRule;
     /** `null` when the torrent has no metadata yet, so nobody can say. */

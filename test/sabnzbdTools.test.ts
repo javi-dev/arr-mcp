@@ -268,8 +268,38 @@ describe('update_client_settings', () => {
         const h = harness();
         h.settings.history_retention_option = 'days-delete';
         h.settings.history_retention_number = 30;
-        await confirmed(h.call, 'update_client_settings', { history_retention_option: 'number-archive', history_retention_number: 2 });
-        expect(h.sent('set_config').map(r => r.searchParams.get('keyword'))).toEqual(['history_retention_option', 'history_retention_number']);
+        await confirmed(h.call, 'update_client_settings', { history_retention_option: 'number-delete', history_retention_number: 1000 });
+        expect(h.sent('set_config').map(r => [r.searchParams.get('keyword'), r.searchParams.get('value')])).toEqual([
+            ['history_retention_option', 'all'],
+            ['history_retention_number', '1000'],
+            ['history_retention_option', 'number-delete']
+        ]);
+    });
+
+    it('leaves a deleting policy parked on keep-all when the count cannot be written', async () => {
+        const h = harness({ breaksOn: 'history_retention_number' });
+        h.settings.history_retention_option = 'days-delete';
+        h.settings.history_retention_number = 7;
+        await expect(confirmed(h.call, 'update_client_settings', { history_retention_option: 'number-delete', history_retention_number: 1000 })).rejects.toThrow(/did not confirm history_retention_number/);
+        expect(h.settings.history_retention_option).toBe('all');
+    });
+
+    it('writes the count first when the policy in force deletes nothing', async () => {
+        const h = harness();
+        h.settings.history_retention_option = 'days-archive';
+        await confirmed(h.call, 'update_client_settings', { history_retention_option: 'number-delete', history_retention_number: 50 });
+        expect(h.sent('set_config').map(r => r.searchParams.get('keyword'))).toEqual(['history_retention_number', 'history_retention_option']);
+    });
+
+    it('does not let a token overwrite a value edited since the preview', async () => {
+        const h = harness();
+        h.settings.history_retention_number = 1000;
+        const args = { history_retention_number: 100 };
+        const preview = await h.call('update_client_settings', args);
+        h.settings.history_retention_number = 500;
+        const late = await h.call('update_client_settings', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.sent('set_config')).toEqual([]);
     });
 
     it('refuses a setting this SABnzbd does not have', async () => {

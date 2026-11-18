@@ -81,6 +81,7 @@ type RawTorrent = {
     download_path?: string;
     content_path?: string;
     has_metadata?: boolean;
+    completion_on?: number;
     share_limit_action?: string;
     share_limits_mode?: string;
     inactive_seeding_time_limit?: number;
@@ -700,6 +701,7 @@ export class QbittorrentAdapter
             ...(info.download_path === undefined || info.download_path === '' ? {} : { downloadPath: info.download_path }),
             ...(info.content_path === undefined || info.content_path === '' ? {} : { contentPath: info.content_path }),
             hasMetadata: hasMetadataOf(info),
+            finishedOnce: (info.completion_on ?? 0) > 0,
             share: shareRuleOf(info),
             private: privateOf(info, props),
             ...(ratio === undefined ? {} : { ratio }),

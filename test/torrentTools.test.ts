@@ -149,6 +149,27 @@ describe('recheck_torrents', () => {
         expect(preview.structuredContent.effects.join(' ')).toContain('moves what is left of it to /data/torrents/incomplete');
     });
 
+    it('refuses a recheck that could send data outside the allowed roots', async () => {
+        const h = harness({ torrents: [torrent({ download_path: '/mnt/scratch' })] });
+        await expect(h.call('recheck_torrents', { ids: [HASH] })).rejects.toThrow(/outside the locations/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('does not let a token survive the incomplete folder changing', async () => {
+        const h = harness({ torrents: [torrent({ download_path: '/data/torrents/incomplete' })] });
+        const preview = await h.call('recheck_torrents', { ids: [HASH] });
+        h.torrents[0]!.download_path = '/data/media/incomplete';
+        const late = await h.call('recheck_torrents', { ids: [HASH], confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('warns about the folder only for the torrents it will check', async () => {
+        const h = harness({ torrents: [torrent(), torrent({ hash: OTHER, state: 'metaDL', has_metadata: false, download_path: '/mnt/scratch' })] });
+        const preview = await h.call('recheck_torrents', { ids: [HASH, OTHER] });
+        expect(preview.structuredContent.effects.join(' ')).not.toContain('/mnt/scratch');
+    });
+
     it('polls quickly at first, so a small torrent is caught while it checks', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP'] });
         await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
@@ -408,6 +429,7 @@ describe('add_torrent', () => {
         await expect(h.call('add_torrent', { torrent_base64: file.toString('base64'), category: 'purge' })).rejects.toThrow(/removes torrents at its share limits/);
         const allowed = await h.call('add_torrent', { torrent_base64: file.toString('base64'), category: 'purge', allow_removal: true });
         expect(allowed.structuredContent.tier).toBe('destructive');
+        expect(allowed.structuredContent.effects[0]).toContain('Overrides the delete protection');
     });
 
     it('accepts a v2 magnet, and goes by its truncated hash', async () => {
@@ -496,8 +518,26 @@ describe('set_torrent_location', () => {
     it('needs move_files when dropping automatic management would gather stray files into the folder', async () => {
         const h = harness({ torrents: [torrent({ auto_tmm: true, state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete' })] });
         await expect(h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' })).rejects.toThrow(/would move it/);
-        const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true });
+        const args = { id: HASH, location: '/data/media/movies', move_files: true };
+        const preview = await h.call('set_torrent_location', args);
+        expect(preview.structuredContent.summary).toContain('to /data/torrents/incomplete, and save it at /data/media/movies once finished');
         expect(preview.structuredContent.effects[0]).toContain('first moves its files to /data/torrents/incomplete');
+        expect(preview.structuredContent.effects[1]).toBe('/data/media/movies is only where they go once finished.');
+        expect(preview.structuredContent.effects.join(' ')).not.toContain('leaves its unfinished data');
+        const applied = await h.call('set_torrent_location', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(applied.structuredContent.summary).toContain('moves the files to /data/torrents/incomplete in the background');
+    });
+
+    it('treats a finished torrent whose storage went missing as finished', async () => {
+        const h = harness({ torrents: [torrent({ state: 'missingFiles', amount_left: 1000, completion_on: 1_700_000_000, download_path: '/data/torrents/incomplete' })] });
+        const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' });
+        expect(preview.structuredContent.effects[0]).toContain('any file of this torrent still there moves too');
+        expect(preview.structuredContent.effects.join(' ')).toContain('recheck_torrents');
+    });
+
+    it('repoints an automatic magnet with no metadata without move_files', async () => {
+        const h = harness({ torrents: [torrent({ auto_tmm: true, state: 'metaDL', has_metadata: false, amount_left: 0, download_path: '/data/torrents/incomplete', content_path: '' })] });
+        expect((await h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' })).structuredContent.tier).toBe('safe');
     });
 
     it('checks the save path a finished torrent is gathered into before it moves on', async () => {
@@ -883,9 +923,25 @@ describe('set_torrent_category', () => {
         await expect(h.call('set_torrent_category', { id: HASH, category: 'purge', allow_removal: true })).rejects.toThrow(/destructive/);
     });
 
-    it('lets allow_removal override the protection of an instance', async () => {
+    it('says when allow_removal overrides the protection of an instance', async () => {
         const h = harness({ categories: purge('Remove') }, { protect_all_torrents: true });
-        expect((await h.call('set_torrent_category', { id: HASH, category: 'purge', allow_removal: true })).structuredContent.confirm_token).toBeDefined();
+        const preview = await h.call('set_torrent_category', { id: HASH, category: 'purge', allow_removal: true });
+        expect(preview.structuredContent.confirm_token).toBeDefined();
+        expect(preview.structuredContent.effects[0]).toContain('Overrides the delete protection');
+    });
+
+    it('lets a manual torrent change category while it is being checked', async () => {
+        const h = harness({ torrents: [torrent({ state: 'checkingUP' })] });
+        expect((await h.call('set_torrent_category', { id: HASH, category: 'tv' })).structuredContent.confirm_token).toBeDefined();
+    });
+
+    it('refuses a magnet that would download outside the allowed roots', async () => {
+        const h = harness({
+            torrents: [torrent({ auto_tmm: true, state: 'metaDL', has_metadata: false, amount_left: 0, content_path: '' })],
+            preferences: prefs(),
+            categories: { movies: {}, tv: { savePath: '/mnt/elsewhere' } }
+        });
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(/outside the locations/);
     });
 
     it('asks nothing extra when both categories already resolve to the same removal', async () => {

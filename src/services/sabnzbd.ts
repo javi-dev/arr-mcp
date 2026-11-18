@@ -505,18 +505,23 @@ export class SabnzbdAdapter
      * One `set_config` per setting, each checked against what SABnzbd says it
      * stored. A failure part-way names what already changed, since nothing rolls
      * those back. When both halves of the retention change, the order keeps a
-     * failure part-way from tightening what is in force: a policy already
-     * deleting is replaced first, so a lower count never applies to it, and
-     * otherwise the count goes first, so a new policy never starts on the old one.
+     * failure part-way from deleting more than either policy would: a policy
+     * already deleting is parked on `all` while the count changes, and otherwise
+     * the count goes first, so a new policy never starts on the old number.
      */
     async updateClientSettings(changes: SabSettingChange): Promise<void> {
         const applied: string[] = [];
-        const earlier = (): string => (applied.length === 0 ? 'Nothing else was changed.' : `Already changed before this failed: ${applied.join(', ')}.`);
-        const both = changes.history_retention_number !== undefined && changes.history_retention_option !== undefined;
+        const earlier = (): string => (applied.length === 0 ? 'Nothing else was changed.' : `Already changed before this failed: ${[...new Set(applied)].join(', ')}.`);
+        const { history_retention_option: option, history_retention_number: count, ...rest } = changes;
+        const both = option !== undefined && count !== undefined;
         const deleting = both && String(await this.#setting('history_retention_option')).endsWith('-delete');
-        const first = deleting ? 'history_retention_option' : 'history_retention_number';
-        const ordered = Object.entries(changes).sort(([a], [b]) => Number(b === first) - Number(a === first));
-        for (const [keyword, value] of ordered) {
+        const steps: [string, unknown][] = [
+            ...(deleting ? ([['history_retention_option', 'all']] as [string, unknown][]) : []),
+            ...(count === undefined ? [] : ([['history_retention_number', count]] as [string, unknown][])),
+            ...(option === undefined ? [] : ([['history_retention_option', option]] as [string, unknown][])),
+            ...Object.entries(rest)
+        ];
+        for (const [keyword, value] of steps) {
             if (!WRITABLE_KEYWORDS.has(keyword)) throw new ServiceError('PermissionDenied', this.id, `${keyword} is not a setting this server may change`);
             let body: { config?: { misc?: Record<string, unknown> } };
             try {
