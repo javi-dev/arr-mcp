@@ -1,5 +1,5 @@
 import { instancesOf } from './helpers/instances.ts';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod/v4';
 import type { AnyServiceConfig, ServiceId } from '../src/config/schema.ts';
 import { BEARER_CALLER, WriteAudit } from '../src/core/audit.ts';
@@ -752,11 +752,20 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         expect(err.stack?.split('\n')[1]).toContain('writeTool.test.ts');
     });
 
-    it('scrubs an error whose message cannot be set', async () => {
-        const harness = buildHarness({ apply: () => Promise.reject(new DOMException(`could not reach ${PASTED}`)) });
+    it('scrubs an error whose message has no setter, keeping its class and name', async () => {
+        const harness = buildHarness({ apply: () => Promise.reject(new DOMException(`could not reach ${PASTED}`, 'AbortError')) });
         const preview = await harness.call('delete_media', { id: '5' });
-        const err = (await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token }).catch((e: unknown) => e)) as Error;
+        const err = (await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token }).catch((e: unknown) => e)) as DOMException;
+        expect(err).toBeInstanceOf(DOMException);
+        expect(err.name).toBe('AbortError');
         expect(err.message).toBe('could not reach https://tracker.example.org/...');
+    });
+
+    it('scrubs only the first line of a stack, so frames given as file URLs keep their location', async () => {
+        const thrown = new ServiceError('NotFound', 'radarr', `no such category ${PASTED}`);
+        thrown.stack = `ServiceError: ${thrown.message}\n    at plan (file:///app/src/tools/example.ts:12:34)`;
+        const err = (await buildHarness({ plan: () => Promise.reject(thrown) }).call('delete_media', { id: '5' }).catch((e: unknown) => e)) as Error;
+        expect(err.stack).toBe('ServiceError: radarr not found: no such category https://tracker.example.org/...\n    at plan (file:///app/src/tools/example.ts:12:34)');
     });
 
     it('cuts a URL in a failed apply, and leaves out a magnet link', async () => {
@@ -774,6 +783,12 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
 });
 
 describe('write tool harness: one confirmed write per instance at a time (#7)', () => {
+    // The lanes outlive a test, so a test that fails while holding one must still free it.
+    const toRelease: (() => void)[] = [];
+    afterEach(() => {
+        for (const release of toRelease.splice(0)) release();
+    });
+
     /** A plan and apply that log each step, with apply for `held` waiting until `release` is called. */
     function racing(held: string, opts: { route?: (args: { id: string }) => string; failFirst?: boolean } = {}) {
         const log: string[] = [];
@@ -781,6 +796,7 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         const gate = new Promise<void>(resolve => {
             release = resolve;
         });
+        toRelease.push(release);
         const h = buildHarness({
             permissions: { radarr: service(false, true), sonarr: service(false, true) },
             ...(opts.route === undefined ? {} : { route: opts.route }),
@@ -846,10 +862,8 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
             const r = racing('5');
             const [first, second] = await r.confirmAll(['5', '9']);
             await vi.advanceTimersByTimeAsync(30_000);
-            const refusal = (await second) as ServiceError;
-            expect(refusal).toBeInstanceOf(ServiceError);
-            expect(refusal.message).toMatch(/another confirmed write to radarr was still running after 30 seconds, so this one was not applied/);
-            expect(refusal.remedy).toMatch(/token was not used/);
+            const refusal = (await second) as Error;
+            expect(refusal.message).toMatch(/^Not applied: another confirmed write to radarr was still running after 30 seconds\. Its confirmation token was not used/);
             r.release();
             await first;
             expect(r.log).not.toContain('plan 9');
@@ -867,11 +881,45 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         const [first, second] = await r.confirmAll(['5', '9'], abort.signal);
         await settled();
         abort.abort();
-        await expect(second).resolves.toMatchObject({ message: expect.stringMatching(/cancelled while it waited/) });
+        await expect(second).resolves.toMatchObject({ message: expect.stringMatching(/cancelled while it waited for another confirmed write to radarr/) });
         r.release();
         await first;
         await settled();
         expect(r.log).toEqual(['plan 5', 'apply 5', 'applied 5']);
+        expect(outcomes(r.h)).toContain('denied');
+        const retried = await r.h.call('delete_media', { id: '9', confirm: r.tokens[1] });
+        expect(retried.structuredContent.applied).toBe(true);
+    });
+
+    it('refuses a confirmation whose request was cancelled before it reached the lane', async () => {
+        const r = racing('none');
+        const abort = new AbortController();
+        abort.abort();
+        const preview = await r.h.call('delete_media', { id: '9' });
+        await expect(r.h.call('delete_media', { id: '9', confirm: preview.structuredContent.confirm_token }, abort.signal)).rejects.toThrow(/cancelled/);
+        expect(r.h.apply).not.toHaveBeenCalled();
+    });
+
+    it('builds the fresh preview for a rejected token outside the lane, so its cross-checks hold up no write', async () => {
+        let block = false;
+        let unblock = (): void => undefined;
+        const slow = new Promise<void>(resolve => {
+            unblock = resolve;
+        });
+        toRelease.push(unblock);
+        const crossChecks = vi.fn<CrossChecker>(async () => {
+            if (block) await slow;
+            return { warnings: [], unchecked: [] };
+        });
+        const h = buildHarness({ plan: { ...PLAN, subject: { kind: 'movie', label: 'Alien (1979)', ids: { tmdb: 348 } } }, crossChecks, crossCheck: 'delete' });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        block = true;
+        const rejected = h.call('delete_media', { id: '5', confirm: 'not-a-token' });
+        await settled();
+        const applied = await Promise.race([h.call('delete_media', { id: '5', confirm: token }), settled().then(() => 'still waiting')]);
+        expect(applied).toMatchObject({ structuredContent: { applied: true } });
+        unblock();
+        expect((await rejected).structuredContent.confirm_error).toBeDefined();
     });
 
     it('frees the instance after a write that failed', async () => {

@@ -8,7 +8,6 @@ import { checkPermission, type PermissionSource, type WriteTier } from '../core/
 import { toolInput } from '../core/shape.ts';
 import { logger } from '../core/logger.ts';
 import { scrubUrls, shownValue } from '../core/pastedUrl.ts';
-import { serial } from '../core/serial.ts';
 import type { CrossCheckProfile, CrossCheckSubject, CrossChecker } from './crossChecks.ts';
 import type { LibraryLoader } from './library.ts';
 import { resolveTarget, type ServiceTarget } from './serviceTarget.ts';
@@ -243,6 +242,9 @@ export type WriteToolResult = {
     next_steps?: NextStep[];
 };
 
+/** What a write tool call answers with. */
+type ToolReply = { content: { type: 'text'; text: string }[]; structuredContent: WriteToolResult };
+
 const TARGET_KEYS = [
     'id',
     'item_id',
@@ -284,14 +286,6 @@ function writeInput(schema: z.ZodObject): z.ZodObject {
 }
 
 /**
- * One lane per instance id, shared by every request's server: a confirmed
- * write runs its plan, its token check and its apply in that lane, so two
- * confirmations racing on one instance cannot interleave their writes and
- * leave a mix of both (#7). Previews and dry runs only read, so they never wait.
- */
-const writeLanes = new Map<string, ReturnType<typeof serial>>();
-
-/**
  * How long a confirmed write waits for its instance. Some applies wait on the
  * service for minutes (a rename's command, a watched recheck), and a client
  * stops waiting long before that, so a write queued behind one is refused
@@ -299,51 +293,80 @@ const writeLanes = new Map<string, ReturnType<typeof serial>>();
  */
 const LANE_WAIT_MS = 30_000;
 
+/** The confirmed writes waiting for an instance, oldest first. Present only while one runs. */
+type Lane = { waiting: (() => void)[] };
+
+/**
+ * One lane per instance id, shared by every request's server: a confirmed
+ * write runs its plan, its token check and its apply in that lane, so two
+ * confirmations racing on one instance cannot interleave their writes and
+ * leave a mix of both (#7). Previews and dry runs only read, so they never wait.
+ */
+const writeLanes = new Map<string, Lane>();
+
+/** Hands the instance to the oldest write still waiting, or frees it. */
+function release(service: string, lane: Lane): void {
+    const next = lane.waiting.shift();
+    if (next !== undefined) next();
+    else writeLanes.delete(service);
+}
+
 type Turn<T> = { ran: true; value: T } | { ran: false; why: 'busy' | 'cancelled' };
 
 /**
  * Runs `task` once every confirmed write queued ahead of it on `service` has
  * finished. Gives up without running it after `LANE_WAIT_MS`, or as soon as
- * the request is cancelled, so the token it would have spent stays unused.
+ * the request is cancelled, so the token it would have spent stays unused. A
+ * write that gives up leaves the queue at once, holding nothing.
  */
-function inLane<T>(service: string, signal: AbortSignal | undefined, task: () => Promise<T>): Promise<Turn<T>> {
+async function inLane<T>(service: string, signal: AbortSignal | undefined, task: () => Promise<T>): Promise<Turn<T>> {
+    // A function, so the check after the wait reads the signal as it is then.
+    const aborted = (): boolean => signal?.aborted === true;
+    if (aborted()) return { ran: false, why: 'cancelled' };
     let lane = writeLanes.get(service);
     if (lane === undefined) {
-        lane = serial();
+        lane = { waiting: [] };
         writeLanes.set(service, lane);
-    }
-    return new Promise<Turn<T>>(resolve => {
-        let settled = false;
-        const stop = (): void => {
-            settled = true;
-            clearTimeout(timer);
-            signal?.removeEventListener('abort', cancelled);
-        };
-        const giveUp = (why: 'busy' | 'cancelled'): void => {
-            if (settled) return;
-            stop();
-            resolve({ ran: false, why });
-        };
-        const cancelled = (): void => giveUp('cancelled');
-        const timer = setTimeout(() => giveUp('busy'), LANE_WAIT_MS);
-        signal?.addEventListener('abort', cancelled, { once: true });
-        if (signal?.aborted === true) cancelled();
-        void lane(async () => {
-            if (settled) return;
-            stop();
-            const ran = task().then(value => ({ ran: true as const, value }));
-            // The caller gets the task's outcome, rejection included; the lane only waits for it.
-            resolve(ran);
-            await ran.catch(() => undefined);
+    } else {
+        const queue = lane.waiting;
+        const turn = await new Promise<'go' | 'busy' | 'cancelled'>(resolve => {
+            const settle = (outcome: 'go' | 'busy' | 'cancelled'): void => {
+                clearTimeout(timer);
+                signal?.removeEventListener('abort', cancelled);
+                const at = queue.indexOf(go);
+                if (at !== -1) queue.splice(at, 1);
+                resolve(outcome);
+            };
+            const go = (): void => settle('go');
+            const cancelled = (): void => settle('cancelled');
+            const timer = setTimeout(() => settle('busy'), LANE_WAIT_MS);
+            signal?.addEventListener('abort', cancelled, { once: true });
+            queue.push(go);
         });
-    });
+        if (turn !== 'go') return { ran: false, why: turn };
+    }
+    // The instance is this write's now, until `release` hands it on.
+    if (aborted()) {
+        release(service, lane);
+        return { ran: false, why: 'cancelled' };
+    }
+    try {
+        return { ran: true, value: await task() };
+    } finally {
+        release(service, lane);
+    }
 }
 
+/** A stack with its first line, which repeats the message, rewritten; the frames are kept as they are. */
+const restacked = (stack: string | undefined, from: string, to: string): string | undefined =>
+    stack === undefined ? undefined : stack.includes(from) ? stack.replace(from, () => to) : scrubUrls(stack);
+
 /**
- * The error a write tool throws, with every URL cut down the way the audit
- * detail is (#6). A refusal can quote what the caller passed, and a URL there
- * can carry a tracker passkey. A `ServiceError` is rebuilt rather than edited,
- * so its `detail` and `remedy` agree with its message.
+ * The error a write tool throws, with every URL in its message cut down the
+ * way the audit detail is (#6). A refusal can quote what the caller passed, and
+ * a URL there can carry a tracker passkey. A `ServiceError` is rebuilt rather
+ * than edited, so its `detail` and `remedy` agree with its message; any other
+ * error keeps its class and fields.
  */
 function scrubbedError(err: unknown): unknown {
     if (err instanceof ServiceError) {
@@ -356,19 +379,22 @@ function scrubbedError(err: unknown): unknown {
             ...(err.reason === undefined ? {} : { reason: err.reason }),
             ...(err.status === undefined ? {} : { status: err.status })
         });
-        // The original's stack, so a log still shows where it was thrown.
-        if (err.stack !== undefined) rebuilt.stack = scrubUrls(err.stack);
+        // The original's frames, so a log still shows where it was thrown.
+        const stack = restacked(err.stack, err.message, rebuilt.message);
+        if (stack !== undefined) rebuilt.stack = stack;
         return rebuilt;
     }
     if (err instanceof Error) {
         const message = scrubUrls(err.message);
         if (message === err.message) return err;
+        const stack = restacked(err.stack, err.message, message);
         try {
-            err.message = message;
-            if (err.stack !== undefined) err.stack = scrubUrls(err.stack);
+            // Defined rather than assigned: a DOMException's `message` is a getter with no setter.
+            Object.defineProperty(err, 'message', { value: message, writable: true, configurable: true });
+            if (stack !== undefined) Object.defineProperty(err, 'stack', { value: stack, writable: true, configurable: true });
             return err;
         } catch {
-            // A `message` with no setter, as on a DOMException.
+            // A frozen error: nothing on it can change.
             return new Error(message);
         }
     }
@@ -510,7 +536,8 @@ export function registerWriteTool<
             );
         }
 
-        const proceed = async () => {
+        // A reply, or one still to finish once the lane is released.
+        const proceed = async (): Promise<ToolReply | (() => Promise<ToolReply>)> => {
             let plan: WritePlan<Bound>;
             try {
                 plan = await spec.plan(args, adapter);
@@ -544,7 +571,7 @@ export function registerWriteTool<
                 ...extra
             });
 
-            const respond = (result: WriteToolResult, text: string) => ({
+            const respond = (result: WriteToolResult, text: string): ToolReply => ({
                 content: [{ type: 'text' as const, text }],
                 structuredContent: result
             });
@@ -647,29 +674,33 @@ export function registerWriteTool<
                     const id = audit.begin(record);
                     audit.settle(id, 'unconfirmed', `confirmation ${check.failure}`);
                     const fresh = confirm.issue(intent);
-                    const advice = await advise();
-                    return respond(
-                        preview({
-                            audit_id: id,
-                            ...advice.fields,
-                            confirm_error: CONFIRM_REASON[check.failure],
-                            confirm_token: fresh
-                        }),
-                        // `check.remedy` says to call again *without* `confirm`, which is
-                        // right when no token comes back and wrong here, because one does,
-                        // so both fields carry the reason alone (#312). The text gives the
-                        // single next action, worded as the plain preview words it. The
-                        // token goes last in both: a reader clipping the trailing word or
-                        // the final backticked span gets it, and prose after it would not.
-                        // The fresh preview is in the text too, as in a plain preview: a
-                        // client that drops structuredContent (#234) would otherwise apply
-                        // the new token without seeing what changed since the old one.
-                        `Not applied: the confirmation token was rejected. ${CONFIRM_REASON[check.failure]} ${plan.summary}\n\n` +
-                            (advice.block === '' ? '' : `${advice.block}\n\n`) +
-                            (plan.effects.length === 0 ? '' : `${plan.effects.map(e => `- ${e}`).join('\n')}\n\n`) +
-                            `Do not resend the rejected one. To apply this, call ${spec.name} again with ` +
-                            `the same arguments plus \`confirm\` set to \`${fresh}\`.`
-                    );
+                    // Finished outside the lane: the cross-checks read other services,
+                    // and nothing from here on writes, so no confirm should wait for them.
+                    return async () => {
+                        const advice = await advise();
+                        return respond(
+                            preview({
+                                audit_id: id,
+                                ...advice.fields,
+                                confirm_error: CONFIRM_REASON[check.failure],
+                                confirm_token: fresh
+                            }),
+                            // `check.remedy` says to call again *without* `confirm`, which is
+                            // right when no token comes back and wrong here, because one does,
+                            // so both fields carry the reason alone (#312). The text gives the
+                            // single next action, worded as the plain preview words it. The
+                            // token goes last in both: a reader clipping the trailing word or
+                            // the final backticked span gets it, and prose after it would not.
+                            // The fresh preview is in the text too, as in a plain preview: a
+                            // client that drops structuredContent (#234) would otherwise apply
+                            // the new token without seeing what changed since the old one.
+                            `Not applied: the confirmation token was rejected. ${CONFIRM_REASON[check.failure]} ${plan.summary}\n\n` +
+                                (advice.block === '' ? '' : `${advice.block}\n\n`) +
+                                (plan.effects.length === 0 ? '' : `${plan.effects.map(e => `- ${e}`).join('\n')}\n\n`) +
+                                `Do not resend the rejected one. To apply this, call ${spec.name} again with ` +
+                                `the same arguments plus \`confirm\` set to \`${fresh}\`.`
+                        );
+                    };
                 }
             } else {
                 const id = audit.begin(record);
@@ -733,19 +764,21 @@ export function registerWriteTool<
             );
         };
 
-        if (presented === undefined || dryRun) return proceed();
+        const finish = async (reply: ToolReply | (() => Promise<ToolReply>)): Promise<ToolReply> => (typeof reply === 'function' ? reply() : reply);
+        if (presented === undefined || dryRun) return finish(await proceed());
         // A confirm call holds its instance's lane from the plan's reads to the
         // apply, so the state its token is checked against is still the state
         // it writes over. Everything else runs at once.
         const turn = await inLane(service, signal, proceed);
-        if (turn.ran) return turn.value;
+        if (turn.ran) return finish(turn.value);
         const detail =
             turn.why === 'busy'
                 ? `another confirmed write to ${service} was still running after ${LANE_WAIT_MS / 1000} seconds`
-                : 'the request was cancelled while it waited for another write to finish';
+                : `the request was cancelled while it waited for another confirmed write to ${service} to finish`;
         deny(service, rawTarget(args), detail);
-        throw new ServiceError('Timeout', service, `${detail}, so this one was not applied`, {
-            remedy: 'Its confirmation token was not used: call again with the same arguments and token once that write has finished.'
-        });
+        // Not a ServiceError: no kind fits, since the service was never asked anything.
+        throw new Error(
+            `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token once that write has finished.`
+        );
     }
 }
