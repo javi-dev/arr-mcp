@@ -962,6 +962,8 @@ describe('set_torrent_location', () => {
         const args = { id: HASH, location: '/data/media/tv', move_files: true };
         const preview = await h.call('set_torrent_location', args);
         expect(preview.structuredContent.effects[0]).toContain('first moves its files to /data/torrents/tv');
+        // The second hop starts where the gather left the files.
+        expect(preview.structuredContent.effects[1]).toMatch(/^Physically moves \S+ GB on from \/data\/torrents\/tv to \/data\/media\/tv\./);
         h.torrents[0]!.save_path = '/data/media/other';
         const late = await h.call('set_torrent_location', { ...args, confirm: preview.structuredContent.confirm_token });
         expect(late.structuredContent.applied).toBe(false);
@@ -1176,6 +1178,14 @@ describe('set_torrent_location', () => {
         expect(preview.structuredContent.summary).toMatch(/^The save path of .* is already \/data\/torrents\/movies\.$/);
     });
 
+    it('does not repeat the save path after gathering files whose folder cannot be told', async () => {
+        const preview = await harness({ files: [], torrents: [torrent({ auto_tmm: true, content_path: '' })] }).call('set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true });
+        const effects = preview.structuredContent.effects.join(' ');
+        expect(effects).toContain('Turning off automatic management first moves its files to /data/torrents/movies.');
+        expect(effects).toContain('on from /data/torrents/movies to /data/media/movies');
+        expect(effects).not.toContain('Where its files are now cannot be told');
+    });
+
     it('does not call the save path the source when where the files are cannot be told', async () => {
         const preview = await harness({ files: [], torrents: [torrent({ content_path: '', save_path: '/data/torrents/movies/' })] }).call('set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true });
         const effects = preview.structuredContent.effects.join(' ');
@@ -1289,11 +1299,12 @@ describe('set_torrent_category', () => {
             preferences: { torrent_changed_tmm_enabled: true, temp_path_enabled: false, max_ratio_act: 0 },
             categories: { movies: {}, tv: { savePath: '/data/torrents/tv', download_path: '/data/torrents/incomplete/tv' } }
         });
-        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(/to \/data\/torrents\/incomplete\/tv, and where its files are now cannot be told; it is set to keep them in \/data\/torrents\/incomplete\. Nothing was changed/);
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(/^qbittorrent permission denied: that category would move \S+ to \/data\/torrents\/incomplete\/tv, and where its files are now cannot be told; it is set to keep them in \/data\/torrents\/incomplete\. Nothing was changed/);
         // The token binds the folder the preview names, so a change to it asks for a new preview.
         const args = { id: HASH, category: 'tv', move_files: true };
         const preview = await h.call('set_torrent_category', args);
         expect(preview.structuredContent.effects.join(' ')).toContain('it is set to keep them in /data/torrents/incomplete.');
+        expect(preview.structuredContent.effects.join(' ')).not.toContain('from /data/torrents/incomplete');
         h.torrents[0]!.download_path = '/data/torrents/incomplete2';
         const late = await h.call('set_torrent_category', { ...args, confirm: preview.structuredContent.confirm_token });
         expect(late.structuredContent.applied).toBe(false);
