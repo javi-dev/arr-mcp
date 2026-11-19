@@ -235,10 +235,15 @@ The lane is the instance the tool is routed to, within one arr-mcp process. A
 write that also changes a second service, as `delete_media` does when it adds
 the title to Seerr's blocklist, is not serialised against writes to that one.
 An apply that waits on the service after writing holds the lane while it
-waits: a rename or import waiting on its *arr command (up to three minutes),
-a recheck that `recheck_torrents` watches (up to 45 seconds), a Jellyfin
-metadata repair (up to two minutes). A confirmation sent to that instance meanwhile can
-be refused after 30 seconds, and can be sent again with the same token.
+waits: each *arr command a rename or import waits on (up to three minutes), a
+recheck that `recheck_torrents` watches (up to 45 seconds), each step of a
+Jellyfin or Plex metadata repair (up to two minutes). Some applies wait more
+than once: a rename that rotates file names, or an import that remaps episodes,
+can hold the lane for about six minutes, and a Plex match followed by a refresh
+for about four. A confirmation sent to that instance meanwhile is refused after
+30 seconds without being applied, and can be sent again with the same token
+until that token expires, five minutes after its preview. An expired one comes
+back as a fresh preview with a new token.
 
 A destructive preview says what it costs in the units that matter:
 

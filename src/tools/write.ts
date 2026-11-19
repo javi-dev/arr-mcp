@@ -247,13 +247,15 @@ type ToolReply = { content: { type: 'text'; text: string }[]; structuredContent:
 
 /**
  * A refusal's reply with every URL the caller reads cut down (#6): a rejected
- * token's fresh preview can repeat what the plan quoted. The token and the ids
- * are left as they are.
+ * token's fresh preview can repeat what the plan quoted, and a target can be a
+ * release guid that is a URL. The token is left as it is: it binds the target
+ * the plan resolved, not this copy.
  */
 const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolReply => ({
     content: content.map(part => ({ ...part, text: scrubUrls(part.text) })),
     structuredContent: {
         ...result,
+        target: scrubUrls(result.target),
         summary: scrubUrls(result.summary),
         effects: result.effects.map(scrubUrls),
         ...(result.warnings === undefined ? {} : { warnings: result.warnings.map(scrubUrls) })
@@ -344,6 +346,8 @@ async function inLane<T>(service: string, signal: AbortSignal | undefined, task:
         writeLanes.set(service, lane);
     } else {
         const queue = lane.waiting;
+        // Checked again at the hand-off: a timer the event loop ran late must not let an overdue write in.
+        const deadline = performance.now() + LANE_WAIT_MS;
         const turn = await new Promise<'go' | 'busy' | 'cancelled'>(resolve => {
             const settle = (outcome: 'go' | 'busy' | 'cancelled'): void => {
                 clearTimeout(timer);
@@ -359,6 +363,10 @@ async function inLane<T>(service: string, signal: AbortSignal | undefined, task:
             queue.push(go);
         });
         if (turn !== 'go') return { ran: false, why: turn };
+        if (performance.now() >= deadline) {
+            release(service, lane);
+            return { ran: false, why: 'busy' };
+        }
     }
     // The instance is this write's now, until `release` hands it on.
     if (aborted()) {
@@ -410,6 +418,7 @@ function scrubbedError(err: unknown): unknown {
         const message = scrubUrls(err.message);
         if (message === err.message) return err;
         const stack = restacked(err.stack, err.message, message);
+        // The thrown object itself is changed, on purpose: a copy would lose its class and fields.
         try {
             // Defined rather than assigned: a DOMException's `message` is a getter with no setter.
             Object.defineProperty(err, 'message', { value: message, writable: true, configurable: true });
@@ -801,7 +810,8 @@ export function registerWriteTool<
         deny(service, rawTarget(args), detail);
         // Not a ServiceError: no kind fits, since the service was never asked anything.
         throw new Error(
-            `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token once that write has finished.`
+            `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token once that write has finished. ` +
+                'A token that has expired by then comes back as a fresh preview with a new one.'
         );
     }
 }

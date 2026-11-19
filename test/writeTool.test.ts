@@ -776,11 +776,14 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
     });
 
     it('scrubs the fresh preview a rejected token gets back, and its token still applies', async () => {
-        const quoting: WritePlan = { ...PLAN, summary: `Add it to category ${PASTED}.`, effects: [`Files under ${PASTED}.`] };
+        // A target can be a release guid, and a guid is often a URL.
+        const quoting: WritePlan = { ...PLAN, target: `radarr:${PASTED}`, summary: `Add it to category ${PASTED}.`, effects: [`Files under ${PASTED}.`] };
         const h = buildHarness({ plan: quoting });
         const rejected = await h.call('delete_media', { id: '5', confirm: 'not-a-token' });
         const { content, structuredContent } = rejected;
-        expect(JSON.stringify([content, structuredContent.summary, structuredContent.effects])).not.toContain(KEY);
+        const { confirm_token: _token, ...shown } = structuredContent;
+        expect(JSON.stringify([content, shown])).not.toContain(KEY);
+        expect(structuredContent.target).toBe('radarr:https://tracker.example.org/...');
         expect(structuredContent.summary).toBe('Add it to category https://tracker.example.org/....');
         const applied = await h.call('delete_media', { id: '5', confirm: structuredContent.confirm_token });
         expect(applied.structuredContent.applied).toBe(true);
@@ -923,6 +926,24 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         const preview = await r.h.call('delete_media', { id: '9' });
         await expect(r.h.call('delete_media', { id: '9', confirm: preview.structuredContent.confirm_token }, abort.signal)).rejects.toThrow(/cancelled/);
         expect(r.h.apply).not.toHaveBeenCalled();
+    });
+
+    it('refuses a waiter handed the lane after its deadline, even when its timer never ran', async () => {
+        const r = racing('5');
+        const start = performance.now();
+        const [first, second] = await r.confirmAll(['5', '9']);
+        await settled();
+        const clock = vi.spyOn(performance, 'now').mockReturnValue(start + 31_000);
+        try {
+            r.release();
+            await first;
+            expect(await second).toMatchObject({ message: expect.stringMatching(/still running after 30 seconds/) });
+        } finally {
+            clock.mockRestore();
+        }
+        expect(r.log).not.toContain('plan 9');
+        const retried = await r.h.call('delete_media', { id: '9', confirm: r.tokens[1] });
+        expect(retried.structuredContent.applied).toBe(true);
     });
 
     it('hands the lane on past a waiter cancelled at the hand-off, and its token still applies later', async () => {
