@@ -811,7 +811,7 @@ export function registerWriteTool<
         // Not a ServiceError: no kind fits, since the service was never asked anything.
         throw new Error(
             `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token once that write has finished. ` +
-                'A token that has expired by then comes back as a fresh preview with a new one.'
+                'A token that has expired by then comes back as a fresh preview with a new one, unless that write already made the change.'
         );
     }
 }

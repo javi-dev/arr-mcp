@@ -74,7 +74,8 @@ instead. Audit rows written by `grab_release` before this version can still hold
 the whole magnet link. The reason an audit row records for a refusal has every URL
 cut down to its scheme and host, and every magnet link removed, so a tracker URL
 pasted into the wrong argument leaves no passkey there. The error a write tool
-returns to the caller gets the same treatment.
+returns to the caller gets the same treatment, and so does the fresh preview a
+rejected confirmation token comes back with.
 
 ## The repair page renders the config file verbatim
 

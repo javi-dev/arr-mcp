@@ -1524,6 +1524,10 @@ describe('reannounce_torrent', () => {
         // The digest binds the list; neither the preview nor the audit row may carry a URL from it.
         expect(JSON.stringify([preview, late, h.context.audit.recent()])).not.toContain(PASSKEY);
         expect(JSON.stringify([preview, late, h.context.audit.recent()])).not.toContain('0123456789abcdef0123456789abcdef');
+        // The fresh token from the refusal binds the list as it is now, and announces once.
+        const applied = await h.call('reannounce_torrent', { id: HASH, confirm: late.structuredContent.confirm_token });
+        expect(applied.structuredContent.applied).toBe(true);
+        expect(h.posts).toEqual([{ path: '/torrents/reannounce', form: { hashes: HASH } }]);
     });
 
     it.each([

@@ -1044,6 +1044,56 @@ describe('every tool declares the shape it answers in', () => {
      * as an error. This one stops before `apply` — no token was presented —
      * but it exercises the same validation on the same shape.
      */
+    /**
+     * The lane a confirmed write waits in (#7) listens to the request's own
+     * abort signal. Over HTTP, that is the caller dropping the request: this
+     * runs through the real transport to show a confirm aborted while it waits
+     * never writes, and leaves its token for a retry.
+     */
+    it('never applies a queued confirm whose HTTP request was aborted, and keeps its token', async () => {
+        let scans = 0;
+        let release = (): void => undefined;
+        const gate = new Promise<void>(resolve => {
+            release = resolve;
+        });
+        const held = {
+            ...(radarr() as unknown as Record<string, unknown>),
+            startLibraryScan: async () => {
+                scans += 1;
+                if (scans === 1) await gate;
+                return { commandId: 42 };
+            }
+        } as unknown as ServiceAdapter;
+        const shared = appWith(writable, [held]);
+        const send = (args: Record<string, unknown>, signal?: AbortSignal) =>
+            shared.request('http://localhost:6060/mcp', {
+                ...rpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'trigger_scan', arguments: args } }, { Authorization: `Bearer ${TOKEN}` }),
+                ...(signal === undefined ? {} : { signal })
+            });
+        const result = async (res: Response) => ((await rpcPayload(res)).result ?? {}) as { structuredContent?: Record<string, unknown> };
+        const token = async () => (await result(await send({ service: 'radarr' }))).structuredContent?.['confirm_token'];
+        const [first, second] = [await token(), await token()];
+        const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+
+        try {
+            const holding = send({ service: 'radarr', confirm: first });
+            await settle();
+            const abort = new AbortController();
+            const waiting = Promise.resolve(send({ service: 'radarr', confirm: second }, abort.signal)).catch((err: unknown) => err);
+            await settle();
+            abort.abort();
+            await waiting;
+            release();
+            expect((await result(await holding)).structuredContent).toMatchObject({ applied: true });
+            await settle();
+            expect(scans).toBe(1);
+        } finally {
+            release();
+        }
+        expect((await result(await send({ service: 'radarr', confirm: second }))).structuredContent).toMatchObject({ applied: true });
+        expect(scans).toBe(2);
+    });
+
     it('validates a write preview, token and all', async () => {
         const result = await call('trigger_scan', { service: 'radarr' });
 
