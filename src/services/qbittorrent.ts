@@ -1,11 +1,13 @@
 import { instanceId } from '../config/instances.ts';
-import type { ConfigByService, ServiceId } from '../config/schema.ts';
+import { DEFAULT_TORRENT_PATHS, type ConfigByService, type ServiceId } from '../config/schema.ts';
 import { qbittorrentSession } from '../core/auth.ts';
 import { SHORT_READ_TTL_MS, cached } from '../core/cache.ts';
 import { ServiceError } from '../core/errors.ts';
 import { fenceText } from '../core/fence.ts';
 import { hostPort } from '../core/hostPort.ts';
 import { logger } from '../core/logger.ts';
+import { scrubUrls } from '../core/pastedUrl.ts';
+import { trackerHost } from '../core/torrentGuards.ts';
 import type { TorrentFacts } from '../core/cleanuparrRules.ts';
 import { ServiceHttp } from '../core/http.ts';
 import {
@@ -27,7 +29,16 @@ import {
     type ServiceAdapter,
     type SpeedLimit,
     type SpeedLimitCapable,
+    type TorrentAdded,
+    type TorrentCategory,
+    type TorrentCheckState,
+    type TorrentClientDefaults,
+    type TorrentDetails,
     type TorrentEndpoint,
+    type TorrentManageCapable,
+    type TorrentShareRule,
+    type TorrentSource,
+    type TorrentTrackerRow,
     PAUSE_MARK
 } from './types.ts';
 
@@ -36,6 +47,8 @@ const API = '/api/v2';
 /** Both spellings, for the same reason `TORRENT_STATE` keeps both: 5.0 renamed
  *  the paused states to stopped. */
 const PAUSED_STATES = new Set(['pausedDL', 'pausedUP', 'stoppedDL', 'stoppedUP']);
+
+const CHECKING_STATES = new Set(['checkingUP', 'checkingDL', 'checkingResumeData']);
 
 /**
  * Hand-written: qBittorrent publishes no OpenAPI document. Its WebUI API mixes
@@ -65,11 +78,52 @@ type RawTorrent = {
     tags?: string;
     tracker?: string;
     save_path?: string;
+    auto_tmm?: boolean;
+    download_path?: string;
+    content_path?: string;
+    has_metadata?: boolean;
+    completion_on?: number;
+    share_limit_action?: string;
+    share_limits_mode?: string;
+    inactive_seeding_time_limit?: number;
+    progress?: number;
+    completed?: number;
 };
+
+/** `torrents/properties`: what `torrents/info` can lack on a torrent in trouble. 5.0 and 5.1 spell `private` as `is_private`. */
+type RawProperties = {
+    save_path?: string;
+    private?: boolean | null;
+    is_private?: boolean | null;
+    share_ratio?: number;
+    seeding_time?: number;
+};
+
+type RawFile = { name?: string; size?: number; progress?: number };
+
+/** `url` is read for its host and dropped. `msg` is never read: a tracker can echo the passkey in it. */
+type RawTracker = { url?: string; status?: number; updating?: boolean };
+
+/** `download_path` is a folder, `false` for none, or `null` to follow the global setting. */
+type RawCategories = Record<
+    string,
+    { savePath?: string; download_path?: string | boolean | null; share_limit_action?: string; share_limits_mode?: string; ratio_limit?: number; seeding_time_limit?: number; inactive_seeding_time_limit?: number }
+>;
 
 type RawMainData = { server_state?: { free_space_on_disk?: number } };
 type RawPreferences = {
     save_path?: string;
+    /** "When Torrent Category changed": true relocates the torrent, false switches it to manual mode. */
+    torrent_changed_tmm_enabled?: boolean;
+    /** "Keep incomplete torrents in". */
+    temp_path_enabled?: boolean;
+    temp_path?: string;
+    /** "Do not start the download automatically". */
+    add_stopped_enabled?: boolean;
+    torrent_stop_condition?: string;
+    share_limits_mode?: string;
+    max_inactive_seeding_time_enabled?: boolean;
+    max_inactive_seeding_time?: number;
     max_ratio_enabled?: boolean;
     max_ratio?: number;
     max_seeding_time_enabled?: boolean;
@@ -169,14 +223,67 @@ const tagsOf = (t: RawTorrent): string[] => (t.tags ?? '').split(',').map(s => s
 
 const isMarked = (t: RawTorrent): boolean => tagsOf(t).includes(PAUSE_MARK);
 
+/** `TrackerEndpointState` in 5.3. 3 is the "updating" of older builds, which 5.3 reports as its own flag. */
+const TRACKER_STATUS: Record<number, string> = {
+    0: 'disabled',
+    1: 'not contacted',
+    2: 'working',
+    3: 'updating',
+    4: 'not working',
+    5: 'tracker error',
+    6: 'unreachable'
+};
+
+/**
+ * A stopped magnet has no metadata either, which only `has_metadata` says. A
+ * build too old to send it (4.x) still has the states, and reports no size for
+ * a torrent whose metadata never arrived.
+ */
+const hasMetadataOf = (t: RawTorrent): boolean => {
+    if (t.state === 'metaDL' || t.state === 'forcedMetaDL') return false;
+    if (t.has_metadata !== undefined) return t.has_metadata;
+    return t.size === undefined || t.size > 0;
+};
+
+/** `max_ratio_act` as the action names categories and torrents use. Unknown counts as removing: the guard fails closed. */
+const SHARE_ACTION_NAME: Record<number, string> = { 0: 'Stop', 1: 'Remove', 2: 'EnableSuperSeeding', 3: 'RemoveWithContent' };
+
+const shareRuleOf = (raw: { share_limit_action?: string; share_limits_mode?: string; ratio_limit?: number; seeding_time_limit?: number; inactive_seeding_time_limit?: number }): TorrentShareRule => ({
+    action: raw.share_limit_action ?? 'Default',
+    mode: raw.share_limits_mode ?? 'Default',
+    ratio: raw.ratio_limit ?? -2,
+    seedingMinutes: raw.seeding_time_limit ?? -2,
+    inactiveMinutes: raw.inactive_seeding_time_limit ?? -2
+});
+
+/** qBittorrent's ceiling, which it reports as -1 once a ratio reaches it. */
+const MAX_RATIO = 9999;
+
+const shownRatio = (ratio: number | undefined): number | undefined => (ratio === undefined ? undefined : ratio < 0 ? MAX_RATIO : ratio);
+
+/**
+ * `null` until a torrent has metadata. `is_private` is the deprecated spelling
+ * and reads false while nobody can know yet, so it answers only where `private`
+ * is absent altogether, on a build too old to have it.
+ */
+const privateOf = (info: RawTorrent, props: RawProperties | undefined): boolean | null => {
+    if (!hasMetadataOf(info)) return null;
+    if (typeof info.private === 'boolean' || info.private === null) return info.private;
+    if (props === undefined) return null;
+    return props.private !== undefined ? props.private : (props.is_private ?? null);
+};
+
+const trackerRows = (rows: readonly RawTracker[]): TorrentTrackerRow[] =>
+    rows.flatMap(row => {
+        const host = trackerHost(row.url ?? '');
+        if (host === undefined) return [];
+        return [{ host, status: row.updating === true ? 'updating' : (TRACKER_STATUS[row.status ?? -1] ?? 'unknown') }];
+    });
+
 /** Only the active tracker: torrents/info carries one. Cleanuparr checks every tracker. */
 function torrentOf(t: RawTorrent & { hash: string }): { torrent: TorrentFacts } {
-    let trackerDomains: string[];
-    try {
-        trackerDomains = t.tracker ? [new URL(t.tracker).hostname.toLowerCase()] : [];
-    } catch {
-        trackerDomains = [];
-    }
+    const host = t.tracker ? trackerHost(t.tracker) : undefined;
+    const trackerDomains = host === undefined ? [] : [host];
     return {
         torrent: {
             hash: t.hash.toLowerCase(),
@@ -209,6 +316,16 @@ function addAccepted(body: string): boolean {
     }
 }
 
+/** Only 5.2 and later say; an older build's `Ok.` promises nothing either way. */
+function stillPending(body: string): boolean {
+    try {
+        const counts = JSON.parse(body) as { pending_count?: unknown };
+        return typeof counts.pending_count === 'number' && counts.pending_count > 0;
+    } catch {
+        return false;
+    }
+}
+
 export class QbittorrentAdapter
     implements
         ServiceAdapter,
@@ -219,12 +336,15 @@ export class QbittorrentAdapter
         SpeedLimitCapable,
         MagnetAddCapable,
         SeedLimitsCapable,
-        TorrentEndpoint
+        TorrentEndpoint,
+        TorrentManageCapable
 {
     readonly type: ServiceId = 'qbittorrent';
     readonly endpoint: string;
     readonly instance: string | undefined;
     readonly id: string;
+    readonly allowedPaths: readonly string[];
+    readonly deleteProtection: { readonly private: boolean; readonly all: boolean };
     readonly #http: ServiceHttp;
     /** Shared by the disk check and the seed limits of one get_stack_health pass; this adapter never writes preferences. */
     readonly #preferences = cached(SHORT_READ_TTL_MS, () => this.#http.get<RawPreferences>(`${API}/app/preferences`));
@@ -233,6 +353,8 @@ export class QbittorrentAdapter
         this.instance = config.name;
         this.endpoint = hostPort(config.url) ?? config.url;
         this.id = instanceId('qbittorrent', config.name);
+        this.allowedPaths = config.allowed_paths ?? DEFAULT_TORRENT_PATHS;
+        this.deleteProtection = { private: config.protect_private_torrents === true, all: config.protect_all_torrents === true };
         this.#http = new ServiceHttp(
             this.id,
             config,
@@ -242,6 +364,7 @@ export class QbittorrentAdapter
                 timeoutMs: config.timeout_ms,
                 ...(config.username === undefined ? {} : { username: config.username }),
                 ...(config.password === undefined ? {} : { password: config.password }),
+                ...(config.webui_api_key === undefined ? {} : { apiKey: config.webui_api_key }),
                 ...(fetchImpl === fetch ? {} : { fetchImpl })
             }),
             fetchImpl
@@ -290,7 +413,7 @@ export class QbittorrentAdapter
             .map(t => ({
                 service: this.id,
                 id: t.hash,
-                title: fenceText(t.name ?? '', { service: this.id, field: 'name' }),
+                title: fenceText(scrubUrls(t.name ?? ''), { service: this.id, field: 'name' }),
                 status: TORRENT_STATE[t.state ?? ''] ?? 'unknown',
                 protocol: 'torrent',
                 ...(t.size === undefined ? {} : { sizeBytes: t.size }),
@@ -546,11 +669,208 @@ export class QbittorrentAdapter
         };
     }
 
+    /**
+     * One torrent as the write previews and `get_queue` show it. `torrents/info`
+     * answers first and `torrents/properties` fills what it lacks, which on a
+     * torrent at missingFiles can be the save path, the ratio and the seed time.
+     */
+    async getTorrentDetails(id: string): Promise<TorrentDetails> {
+        const hash = this.#hash(id);
+        // Only an empty list means no such torrent. The delete guard reads
+        // NotFound as permission to go ahead, so a 404 from a proxy must not become one.
+        const listed = (err: unknown): never => {
+            if (err instanceof ServiceError && err.kind === 'NotFound') {
+                throw new ServiceError('UpstreamError', this.id, 'qBittorrent could not be asked about this torrent');
+            }
+            throw err;
+        };
+        // `getArray`, because only a real empty list proves the torrent is absent.
+        const [info] = await this.#http.getArray<RawTorrent>(`${API}/torrents/info?hashes=${hash}`).catch(listed);
+        if (info === undefined) throw this.#notFound(id);
+
+        const incomplete = info.save_path === undefined || typeof info.private !== 'boolean' || info.ratio === undefined || info.seeding_time === undefined;
+        const props = incomplete
+            ? await this.#http.get<RawProperties>(`${API}/torrents/properties?hash=${hash}`).catch((err: unknown) => {
+                  logger.warn({ service: this.id, err }, 'could not read the torrent properties');
+                  return undefined;
+              })
+            : undefined;
+        const [files, trackers] = await Promise.all([
+            this.#http.get<RawFile[]>(`${API}/torrents/files?hash=${hash}`),
+            this.#http.get<RawTracker[]>(`${API}/torrents/trackers?hash=${hash}`)
+        ]).catch(listed);
+
+        const ratio = shownRatio(info.ratio ?? props?.share_ratio);
+        const seedingSeconds = info.seeding_time ?? props?.seeding_time;
+        const savePath = info.save_path ?? props?.save_path;
+        const named = (Array.isArray(files) ? files : []).filter((f): f is RawFile & { name: string } => typeof f.name === 'string');
+        return {
+            id: hash,
+            title: fenceText(scrubUrls(info.name ?? ''), { service: this.id, field: 'name' }),
+            status: TORRENT_STATE[info.state ?? ''] ?? 'unknown',
+            state: info.state ?? '',
+            ...(savePath === undefined ? {} : { savePath }),
+            ...(info.download_path === undefined || info.download_path === '' ? {} : { downloadPath: info.download_path }),
+            ...(info.content_path === undefined || info.content_path === '' ? {} : { contentPath: info.content_path }),
+            hasMetadata: hasMetadataOf(info),
+            finishedOnce: (info.completion_on ?? 0) > 0,
+            share: shareRuleOf(info),
+            private: privateOf(info, props),
+            ...(ratio === undefined ? {} : { ratio }),
+            ...(seedingSeconds === undefined || seedingSeconds < 0 ? {} : { seedingSeconds }),
+            category: info.category ?? '',
+            autoManaged: info.auto_tmm === true,
+            ...(info.amount_left === undefined ? {} : { remainingBytes: info.amount_left }),
+            ...(info.completed === undefined ? {} : { completedBytes: info.completed }),
+            ...(info.size === undefined ? {} : { sizeBytes: info.size }),
+            ...(info.progress === undefined ? {} : { progress: info.progress }),
+            fileNames: named.map(f => f.name),
+            files: named.map(f => ({
+                name: fenceText(f.name, { service: this.id, field: 'file' }),
+                sizeBytes: f.size ?? 0,
+                progress: f.progress ?? 0
+            })),
+            trackers: trackerRows(Array.isArray(trackers) ? trackers : [])
+        };
+    }
+
+    async torrentCheckStates(ids: readonly string[]): Promise<TorrentCheckState[]> {
+        const hashes = ids.map(id => this.#hash(id)).join('|');
+        const rows = await this.#http.get<RawTorrent[]>(`${API}/torrents/info?hashes=${encodeURIComponent(hashes)}`);
+        return (Array.isArray(rows) ? rows : []).flatMap(t => {
+            if (typeof t.hash !== 'string') return [];
+            const state = t.state ?? '';
+            return [{
+                id: t.hash.toLowerCase(),
+                title: fenceText(scrubUrls(t.name ?? ''), { service: this.id, field: 'name' }),
+                state,
+                checking: CHECKING_STATES.has(state),
+                complete: t.amount_left === 0 && t.progress === 1,
+                stopped: PAUSED_STATES.has(state),
+                hasMetadata: hasMetadataOf(t),
+                ...(t.download_path === undefined || t.download_path === '' ? {} : { downloadPath: t.download_path }),
+                ...(t.save_path === undefined || t.save_path === '' ? {} : { savePath: t.save_path }),
+                ...(t.content_path === undefined || t.content_path === '' ? {} : { contentPath: t.content_path }),
+                category: t.category ?? '',
+                private: privateOf(t, undefined),
+                share: shareRuleOf(t)
+            }];
+        });
+    }
+
+    async torrentFileNames(id: string): Promise<string[]> {
+        const files = await this.#http.getArray<RawFile>(`${API}/torrents/files?hash=${this.#hash(id)}`);
+        return files.flatMap(f => (typeof f.name === 'string' ? [f.name] : []));
+    }
+
+    async recheckTorrents(ids: readonly string[]): Promise<void> {
+        await this.#http.postForm(`${API}/torrents/recheck`, { hashes: ids.map(id => this.#hash(id)).join('|') }, true);
+    }
+
+    async startTorrents(ids: readonly string[]): Promise<void> {
+        await this.#verb(false, ids.map(id => this.#hash(id)).join('|'));
+    }
+
+    async torrentCategories(): Promise<Map<string, TorrentCategory>> {
+        const raw = await this.#http.get<RawCategories>(`${API}/torrents/categories`);
+        return new Map(
+            Object.entries(raw ?? {}).map(([name, c]) => [
+                name,
+                {
+                    savePath: c.savePath ?? '',
+                    downloadPath: typeof c.download_path === 'string' ? c.download_path : c.download_path === false ? false : null,
+                    share: shareRuleOf(c)
+                }
+            ])
+        );
+    }
+
+    /** Read fresh, and what is missing counts against the write: these decide where data may move and whether it may be deleted. */
+    async torrentClientDefaults(): Promise<TorrentClientDefaults> {
+        const prefs = await this.#http.get<RawPreferences>(`${API}/app/preferences`);
+        const limit = (enabled: boolean | undefined, value: number | undefined): number => (enabled === true ? (value ?? -1) : -1);
+        return {
+            incompleteEnabled: prefs.temp_path_enabled !== false,
+            incompletePath: prefs.temp_path ?? '',
+            addsStopped: prefs.add_stopped_enabled === true,
+            stopCondition: prefs.torrent_stop_condition ?? 'None',
+            share: {
+                action: SHARE_ACTION_NAME[prefs.max_ratio_act ?? -1] ?? 'Remove',
+                mode: prefs.share_limits_mode ?? 'Default',
+                ratio: limit(prefs.max_ratio_enabled, prefs.max_ratio),
+                seedingMinutes: limit(prefs.max_seeding_time_enabled, prefs.max_seeding_time),
+                inactiveMinutes: limit(prefs.max_inactive_seeding_time_enabled, prefs.max_inactive_seeding_time)
+            }
+        };
+    }
+
+    async defaultSavePath(): Promise<string> {
+        return this.#http.getText(`${API}/app/defaultSavePath`);
+    }
+
+    /** Read fresh: this decides whether a category change may move files. Unknown counts as moving. */
+    async categoryChangeRelocates(): Promise<boolean> {
+        const prefs = await this.#http.get<RawPreferences>(`${API}/app/preferences`);
+        return prefs.torrent_changed_tmm_enabled !== false;
+    }
+
+    async hasTorrent(hash: string): Promise<boolean> {
+        return (await this.#torrents(hash)).length > 0;
+    }
+
+    /**
+     * Always sends a resolved save path with automatic management and the
+     * incomplete-downloads folder off, so the torrent lands where the preview
+     * said whatever the category's settings say. Never sends `urls` and a file
+     * together. A refusal keeps its status and drops qBittorrent's words, which
+     * can repeat the URL it was given, passkey included.
+     */
+    async addTorrent(source: TorrentSource, opts: { category?: string; savePath: string }): Promise<TorrentAdded> {
+        const fields = { savepath: opts.savePath, autoTMM: 'false', useDownloadPath: 'false', ...(opts.category === undefined ? {} : { category: opts.category }) };
+        const remedy = 'Check the source is a valid torrent and that qBittorrent can reach it, then try again.';
+        let answer: string;
+        try {
+            if (source.kind === 'url') {
+                answer = await this.#http.postFormText(`${API}/torrents/add`, { ...fields, urls: source.url });
+            } else {
+                const form = new FormData();
+                for (const [key, value] of Object.entries(fields)) form.set(key, value);
+                form.set('torrents', new Blob([new Uint8Array(source.bytes)], { type: 'application/x-bittorrent' }), source.filename);
+                answer = await this.#http.postMultipartText(`${API}/torrents/add`, form);
+            }
+        } catch (err) {
+            if (!(err instanceof ServiceError)) throw err;
+            throw new ServiceError(err.kind, this.id, `qBittorrent did not add the torrent (HTTP ${err.status ?? 'error'})`, {
+                remedy: err.kind === 'AuthFailed' && err.remedy !== undefined ? err.remedy : remedy,
+                ...(err.status === undefined ? {} : { status: err.status })
+            });
+        }
+        if (!addAccepted(answer)) throw new ServiceError('UpstreamError', this.id, 'qBittorrent did not add the torrent', { remedy });
+        return { accepted: true, pending: stillPending(answer) };
+    }
+
+    async setTorrentLocation(id: string, location: string): Promise<void> {
+        await this.#http.postForm(`${API}/torrents/setLocation`, { hashes: this.#hash(id), location }, true);
+    }
+
+    async renameTorrentFile(id: string, oldPath: string, newPath: string): Promise<void> {
+        await this.#http.postForm(`${API}/torrents/renameFile`, { hash: this.#hash(id), oldPath, newPath }, true);
+    }
+
+    async setTorrentCategory(id: string, category: string): Promise<void> {
+        await this.#http.postForm(`${API}/torrents/setCategory`, { hashes: this.#hash(id), category }, true);
+    }
+
+    async reannounceTorrent(id: string): Promise<void> {
+        await this.#http.postForm(`${API}/torrents/reannounce`, { hashes: this.#hash(id) }, true);
+    }
+
     /** `hashes` is `|`-separated with `all` as a keyword, so only one bare hash may reach it. */
     #hash(id: string): string {
         const hash = id.trim().toLowerCase();
         if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) {
-            throw new ServiceError('NotFound', this.id, `"${id}" is not a torrent info hash`, {
+            // Not repeated: whatever was passed here may be a tracker URL with its passkey.
+            throw new ServiceError('NotFound', this.id, 'that is not a torrent info hash', {
                 remedy: 'qBittorrent torrent ids are 40 or 64 hex characters. Take one from get_queue.'
             });
         }

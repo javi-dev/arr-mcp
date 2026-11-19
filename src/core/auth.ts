@@ -184,6 +184,9 @@ export function transmissionRpc(creds: { username?: string; password?: string })
 
 const QB_LOGIN_PATH = '/api/v2/auth/login';
 
+/** Printable ASCII with no spaces: all a bearer token can be. */
+const HEADER_VALUE = /^[\x21-\x7e]+$/;
+
 /**
  * qBittorrent's WebUI: POST the credentials to `/api/v2/auth/login`, keep the
  * session cookie, send it back on every call.
@@ -197,17 +200,24 @@ const QB_LOGIN_PATH = '/api/v2/auth/login';
  * session is still valid, so this lets the 403 happen and recovers from it, the
  * same shape as Transmission's 409. An instance with "bypass authentication for
  * clients on localhost" enabled therefore never logs in at all.
+ *
+ * `apiKey` is the WebUI API key of qBittorrent 5.2 and later, sent as
+ * `Authorization: Bearer`. It goes first when configured. A server that refuses
+ * it (an older qBittorrent, or a rotated key) answers 403, and with a username
+ * configured this falls back to the cookie login for the life of the adapter.
  */
 export function qbittorrentSession(creds: {
     id: string;
     url: string;
     username?: string;
     password?: string;
+    apiKey?: string;
     timeoutMs: number;
     fetchImpl?: typeof fetch;
 }): AuthStrategy {
     const doFetch = creds.fetchImpl ?? fetch;
     let cookie: SessionCookie | undefined;
+    let bearer = creds.apiKey;
     /**
      * The in-flight login, shared.
      *
@@ -221,14 +231,19 @@ export function qbittorrentSession(creds: {
 
     return {
         id: 'qbittorrent-session',
-        remedy: 'Check username and password against Options → Web UI in qBittorrent, and that its Host header validation accepts this url.',
+        remedy: `Check ${creds.apiKey === undefined ? 'username and password' : 'webui_api_key, username and password'} against Options → Web UI in qBittorrent, and that its Host header validation accepts this url.`,
         apply(ctx) {
-            if (cookie !== undefined) ctx.headers.set('Cookie', `${cookie.name}=${cookie.value}`);
+            if (bearer !== undefined) {
+                // Checked here because `Headers` quotes a value it refuses in its own error.
+                if (!HEADER_VALUE.test(bearer)) throw new ServiceError('AuthFailed', creds.id, 'webui_api_key holds characters an HTTP header cannot carry');
+                ctx.headers.set('Authorization', `Bearer ${bearer}`);
+            } else if (cookie !== undefined) ctx.headers.set('Cookie', `${cookie.name}=${cookie.value}`);
         },
         async recover(response, signal) {
             if (response.status !== 403) return false;
             // Nothing to retry with; let the 403 stand as AuthFailed.
             if (creds.username === undefined) return false;
+            bearer = undefined;
 
             // The cookie is stored inside the shared chain, not by the waiting
             // caller: a login that outlives every caller's deadline still

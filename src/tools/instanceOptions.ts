@@ -1,3 +1,4 @@
+import { shownValue } from '../core/pastedUrl.ts';
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { serviceOf, type ServiceId } from '../config/schema.ts';
@@ -43,14 +44,14 @@ export function selectAdapters<T extends ServiceAdapter>(adapters: readonly T[],
         const wanted = instance.toLowerCase();
         const named = adapters.filter(a => a.id.toLowerCase() === wanted || (a.instance ?? '').toLowerCase() === wanted);
         if (named.length === 0) {
-            throw new ServiceError('NotFound', 'arr-mcp', `no instance "${instance}"`, {
+            throw new ServiceError('NotFound', 'arr-mcp', `no instance "${shownValue(instance)}"`, {
                 remedy: `Configured: ${adapters.map(a => a.id).join(', ') || 'none'}.`
             });
         }
         const picked = service === undefined ? named : named.filter(a => a.type === service);
         if (picked.length === 0) {
-            throw new ServiceError('NotFound', 'arr-mcp', `no instance "${instance}" under ${service}`, {
-                remedy: `"${instance}" is ${named.map(a => a.id).join(', ')}. Drop service or change it.`
+            throw new ServiceError('NotFound', 'arr-mcp', `no instance "${shownValue(instance)}" under ${service}`, {
+                remedy: `"${shownValue(instance)}" is ${named.map(a => a.id).join(', ')}. Drop service or change it.`
             });
         }
         return picked;

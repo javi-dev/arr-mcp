@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { trackerHost } from '../core/torrentGuards.ts';
 import { INSTANCE_PARAM_DESCRIPTION, resolveInstance } from './resolveInstance.ts';
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
@@ -97,8 +99,14 @@ const MAGNET = /^magnet:\?\S*xt=urn:btih:[0-9a-zA-Z]+\S*$/;
 const contactedHosts = (magnet: string): string[] => {
     const params = [...new URLSearchParams(magnet.slice('magnet:?'.length))];
     const urls = params.filter(([key]) => ['tr', 'ws', 'xs', 'as'].includes(key)).map(([, value]) => value);
-    const hosts = urls.filter(u => URL.canParse(u)).map(u => new URL(u).host);
-    return [...new Set(hosts.filter(h => h !== ''))];
+    // Masked like every other tracker host: some trackers put the passkey in the hostname.
+    const hosts = urls.flatMap(u => {
+        const host = trackerHost(u);
+        if (host === undefined) return [];
+        const { port } = new URL(u);
+        return [port === '' ? host : `${host}:${port}`];
+    });
+    return [...new Set(hosts)];
 };
 
 const GrabReleaseInput = z.object({
@@ -234,7 +242,8 @@ export function registerGrabRelease(
                         'It appears in get_queue and can be removed again with remove_queue_item.',
                         ...(hosts.length === 0 ? [] : [`The client will also contact: ${hosts.join(', ')}.`])
                     ],
-                    args: { magnet }
+                    // A digest and never the link: this object is written to the audit log, and a tracker's `tr=` holds the passkey.
+                    args: { magnet_sha256: createHash('sha256').update(magnet).digest('hex') }
                 };
             }
 

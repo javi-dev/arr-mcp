@@ -18,6 +18,8 @@ import {
     type HealthCheckCapable,
     type HistoryCapable,
     type HistoryEntry,
+    type NzbAddCapable,
+    type NzbSource,
     type PauseCapable,
     type PauseState,
     type QueueCapable,
@@ -28,6 +30,8 @@ import {
     type RetryMethod,
     type RetryOutcome,
     type RetryTarget,
+    type SabClientSettingsRead,
+    type SabSettingChange,
     type ServiceAdapter,
     type SpeedLimit,
     type SpeedLimitCapable
@@ -226,6 +230,59 @@ const WARNING_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MISSING_REMEDY =
     'Take a current id from get_history or get_queue. If Radarr or Sonarr grabbed it, its "Remove Failed" setting (Settings → Download Clients) deletes failed downloads from SABnzbd; turn it off to keep them retryable.';
 
+/** `action_on_unwanted_extensions` as SABnzbd stores it. */
+const UNWANTED_ACTIONS = ['off', 'pause', 'abort'] as const;
+
+/** The only keywords this adapter reads or writes through `get_config` and `set_config`, all in `misc`. */
+const SETTING_KEYWORDS = [
+    'fail_hopeless_jobs',
+    'unwanted_extensions',
+    'unwanted_extensions_mode',
+    'action_on_unwanted_extensions',
+    'cleanup_list',
+    'history_retention_option',
+    'history_retention_number'
+] as const;
+
+type SettingKeyword = (typeof SETTING_KEYWORDS)[number];
+
+const WRITABLE_KEYWORDS: ReadonlySet<string> = new Set<SettingKeyword>(SETTING_KEYWORDS.filter(k => k !== 'unwanted_extensions_mode'));
+
+/** `OptionBool` reads 0 or 1 before 4.4.0 and a bool after. */
+const boolSetting = (value: unknown): boolean | null => {
+    if (typeof value === 'boolean') return value;
+    if (value === 0 || value === 1 || value === '0' || value === '1') return Number(value) === 1;
+    return null;
+};
+
+const numberSetting = (value: unknown): number | null => {
+    if (value === '' || value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
+/** `OptionList` is a JSON list, or a comma-separated string on older builds. */
+const listSetting = (value: unknown): string[] | null => {
+    if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string' && v !== '');
+    if (typeof value === 'string') return value.split(',').map(v => v.trim()).filter(v => v !== '');
+    return null;
+};
+
+/** The value `set_config` takes for one setting. */
+const settingValue = (keyword: string, value: unknown): string => {
+    if (Array.isArray(value)) return value.join(',');
+    if (keyword === 'action_on_unwanted_extensions') return String(UNWANTED_ACTIONS.indexOf(value as (typeof UNWANTED_ACTIONS)[number]));
+    if (typeof value === 'boolean') return value ? '1' : '0';
+    return String(value);
+};
+
+const sameSetting = (keyword: string, sent: unknown, read: unknown): boolean => {
+    if (Array.isArray(sent)) return (listSetting(read) ?? []).join(',') === sent.join(',');
+    if (typeof sent === 'boolean') return boolSetting(read) === sent;
+    if (keyword === 'action_on_unwanted_extensions') return numberSetting(read) === UNWANTED_ACTIONS.indexOf(sent as (typeof UNWANTED_ACTIONS)[number]);
+    return String(read) === String(sent);
+};
+
 export class SabnzbdAdapter
     implements
         ServiceAdapter,
@@ -236,7 +293,8 @@ export class SabnzbdAdapter
         PauseCapable,
         SpeedLimitCapable,
         HistoryCapable,
-        RetryCapable
+        RetryCapable,
+        NzbAddCapable
 {
     readonly type: ServiceId = 'sabnzbd';
     readonly instance: string | undefined;
@@ -373,6 +431,121 @@ export class SabnzbdAdapter
 
     /** SABnzbd has no blocklist: that lives in the *arr that queued the grab. */
     readonly supportsBlocklist = false;
+
+    /** `*` is SABnzbd's name for its default category. */
+    async nzbCategories(): Promise<string[]> {
+        const body = await this.#read<{ categories?: unknown }>('/api?mode=get_cats&output=json');
+        return Array.isArray(body.categories) ? body.categories.filter((c): c is string => typeof c === 'string') : [];
+    }
+
+    /**
+     * Both are POSTs, so an indexer's key in the URL stays out of the query
+     * string and every access log on the way. Both answer 200 with
+     * `status: false` when SABnzbd refuses, so the body decides. A failed
+     * request keeps its status and drops the upstream's words, which can repeat
+     * the URL it was given.
+     */
+    async addNzb(source: NzbSource, opts: { category?: string }): Promise<{ ids: string[] }> {
+        const cat = opts.category === undefined ? '' : `&cat=${encodeURIComponent(opts.category)}`;
+        const remedy = 'Check the source is a valid NZB and that SABnzbd can reach it, then try again.';
+        let body: { status?: boolean; nzo_ids?: unknown };
+        try {
+            if (source.kind === 'url') {
+                body = await this.#http.postForm('/api', {
+                    mode: 'addurl',
+                    name: source.url,
+                    output: 'json',
+                    ...(opts.category === undefined ? {} : { cat: opts.category })
+                });
+            } else {
+                const form = new FormData();
+                form.set('name', new Blob([new Uint8Array(source.bytes)], { type: 'application/x-nzb' }), source.filename);
+                body = await this.#http.postMultipart(`/api?mode=addfile${cat}&output=json`, form);
+            }
+        } catch (err) {
+            if (!(err instanceof ServiceError)) throw err;
+            throw new ServiceError(err.kind, this.id, `SABnzbd did not add the NZB (HTTP ${err.status ?? 'error'})`, {
+                remedy: err.kind === 'AuthFailed' && err.remedy !== undefined ? err.remedy : remedy,
+                ...(err.status === undefined ? {} : { status: err.status })
+            });
+        }
+        if (body.status !== true) throw new ServiceError('UpstreamError', this.id, 'SABnzbd did not add the NZB', { remedy });
+        return { ids: Array.isArray(body.nzo_ids) ? body.nzo_ids.filter((i): i is string => typeof i === 'string') : [] };
+    }
+
+    /**
+     * One keyword per request, so a response can never carry anything beyond the
+     * whitelist: no server, password or API key is ever in what this reads.
+     */
+    async getClientSettings(): Promise<SabClientSettingsRead> {
+        const values = await Promise.all(SETTING_KEYWORDS.map(keyword => this.#setting(keyword)));
+        const of = (keyword: SettingKeyword): unknown => values[SETTING_KEYWORDS.indexOf(keyword)];
+        const action = numberSetting(of('action_on_unwanted_extensions'));
+        const mode = numberSetting(of('unwanted_extensions_mode'));
+        const option = of('history_retention_option');
+        return {
+            fail_hopeless_jobs: boolSetting(of('fail_hopeless_jobs')),
+            unwanted_extensions: listSetting(of('unwanted_extensions')),
+            unwanted_extensions_mode: mode === 0 ? 'blacklist' : mode === 1 ? 'whitelist' : null,
+            action_on_unwanted_extensions: action === null ? null : (UNWANTED_ACTIONS[action] ?? null),
+            cleanup_list: listSetting(of('cleanup_list')),
+            history_retention_option: typeof option === 'string' && option !== '' ? option : null,
+            history_retention_number: numberSetting(of('history_retention_number'))
+        };
+    }
+
+    async #setting(keyword: SettingKeyword): Promise<unknown> {
+        const body = await this.#read<{ config?: { misc?: Record<string, unknown> } }>(
+            `/api?mode=get_config&section=misc&keyword=${keyword}&output=json`
+        );
+        return body.config?.misc?.[keyword];
+    }
+
+    /**
+     * One `set_config` per setting, each checked against what SABnzbd says it
+     * stored. A failure part-way names what already changed, since nothing rolls
+     * those back. When both halves of the retention change, the order keeps a
+     * failure part-way from deleting more than either policy would: a policy
+     * already deleting is parked on `all` while the count changes, and otherwise
+     * the count goes first, so a new policy never starts on the old number. A
+     * new extension list and a new action on it go the same way: the action is
+     * off while the list changes, so no job meets a pairing nobody asked for.
+     */
+    async updateClientSettings(changes: SabSettingChange): Promise<void> {
+        const applied: string[] = [];
+        const earlier = (): string => (applied.length === 0 ? 'Nothing else was changed.' : `Already changed before this failed: ${[...new Set(applied)].join(', ')}.`);
+        const { history_retention_option: option, history_retention_number: count, unwanted_extensions: extensions, action_on_unwanted_extensions: action, ...rest } = changes;
+        const both = option !== undefined && count !== undefined;
+        const deleting = both && String(await this.#setting('history_retention_option')).endsWith('-delete');
+        const steps: [string, unknown][] = [
+            ...Object.entries(rest),
+            ...(deleting ? ([['history_retention_option', 'all']] as [string, unknown][]) : []),
+            ...(count === undefined ? [] : ([['history_retention_number', count]] as [string, unknown][])),
+            ...(option === undefined ? [] : ([['history_retention_option', option]] as [string, unknown][])),
+            ...(extensions !== undefined && action !== undefined ? ([['action_on_unwanted_extensions', 'off']] as [string, unknown][]) : []),
+            ...(extensions === undefined ? [] : ([['unwanted_extensions', extensions]] as [string, unknown][])),
+            ...(action === undefined ? [] : ([['action_on_unwanted_extensions', action]] as [string, unknown][]))
+        ];
+        for (const [keyword, value] of steps) {
+            if (!WRITABLE_KEYWORDS.has(keyword)) throw new ServiceError('PermissionDenied', this.id, `${keyword} is not a setting this server may change`);
+            let body: { config?: { misc?: Record<string, unknown> } };
+            try {
+                body = await this.#http.getAsWrite(`/api?mode=set_config&section=misc&keyword=${keyword}&value=${encodeURIComponent(settingValue(keyword, value))}&output=json`);
+            } catch (err) {
+                if (!(err instanceof ServiceError)) throw err;
+                throw new ServiceError(err.kind, this.id, `SABnzbd did not confirm ${keyword}: ${err.detail}`, {
+                    remedy: `${keyword} may or may not have changed. ${earlier()} Read them back with get_client_settings.`
+                });
+            }
+            const stored = body.config?.misc?.[keyword];
+            if (stored === undefined || !sameSetting(keyword, value, stored)) {
+                throw new ServiceError('UpstreamError', this.id, `SABnzbd did not store ${keyword}`, {
+                    remedy: `${earlier()} Check the value, and read them back with get_client_settings.`
+                });
+            }
+            applied.push(keyword);
+        }
+    }
 
     /**
      * A write over GET, because that is SABnzbd's entire API: every mode,

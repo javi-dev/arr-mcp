@@ -63,6 +63,18 @@ on the config volume are the real boundary. And
 token in the address when you turn it on, which a reverse proxy access log will
 record. It is off by default.
 
+## Torrent sources and tracker URLs
+
+A tracker URL holds the user's passkey, and a magnet or a `.torrent` URL can
+too. So a tracker is reduced to its hostname as it is read, a host label that
+looks like a passkey is masked, and a tracker's message is never read at all. The
+source given to `add_torrent`, `add_nzb` or `grab_release` reaches only the request
+to the client: previews, targets, errors and the audit log carry a SHA-256 of it
+instead. Audit rows written by `grab_release` before this version can still hold
+the whole magnet link. The reason an audit row records for a refusal has every URL
+cut down to its scheme and host, and every magnet link removed, so a tracker URL
+pasted into the wrong argument leaves no passkey there.
+
 ## The repair page renders the config file verbatim
 
 The config UI otherwise follows one rule: a secret is never rendered back. API

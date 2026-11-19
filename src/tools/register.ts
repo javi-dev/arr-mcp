@@ -55,8 +55,10 @@ import { registerRequestMedia } from './requestMedia.ts';
 import { registerSearchMedia } from './searchMedia.ts';
 import { registerSetMonitoring } from './setMonitoring.ts';
 import { registerSetWatched } from './setWatched.ts';
+import { registerSabnzbdTools } from './sabnzbdTools.ts';
 import { registerStackHealth } from './stackHealth.ts';
 import { registerSyncDatabase } from './syncDatabase.ts';
+import { registerTorrentTools } from './torrentTools.ts';
 import { registerTriggerScan } from './triggerScan.ts';
 import { registerTriggerSubtitleSearch } from './triggerSubtitleSearch.ts';
 import { registerTriggerSearch } from './triggerSearch.ts';
@@ -243,11 +245,15 @@ export function registerAllTools(server: McpServer, context: ToolContext): void 
     registerDeleteIndexer(server, write, adapters);
     registerBlocklistMedia(server, write, adapters);
     registerFixProfile(server, write, adapters, instances);
+    registerTorrentTools(server, write, adapters);
+    registerSabnzbdTools(server, write, adapters);
 }
 
 /** The tools that write (`readOnlyHint: false`). `shapeToolSurface` hides these when none of their services is configured. */
 export const WRITE_TOOLS: ReadonlySet<string> = new Set([
     'add_media',
+    'add_nzb',
+    'add_torrent',
     'blocklist_media',
     'delete_episode_files',
     'delete_indexer',
@@ -259,18 +265,24 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([
     'import_download',
     'manage_indexer',
     'pause_downloads',
+    'reannounce_torrent',
+    'recheck_torrents',
     'remove_blocklist_item',
     'remove_queue_item',
+    'rename_torrent_file',
     'request_media',
     'respond_to_request',
     'retry_download',
     'set_monitoring',
+    'set_torrent_category',
+    'set_torrent_location',
     'set_watched',
     'sync_database',
     'trigger_scan',
     'trigger_search',
     'trigger_subtitle_search',
     'update_book',
+    'update_client_settings',
     'update_media'
 ]);
 
@@ -328,5 +340,14 @@ export const TOOL_NAMES = [
     'import_download',
     'delete_indexer',
     'blocklist_media',
-    'fix_profile'
+    'fix_profile',
+    'recheck_torrents',
+    'add_torrent',
+    'set_torrent_location',
+    'rename_torrent_file',
+    'set_torrent_category',
+    'reannounce_torrent',
+    'add_nzb',
+    'get_client_settings',
+    'update_client_settings'
 ] as const;

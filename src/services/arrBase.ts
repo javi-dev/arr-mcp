@@ -5,7 +5,17 @@ import { TtlCache } from '../core/cache.ts';
 import { ServiceHttp } from '../core/http.ts';
 import { arrItemId, type ArrIdKind } from './arrCommands.ts';
 import { arrDiskSpace, arrFailedHealthChecks, arrScanState, arrVersion } from './arrSystem.ts';
-import { diagnoseConnection, type ConnectionDiagnosis, type DiskSpace, type HealthCheck, type ScanState } from './types.ts';
+import { diagnoseConnection, type ArrDownloadClient, type ConnectionDiagnosis, type DiskSpace, type HealthCheck, type ScanState } from './types.ts';
+
+type RawDownloadClient = {
+    name?: string;
+    implementation?: string;
+    enable?: boolean;
+    fields?: { name?: string; value?: unknown }[];
+};
+
+/** `movieCategory`, `tvCategory`, `musicCategory` and their `…ImportedCategory` twins. */
+const CATEGORY_FIELD = /^(?:movie|tv|music)(?:Imported)?Category$/;
 
 /**
  * What Radarr, Sonarr, Whisparr and Lidarr bind the same way: the instance
@@ -57,6 +67,23 @@ export abstract class ArrAdapterBase {
 
     async getScanState(): Promise<ScanState> {
         return arrScanState(this.http, this.id, this.scanTask);
+    }
+
+    /**
+     * The download clients this *arr sends to, for warning before someone adds a
+     * download into a category it watches. The response also carries each
+     * client's password or API key, so only the named fields are copied out.
+     */
+    async getDownloadClients(): Promise<ArrDownloadClient[]> {
+        const rows = await this.http.getArray<RawDownloadClient>(`${this.http.apiRoot}/downloadclient`);
+        return rows.map(row => ({
+            name: row.name ?? '',
+            implementation: row.implementation ?? '',
+            enabled: row.enable !== false,
+            categories: (row.fields ?? []).flatMap(f =>
+                CATEGORY_FIELD.test(f.name ?? '') && typeof f.value === 'string' && f.value !== '' ? [f.value] : []
+            )
+        }));
     }
 
     /** Drop the cached whole-library read, e.g. after a write. */

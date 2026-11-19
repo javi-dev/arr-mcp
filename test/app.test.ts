@@ -385,6 +385,8 @@ describe('the advertised tool surface', () => {
     /** The writes. Everything else only reads. */
     const WRITES = [
         'add_media',
+        'add_nzb',
+        'add_torrent',
         'blocklist_media',
         'delete_episode_files',
         'delete_indexer',
@@ -396,23 +398,31 @@ describe('the advertised tool surface', () => {
         'import_download',
         'manage_indexer',
         'pause_downloads',
+        'reannounce_torrent',
+        'recheck_torrents',
         'remove_blocklist_item',
         'remove_queue_item',
+        'rename_torrent_file',
         'request_media',
         'respond_to_request',
         'retry_download',
         'set_monitoring',
+        'set_torrent_category',
+        'set_torrent_location',
         'set_watched',
         'sync_database',
         'trigger_scan',
         'trigger_search',
         'trigger_subtitle_search',
         'update_book',
+        'update_client_settings',
         'update_media'
     ];
 
     /**
-     * Of those, the nine whose effect cannot be undone by calling again.
+     * Of those, the fourteen whose effect cannot be undone by calling again.
+     * `set_torrent_location` and `set_torrent_category` are here for `move_files`,
+     * and `add_torrent`, `recheck_torrents` and `set_torrent_category` for `allow_removal`.
      * `fix_profile` is here because the old minimum is put back only by hand.
      * `blocklist_media` is here for its `remove`, which Seerr carries out by
      * deleting the title's requests and issues; its `add` is safe tier.
@@ -425,6 +435,7 @@ describe('the advertised tool surface', () => {
      * not whether bytes were deleted.
      */
     const DESTRUCTIVE = [
+        'add_torrent',
         'blocklist_media',
         'delete_episode_files',
         'delete_indexer',
@@ -432,7 +443,11 @@ describe('the advertised tool surface', () => {
         'delete_request',
         'fix_metadata',
         'fix_profile',
+        'recheck_torrents',
         'remove_queue_item',
+        'set_torrent_category',
+        'set_torrent_location',
+        'update_client_settings',
         'update_media'
     ];
 
@@ -458,24 +473,32 @@ describe('the advertised tool surface', () => {
     it('lists a write tool only where one of its services is configured', async () => {
         const listed = (await listToolsOf(withServices({ radarr: { url: 'http://192.0.2.10:7878', api_key: 'k' } }))).map(t => t.name);
         const left = [
+            'add_nzb',
+            'add_torrent',
             'delete_episode_files',
             'delete_indexer',
             'delete_request',
             'fix_metadata',
             'manage_indexer',
             'pause_downloads',
+            'reannounce_torrent',
+            'recheck_torrents',
+            'rename_torrent_file',
             'request_media',
             'respond_to_request',
             'retry_download',
             'set_monitoring',
+            'set_torrent_category',
+            'set_torrent_location',
             'set_watched',
             'sync_database',
             'trigger_subtitle_search',
-            'update_book'
+            'update_book',
+            'update_client_settings'
         ];
         expect(TOOL_NAMES.filter(n => !listed.includes(n)).sort()).toEqual(left);
         expect(listed).toContain('get_subtitles');
-        expect(listed).toHaveLength(TOOL_NAMES.length - 14);
+        expect(listed).toHaveLength(TOOL_NAMES.length - 22);
     });
 
     it('advertises no book field on update_media without grimmory', async () => {
@@ -505,7 +528,7 @@ describe('the advertised tool surface', () => {
      * is a decision, not a fix for a failing test.
      */
     const DESCRIPTION_CAP = 1000;
-    const DESCRIPTIONS_TOTAL_CAP = 29_000;
+    const DESCRIPTIONS_TOTAL_CAP = 32_000;
 
     it(`keeps every tool description under ${DESCRIPTION_CAP} characters`, async () => {
         const long = (await listTools())
@@ -521,11 +544,11 @@ describe('the advertised tool surface', () => {
 
     /**
      * The whole of `tools/list`, schemas included: what every session pays
-     * before its first call. 113,867 bytes when this was set (130,045 before
-     * the write output schema and the shared parameter text were cut); raising
-     * it is a decision, as above.
+     * before its first call. 113,867 bytes before the nine qBittorrent and
+     * SABnzbd chores (130,045 before the write output schema and the shared
+     * parameter text were cut); raising it is a decision, as above.
      */
-    const SURFACE_BYTES_CAP = 116_000;
+    const SURFACE_BYTES_CAP = 133_000;
 
     it(`keeps the whole tool list under ${SURFACE_BYTES_CAP} bytes`, async () => {
         expect(Buffer.byteLength(JSON.stringify(await listTools()))).toBeLessThanOrEqual(SURFACE_BYTES_CAP);
@@ -1406,8 +1429,9 @@ describe('prompts and resources, beside the tools rather than instead of them', 
         );
         const { result } = (await rpcPayload(res)) as { result: { tools: unknown[] } };
         expect(result.tools).toHaveLength(TOOL_NAMES.length);
-        // 44 since 2.0.0 dropped the deprecated aliases. fix_profile is the 44th: the profile checks could only ever say what to change.
-        expect(TOOL_NAMES.length).toBeLessThanOrEqual(44);
+        // 44 since 2.0.0 dropped the deprecated aliases. This fork adds nine for routine qBittorrent and SABnzbd chores, each a
+        // separate permission and confirm token that no existing tool could carry without making its schema unreadable.
+        expect(TOOL_NAMES.length).toBeLessThanOrEqual(53);
     });
 });
 

@@ -4,7 +4,8 @@ import { ServiceError } from '../core/errors.ts';
 import { PENDING_STATUSES } from '../services/arrRecord.ts';
 import { hasQueue, hasQueueRemove, type QueueItem, type QueueRemoveCapable, type ServiceAdapter } from '../services/types.ts';
 import { canListOrphans, planOrphaned } from './orphanedQueue.ts';
-import { outcomeText, registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
+import { checkTorrentDelete } from './torrentDelete.ts';
+import { outcomeText, rawTarget, registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
 import { targetInput, serviceTarget } from './serviceTarget.ts';
 
 /**
@@ -45,10 +46,16 @@ const RemoveQueueItemInput = z.object({
         .default(false)
         .describe(
             'Blocklist the release so it is not grabbed again. *arr rows only; ignored elsewhere. Defaults to false.'
+        ),
+    allow_protected: z
+        .boolean()
+        .default(false)
+        .describe(
+            '[[qbittorrent: Remove a torrent that protect_private_torrents or protect_all_torrents guards, which is refused without this.]]'
         )
 });
 
-type RemoveBound = { service: string; id: string; removeFromClient: boolean; blocklist: boolean };
+type RemoveBound = { service: string; id: string; removeFromClient: boolean; blocklist: boolean; overridesProtection: boolean };
 
 /**
  * Why `blocklist: true` blocklists one row and not another, read in Radarr
@@ -114,7 +121,7 @@ export function registerRemoveQueueItem(
         name: 'remove_queue_item',
         title: 'Remove a queue item',
         description:
-            'Removes one item from a download queue: the stuck-at-0%, wrong-release, or stalled download. Take `service` and `id` from get_queue. Optionally deletes partial data and, on an *arr, blocklists the release so it will not be grabbed again. [[nzbget: On NZBGet, keeping the data parks the download in its history rather than deleting it.]] [[shelfmark: On Shelfmark it cancels a queued or running book, and a failed one has nothing to cancel.]] [[grimmory: On Grimmory it discards a file waiting in the Bookdrop, which deletes the file from disk (so `remove_from_client: false` is refused).]] [[radarr|sonarr|whisparr|lidarr: `orphaned: true` in place of `id` lists the finished downloads at importBlocked that matched no library item, with next steps, and removes nothing.]] Previews first; confirm to remove it.',
+            'Removes one item from a download queue: the stuck-at-0%, wrong-release, or stalled download. Take `service` and `id` from get_queue. Optionally deletes partial data and, on an *arr, blocklists the release so it will not be grabbed again. [[nzbget: On NZBGet, keeping the data parks the download in its history rather than deleting it.]] [[shelfmark: On Shelfmark it cancels a queued or running book, and a failed one has nothing to cancel.]] [[grimmory: On Grimmory it discards a file waiting in the Bookdrop, which deletes the file from disk (so `remove_from_client: false` is refused).]] [[qbittorrent: The preview shows the private flag of a torrent, its ratio, seed time and tracker hostnames; a torrent the instance protects needs `allow_protected: true`.]] [[radarr|sonarr|whisparr|lidarr: `orphaned: true` in place of `id` lists the finished downloads at importBlocked that matched no library item, with next steps, and removes nothing.]] Previews first; confirm to remove it.',
         inputSchema: RemoveQueueItemInput,
         // The resolved instance id, not the bare type: permissions are granted per
         // instance, so checking `radarr` against a config that only grants
@@ -123,7 +130,7 @@ export function registerRemoveQueueItem(
         operation: 'remove_queue_item',
         tier: 'destructive',
 
-        async plan({ id, orphaned, remove_from_client: requested, blocklist }, adapter): Promise<WritePlan<RemoveBound>> {
+        async plan({ id, orphaned, remove_from_client: requested, blocklist, allow_protected }, adapter): Promise<WritePlan<RemoveBound>> {
             const remove_from_client = requested ?? true;
             if (orphaned === true) {
                 if (id !== undefined) {
@@ -157,7 +164,7 @@ export function registerRemoveQueueItem(
             }
             const item = (await adapter.getQueue()).find(q => q.id === id);
             if (item === undefined) {
-                throw new ServiceError('NotFound', adapter.id, `nothing in ${adapter.id}'s queue has id "${id}"`, {
+                throw new ServiceError('NotFound', adapter.id, `nothing in ${adapter.id}'s queue has id "${rawTarget({ id })}"`, {
                     remedy:
                         'It may have finished or already been removed. Call get_queue for a current list; queue ids are not stable once an item leaves the queue.'
                 });
@@ -194,7 +201,20 @@ export function registerRemoveQueueItem(
                 });
             }
 
-            const effects = [removalEffect(adapter, item, remove_from_client)];
+            // After the row is known and before anything is promised: a protected
+            // torrent is refused here, on the preview and again on the confirm.
+            const guard = await checkTorrentDelete(adapters, adapter, item, remove_from_client || blocklisted);
+            if (guard.blockedBy !== undefined && !allow_protected) {
+                throw new ServiceError('PermissionDenied', adapter.id, `that torrent is protected from deletion: ${guard.blockedBy}`, {
+                    remedy: 'Nothing was changed. If it really should go, call remove_queue_item again with `allow_protected: true`.'
+                });
+            }
+
+            const effects = [
+                ...(guard.blockedBy === undefined ? [] : [`Overrides the delete protection: ${guard.blockedBy}.`]),
+                removalEffect(adapter, item, remove_from_client),
+                ...(guard.facts === undefined ? [] : [guard.facts])
+            ];
 
             // Accepting a flag that silently does nothing is how someone
             // believes a release is blocklisted for a year. Say it plainly.
@@ -212,7 +232,8 @@ export function registerRemoveQueueItem(
                     // token and the audit row record what will actually happen
                     // rather than what was asked for on a service, or a row,
                     // that cannot do it. `apply` sends this one.
-                    blocklist: blocklisted
+                    blocklist: blocklisted,
+                    overridesProtection: guard.blockedBy !== undefined
                 }
             };
         },
