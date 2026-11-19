@@ -525,8 +525,13 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     remedy: 'Nothing was changed. If that is what you want, call set_torrent_location again with `move_files: true`, which needs `destructive`.'
                 });
             }
+            // qBittorrent cannot find the data, so anything said to move is only whatever is left of it.
+            const missing = details.state === 'missingFiles';
             if (moves && !move_files) {
-                throw new ServiceError('PermissionDenied', client.id, `${details.title} has data at its current path, and qBittorrent would move it`, {
+                const why = missing && gathersTo !== undefined
+                    ? `${details.title} is at missing files, and turning off automatic management first moves any file of it that is left to ${gathersTo}`
+                    : `${details.title} has data at its current path, and qBittorrent would move it`;
+                throw new ServiceError('PermissionDenied', client.id, why, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_location again with `move_files: true`.'
                 });
             }
@@ -534,8 +539,6 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const gatheredOnly = gathersTo !== undefined && keepsUnfinished;
             // Gathered into the folder it is pointed at, so nothing moves on once it finishes.
             const gatheredHome = gatheredOnly && gathersTo === path;
-            // qBittorrent cannot find the data, so anything said to move is only whatever is left of it.
-            const missing = details.state === 'missingFiles';
             // Both hops of unfinished data: where it is (or, with no metadata, will be written) now, and `path` once the download finishes.
             // A second move is ruled out only where that first folder is known.
             const onFinish = (now: string | undefined) => (now === path ? 'keeps it there once the download finishes' : `moves it to ${path} once the download finishes`);
@@ -549,15 +552,19 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             // A repoint at missing files moves whatever is left at the old path, which the applied sentence must not hide.
             const repointsMissing = missing && !keepsUnfinished;
             // Never the folder the files are gathered into: with that folder unknown, the sentence says "the old path" instead.
-            const missingFrom = storedIn ?? (gathersTo === undefined ? details.savePath?.replace(/\/+$/, '') : undefined);
+            const savedAt = details.savePath?.replace(/\/+$/, '');
+            const missingFrom = storedIn ?? (gathersTo === undefined ? savedAt : undefined);
+            const anyLeft = missing ? `any file of ${details.title} that is left` : details.title;
             return {
                 target,
                 summary: gatheredHome
-                    ? `Move ${details.title} to ${path} on ${client.id}, where it stays once it finishes.`
+                    ? `Move ${anyLeft} to ${path} on ${client.id}, where it stays once it finishes.`
                     : gatheredOnly
-                    ? `Move ${details.title} to ${gathersTo} now, and on to ${path} once it finishes, on ${client.id}.`
+                    ? `Move ${anyLeft} to ${gathersTo} now, and on to ${path} once it finishes, on ${client.id}.`
                     : keepsUnfinished
                     ? `Point ${details.title} at ${path} on ${client.id}, where its data goes once the download finishes.`
+                    : missing
+                    ? `Point ${details.title} at ${path} on ${client.id}, moving any file of it that is left.`
                     : `${moves ? 'Move' : 'Point'} ${details.title} ${moves ? 'to' : 'at'} ${path} on ${client.id}.`,
                 effects: [
                     ...(gathersTo === undefined
@@ -572,13 +579,17 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                         : !details.hasMetadata
                         ? 'It has no metadata yet, so there is nothing on disk to move.'
                         : noData
-                        ? `qBittorrent reports its data missing from ${missingFrom ?? 'its current path'}. It has no call that changes the path alone, so any file of this torrent still there moves too.`
-                        : `Physically moves ${size(details.completedBytes)} from ${movesFrom ?? (details.savePath === undefined ? 'its current path' : `its configured folder ${details.savePath}`)} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
+                        ? `qBittorrent reports its data missing${storedIn !== undefined ? ` from ${storedIn}` : savedAt !== undefined ? `; its save path is ${savedAt}` : ''}. It has no call that changes the path alone, so any file of this torrent still at its old path moves too.`
+                        : `Physically moves ${size(details.completedBytes)} from ${movesFrom ?? (savedAt === undefined ? 'its current path' : `its configured folder ${savedAt}`)} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
                     ...(repointsMissing ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
                 // `moves`, so a token from a preview that promised no move cannot apply to data that has since come back.
-                args: { id: details.id, location: path, moveFiles: move_files, moves, movesFrom: movesFrom ?? '', gathersTo: gathersTo ?? '', gatheredOnly, missing, repointsMissing, missingFrom: repointsMissing ? (missingFrom ?? '') : '' }
+                // Every folder the preview can name, so a token cannot outlive a change to one of them.
+                args: {
+                    id: details.id, location: path, moveFiles: move_files, moves, movesFrom: movesFrom ?? '', gathersTo: gathersTo ?? '', gatheredOnly, missing, repointsMissing,
+                    missingFrom: repointsMissing ? (missingFrom ?? '') : '', storedIn: storedIn ?? '', savedAt: savedAt ?? '', incompleteDir: incompleteDir ?? ''
+                }
             };
         },
 
