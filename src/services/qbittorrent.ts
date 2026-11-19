@@ -6,6 +6,7 @@ import { ServiceError } from '../core/errors.ts';
 import { fenceText } from '../core/fence.ts';
 import { hostPort } from '../core/hostPort.ts';
 import { logger } from '../core/logger.ts';
+import { scrubUrls } from '../core/pastedUrl.ts';
 import { trackerHost } from '../core/torrentGuards.ts';
 import type { TorrentFacts } from '../core/cleanuparrRules.ts';
 import { ServiceHttp } from '../core/http.ts';
@@ -404,7 +405,7 @@ export class QbittorrentAdapter
             .map(t => ({
                 service: this.id,
                 id: t.hash,
-                title: fenceText(t.name ?? '', { service: this.id, field: 'name' }),
+                title: fenceText(scrubUrls(t.name ?? ''), { service: this.id, field: 'name' }),
                 status: TORRENT_STATE[t.state ?? ''] ?? 'unknown',
                 protocol: 'torrent',
                 ...(t.size === undefined ? {} : { sizeBytes: t.size }),
@@ -697,7 +698,7 @@ export class QbittorrentAdapter
         const named = (Array.isArray(files) ? files : []).filter((f): f is RawFile & { name: string } => typeof f.name === 'string');
         return {
             id: hash,
-            title: fenceText(info.name ?? '', { service: this.id, field: 'name' }),
+            title: fenceText(scrubUrls(info.name ?? ''), { service: this.id, field: 'name' }),
             status: TORRENT_STATE[info.state ?? ''] ?? 'unknown',
             state: info.state ?? '',
             ...(savePath === undefined ? {} : { savePath }),
@@ -733,7 +734,7 @@ export class QbittorrentAdapter
             const state = t.state ?? '';
             return [{
                 id: t.hash.toLowerCase(),
-                title: fenceText(t.name ?? '', { service: this.id, field: 'name' }),
+                title: fenceText(scrubUrls(t.name ?? ''), { service: this.id, field: 'name' }),
                 state,
                 checking: CHECKING_STATES.has(state),
                 complete: t.amount_left === 0 && t.progress === 1,

@@ -4,6 +4,7 @@ import * as z from 'zod/v4';
 import { ServiceError } from '../core/errors.ts';
 import { fenceText, unfence } from '../core/fence.ts';
 import { logger } from '../core/logger.ts';
+import { scrubUrls } from '../core/pastedUrl.ts';
 import { MAX_TORRENT_BYTES, readTorrentFile } from '../core/torrentFile.ts';
 import { allowedPath, downloadHost, isInsideRoots, renamedPath, trackerHost } from '../core/torrentGuards.ts';
 import { btihToHex } from '../services/qbittorrent.ts';
@@ -262,7 +263,8 @@ function addSource(service: string, args: { magnet?: string | undefined; url?: s
         digest: digestOf(bytes),
         hash: facts.hash,
         private: facts.private,
-        label: fenceText(facts.name, { service, field: 'name' }),
+        // A name can itself be a tracker URL, passkey included.
+        label: fenceText(scrubUrls(facts.name), { service, field: 'name' }),
         effects: [
             `${facts.fileCount} file(s), ${size(facts.sizeBytes)}, private ${facts.private ? 'yes' : 'no'}.`,
             ...(facts.trackers.length === 0 ? [] : [`It announces to: ${facts.trackers.join(', ')}.`])

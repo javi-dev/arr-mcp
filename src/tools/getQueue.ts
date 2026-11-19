@@ -198,7 +198,7 @@ export function queueLine(item: QueueItem): string {
         if (item.seedingSeconds !== undefined) facts.push(`seeded ${(item.seedingSeconds / 86_400).toFixed(1)} days`);
         if (item.trackers.length > 0) facts.push(`trackers ${item.trackers.map(t => `${t.host} (${t.status})`).join(', ')}`);
     }
-    const files = (item.files ?? []).map(f => `\n  - ${f.name} (${f.sizeBytes} bytes, ${Math.round(f.progress * 100)}%)`).join('');
+    const files = (item.files ?? []).map(f => `\n  - ${f.name} (${f.sizeBytes} bytes, ${Math.floor(f.progress * 100)}%)`).join('');
     const omitted = item.filesOmitted === undefined ? '' : `\n  - ${item.filesOmitted} more file(s) not listed`;
 
     return `${item.title}: ${facts.join(', ')}${files}${omitted}`;
@@ -242,8 +242,8 @@ const DETAIL_READS_AT_ONCE = 4;
 /** A longer page carries no per-torrent details: 500 rows would be 2,000 requests to the client and an answer no session can hold. */
 const DETAIL_ROWS_MAX = 100;
 
-/** Files listed across one page, handed out in row order, so a page of season packs stays readable. */
-const DETAIL_FILES_PER_PAGE = 500;
+/** Files listed across one page, handed out in row order. Each is in the text and in the structured answer, and 300 keeps the two together inside the response budget. */
+const DETAIL_FILES_PER_PAGE = 300;
 
 /**
  * The per-torrent facts `torrents/info` does not carry. Only the rows on this

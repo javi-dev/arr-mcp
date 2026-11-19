@@ -373,6 +373,15 @@ describe('recheck_torrents', () => {
         expect(preview.structuredContent.effects.join(' ')).toContain('unless it is stopped, qBittorrent downloads whatever the check does not find');
     });
 
+    it('keeps a passkey in a torrent name out of a refusal and its audit row', async () => {
+        const name = `https://tracker.example.org/owner's/${PASSKEY}/announce`;
+        const h = harness({ torrents: [torrent({ name, state: 'stoppedDL', amount_left: 500, progress: 0.5 })], categories: removing }, { protect_all_torrents: true });
+        const refusal = await h.call('recheck_torrents', { ids: [HASH] }).catch((err: Error) => err.message);
+        expect(String(refusal)).toContain('share limits can remove it');
+        expect(String(refusal)).not.toContain(PASSKEY);
+        expect(JSON.stringify(h.context.audit.recent())).not.toContain(PASSKEY);
+    });
+
     it('guards a private torrent under protect_private_torrents', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedDL', amount_left: 500, progress: 0.5 })], categories: removing }, { protect_private_torrents: true });
         await expect(h.call('recheck_torrents', { ids: [HASH] })).rejects.toThrow(/share limits can remove it/);
@@ -498,6 +507,14 @@ describe('add_torrent', () => {
         expect(h.posts[0]!.multipart?.get('savepath')).toBe('/data/media/new');
         expect(h.posts[0]!.multipart?.get('useDownloadPath')).toBe('false');
         expect(h.posts[0]!.multipart?.get('torrents')).toBeInstanceOf(Blob);
+    });
+
+    it('does not show a passkey a .torrent carries in its own name', async () => {
+        const announce = `https://tracker.example.org/${PASSKEY}/announce`;
+        const file = bencode({ announce, info: { length: 5, name: announce, 'piece length': 16384, pieces: 'x'.repeat(20) } });
+        const preview = await harness().call('add_torrent', { torrent_base64: file.toString('base64'), save_path: '/data/torrents' });
+        expect(JSON.stringify(preview)).not.toContain(PASSKEY);
+        expect(preview.structuredContent.summary).toContain('https://tracker.example.org/...');
     });
 
     it('never repeats a source that carries a passkey', async () => {

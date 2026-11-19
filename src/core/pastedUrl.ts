@@ -1,5 +1,6 @@
 /** A URL or magnet where a name or id belongs, which can carry a tracker passkey. */
-const PASTED_URL = /[a-z][a-z0-9+.-]*:\/\/|magnet:\?/i;
+// The scheme is bounded so a long run of letters cannot make the match quadratic.
+const PASTED_URL = /[a-z][a-z0-9+.-]{0,31}:\/\/|magnet:\?/i;
 
 /** The value as a refusal or an audit row may repeat it. */
 export const shownValue = (value: string): string => (PASTED_URL.test(value) ? '(a URL, left out)' : value);
@@ -15,8 +16,9 @@ export const maskedHost = (hostname: string): string =>
         .map(label => (PASSKEY_LABEL.test(label) ? '***' : label))
         .join('.');
 
-const MAGNET_IN_TEXT = /magnet:\?[^\s"'<>`]+/gi;
-const URL_IN_TEXT = /[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
+// An apostrophe is a legal part of a URL path, so it does not end one.
+const MAGNET_IN_TEXT = /magnet:\?[^\s"<>`]+/gi;
+const URL_IN_TEXT = /[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"<>`]+/gi;
 
 /**
  * Free text with every URL cut down to its scheme and host, and every magnet
@@ -26,7 +28,7 @@ const URL_IN_TEXT = /[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
  */
 export function scrubUrls(text: string): string {
     return text.replace(MAGNET_IN_TEXT, '(a magnet link, left out)').replace(URL_IN_TEXT, match => {
-        const tail = /[.,;:)\]]+$/.exec(match)?.[0] ?? '';
+        const tail = /[.,;:)\]']+$/.exec(match)?.[0] ?? '';
         const raw = match.slice(0, match.length - tail.length);
         if (!URL.canParse(raw)) return `(a URL, left out)${tail}`;
         const url = new URL(raw);

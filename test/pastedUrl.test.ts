@@ -36,13 +36,26 @@ describe('scrubUrls', () => {
         [`see udp://tracker.example:6969/${PASSKEY}, then retry`, 'see udp://tracker.example:6969/..., then retry'],
         [`got https://user:${PASSKEY}@tracker.example`, 'got https://tracker.example/...'],
         [`got https://${PASSKEY}.tracker.example/announce`, 'got https://***.tracker.example/...'],
-        [`magnet:?xt=urn:btih:abc&tr=${PASSKEY} was refused`, '(a magnet link, left out) was refused']
+        [`magnet:?xt=urn:btih:abc&tr=${PASSKEY} was refused`, '(a magnet link, left out) was refused'],
+        [`title https://tracker.example.org/owner's/${PASSKEY}/announce here`, 'title https://tracker.example.org/... here'],
+        [`got https://${PASSKEY}.tracker.example`, 'got https://***.tracker.example/...'],
+        [`quoted 'https://tracker.example/${PASSKEY}'`, "quoted 'https://tracker.example/...'"]
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
     it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.168.1.20:8081', 'plain words: nothing to cut'])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
+    });
+});
+
+describe('a very long value', () => {
+    it('is handled in linear time', () => {
+        const long = 'a'.repeat(400_000);
+        const started = Date.now();
+        expect(shownValue(long)).toBe(long);
+        expect(scrubUrls(long)).toBe(long);
+        expect(Date.now() - started).toBeLessThan(2_000);
     });
 });
 

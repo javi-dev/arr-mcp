@@ -1530,8 +1530,8 @@ A qBittorrent row at `detail: "full"` also carries `savePath`, `private`
 come from `torrents/properties` when `torrents/info` lacks them, as it can for a
 torrent at `missing files`. A tracker is its hostname and nothing else: its URL
 holds the passkey and its message can echo it, so neither is read into a row. A
-page lists at most 200 files per torrent and 500 in all (a single torrent may use
-all 500), and `filesOmitted` says how many were left out. A ratio qBittorrent
+page lists at most 200 files per torrent and 300 in all (a single torrent may use
+all 300), and `filesOmitted` says how many were left out. A ratio qBittorrent
 reports as infinite reads 9999. A page of more than 100 torrents skips these reads and
 says so in `torrentDetailsOmitted`, since each torrent costs up to four requests.
 

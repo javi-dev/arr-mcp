@@ -68,6 +68,11 @@ describe('get_queue on qBittorrent at detail "full"', () => {
         expect(items[0]!.filesOmitted).toBeUndefined();
     });
 
+    it('never rounds an unfinished file up to 100% in the text', async () => {
+        const [row] = (await buildGetQueue([adapter(undefined, { files: [{ name: 'Some.Film/film.mkv', size: 1000, progress: 0.996 }] })], full)).items;
+        expect(queueLine(row!)).toContain('99%');
+    });
+
     it('reports a ratio past the ceiling, which qBittorrent answers with -1, as the ceiling', async () => {
         const [row] = (await buildGetQueue([adapter(undefined, { torrents: [torrent({ ratio: -1 })] })], full)).items;
         expect(row!.ratio).toBe(9999);
@@ -77,8 +82,8 @@ describe('get_queue on qBittorrent at detail "full"', () => {
         const files = Array.from({ length: 200 }, (_, i) => ({ name: `Pack/${i}.mkv`, size: 1, progress: 1 }));
         const torrents = ['1', '2', '3'].map(c => torrent({ hash: c.repeat(40) }));
         const { items } = await buildGetQueue([adapter(undefined, { torrents, files })], full);
-        expect(items.map(i => i.files?.length)).toEqual([200, 200, 100]);
-        expect(items[2]!.filesOmitted).toBe(100);
+        expect(items.map(i => i.files?.length)).toEqual([200, 100, 0]);
+        expect(items[1]!.filesOmitted).toBe(100);
     });
 
     it('skips the per-torrent reads on a page too long to read them for', async () => {
@@ -94,7 +99,8 @@ describe('get_queue on qBittorrent at detail "full"', () => {
         const result = await buildGetQueue([adapter(undefined, { torrents, files })], { detail: 'full', limit: 100 });
         expect(result.torrentDetailsOmitted).toBeUndefined();
         expect(result.items[0]!.trackers).toBeDefined();
-        expectWithinBudget(result, 40_000);
+        // What a client really receives: the text and the structured answer together.
+        expectWithinBudget({ result, text: result.items.map(queueLine).join('\n') }, 40_000);
     });
 
     it('keeps the page when one read fails, and names the instance', async () => {
