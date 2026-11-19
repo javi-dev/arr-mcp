@@ -180,8 +180,8 @@ describe('remove_queue_item on an *arr row', () => {
     });
 
     it('guards a cross-seeded torrent when only the second instance protects it', async () => {
-        const h = arrHarness([{ name: 'vpn' }, { name: 'novpn', over: { protect_all_torrents: true } }]);
-        await expect(h.call('remove_queue_item', { service: 'radarr', id: '7' })).rejects.toThrow(/qbittorrent\/novpn protects/);
+        const h = arrHarness([{ name: 'vpn' }, { name: 'direct', over: { protect_all_torrents: true } }]);
+        await expect(h.call('remove_queue_item', { service: 'radarr', id: '7' })).rejects.toThrow(/qbittorrent\/direct protects/);
         expect(h.removed).toEqual([]);
     });
 

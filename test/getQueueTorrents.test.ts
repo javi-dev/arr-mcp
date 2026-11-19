@@ -143,11 +143,11 @@ describe('get_queue on qBittorrent at detail "full"', () => {
 });
 
 describe('get_queue filters', () => {
-    const stack = () => [adapter('vpn', { torrents: [torrent()] }), adapter('novpn', { torrents: [torrent({ hash: OTHER })] })];
+    const stack = () => [adapter('vpn', { torrents: [torrent()] }), adapter('direct', { torrents: [torrent({ hash: OTHER })] })];
 
     it('narrows to one instance', async () => {
-        const { items } = await buildGetQueue(stack(), { detail: 'standard', limit: 50, instance: 'novpn' });
-        expect(items.map(i => i.service)).toEqual(['qbittorrent/novpn']);
+        const { items } = await buildGetQueue(stack(), { detail: 'standard', limit: 50, instance: 'direct' });
+        expect(items.map(i => i.service)).toEqual(['qbittorrent/direct']);
     });
 
     it('narrows to one service', async () => {

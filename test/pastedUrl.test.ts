@@ -17,7 +17,7 @@ describe('shownValue', () => {
         expect(shownValue(value)).not.toContain(PASSKEY);
     });
 
-    it.each(['radarr/4k', 'vpn', 'torrent-novpn', 'Alien: Covenant', '42'])('repeats the ordinary value %s', value => {
+    it.each(['radarr/4k', 'vpn', 'torrent-direct', 'Alien: Covenant', '42'])('repeats the ordinary value %s', value => {
         expect(shownValue(value)).toBe(value);
     });
 });

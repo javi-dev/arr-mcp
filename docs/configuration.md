@@ -607,9 +607,9 @@ services:
       password_file: /run/secrets/qbittorrent_password
       allowed_paths: [/data/torrents, /data/media]
       protect_private_torrents: true
-    - name: novpn
+    - name: direct
       url: http://192.168.1.20:8082
-      webui_api_key_file: /run/secrets/qbittorrent_novpn_key
+      webui_api_key_file: /run/secrets/qbittorrent_direct_key
       protect_all_torrents: true
 ```
 
