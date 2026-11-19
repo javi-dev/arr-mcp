@@ -244,16 +244,17 @@ that `recheck_torrents` watches (up to 45 seconds), each step of a Jellyfin or
 Plex metadata repair (up to two minutes). Some applies wait more than once: an
 import that remaps episodes and renames them once can hold the lane for about
 six minutes, one that has to rotate file names for about nine, and a Plex match
-followed by a refresh for about four. A plan holds the
-lane too: a `grab_release` confirm runs the indexer search again before it grabs
-(often 15 seconds or more, up to two minutes), so several grabs confirmed at
-once on one instance can be refused. A confirmation sent to that instance
-meanwhile is refused after 30 seconds without being applied, and can be sent
-again with the same token until that token expires, five minutes after its
-preview. The retry plans again against the state then: if the write ahead of it
-has made the change, it can find nothing to do or nothing left to act on;
-otherwise it applies, or comes back as a fresh preview with a new token if the
-old one has expired or no longer matches what the plan finds.
+followed by a refresh for about four. A plan holds the lane too: a
+`grab_release` confirm runs the indexer search again before it grabs (often 15
+seconds or more, up to two minutes), so several grabs confirmed at once on one
+instance can be refused. A confirmation sent to that instance meanwhile is
+refused after 30 seconds without being applied, and can be sent again with the
+same token until that token expires, five minutes after its preview. The retry
+plans again against the state then: if the write ahead of it has made the
+change, it can find nothing to do or nothing left to act on; if a duplicate of
+the request spent the token and the plan still matches it, the retry is refused
+as already used; otherwise it applies, or comes back as a fresh preview with a
+new token if the old one has expired or no longer matches what the plan finds.
 
 A destructive preview says what it costs in the units that matter:
 
