@@ -848,8 +848,26 @@ describe('set_torrent_location', () => {
         const h = harness({ files: [], torrents: [torrent({ state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete', content_path: '' })] });
         const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' });
         expect(preview.structuredContent.effects[0]).toBe(
-            'qBittorrent leaves its unfinished data where it is, which it is set to keep in /data/torrents/incomplete, and moves it to /data/media/movies once the download finishes.'
+            'qBittorrent leaves its unfinished data where it is, which it is set to keep in /data/torrents/incomplete, and saves it in /data/media/movies once the download finishes.'
         );
+    });
+
+    it('promises no stay when the new path is the configured folder but where the files are cannot be told', async () => {
+        const h = harness({ files: [], torrents: [torrent({ state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete', content_path: '' })] });
+        const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/torrents/incomplete' });
+        expect(preview.structuredContent.effects[0]).toBe(
+            'qBittorrent leaves its unfinished data where it is, which it is set to keep in /data/torrents/incomplete, and saves it in /data/torrents/incomplete once the download finishes.'
+        );
+    });
+
+    it('promises no second move for a gathered torrent pointed at the folder it is gathered into', async () => {
+        const h = harness({ torrents: [torrent({ auto_tmm: true, state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete' })] });
+        const args = { id: HASH, location: '/data/torrents/incomplete', move_files: true };
+        const preview = await h.call('set_torrent_location', args);
+        expect(preview.structuredContent.summary).toContain('to /data/torrents/incomplete on qbittorrent, where it stays once it finishes');
+        expect(preview.structuredContent.effects[1]).toBe('qBittorrent keeps them there once the download finishes.');
+        const applied = await h.call('set_torrent_location', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(applied.structuredContent.summary).toContain('moves the files to /data/torrents/incomplete in the background. They stay there once the torrent finishes.');
     });
 
     it('promises no second move when the new path is where the unfinished data already is', async () => {
@@ -888,7 +906,10 @@ describe('set_torrent_location', () => {
     it('treats a torrent at missing files that never finished as unfinished', async () => {
         const h = harness({ torrents: [torrent({ state: 'missingFiles', amount_left: 500, completion_on: -1, download_path: '/data/torrents/incomplete' })] });
         const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' });
-        expect(preview.structuredContent.effects[0]).toContain('leaves its unfinished data where it is');
+        // Not "leaves it where it is, in ...": qBittorrent reports it missing from there.
+        expect(preview.structuredContent.effects[0]).toBe(
+            'qBittorrent reports its unfinished data missing from /data/torrents/movies. /data/media/movies only becomes where it goes once the download finishes.'
+        );
     });
 
     it('keeps a torrent unfinished when it finished once and a later check found it incomplete', async () => {
@@ -998,6 +1019,25 @@ describe('set_torrent_location', () => {
         expect(applied.structuredContent.summary).toContain(
             'Any file of it left in /data/torrents/incomplete may still be moving to /data/media/movies in the background, so wait until get_queue no longer shows it at `moving` before running recheck_torrents.'
         );
+    });
+
+    it('says "the old path" rather than the gather folder when a gathered missing torrent\'s folder cannot be told', async () => {
+        const h = harness({ files: [], torrents: [torrent({ auto_tmm: true, state: 'missingFiles', content_path: '' })] });
+        const applied = await confirmed(h.call, 'set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true });
+        expect(applied.structuredContent.effects[0]).toContain('first moves its files to /data/torrents/movies');
+        expect(applied.structuredContent.summary).toContain('Any file of it left at the old path may still be moving to /data/media/movies');
+    });
+
+    it('binds the save path a missing torrent is repointed from when its folder cannot be told', async () => {
+        const h = harness({ files: [], torrents: [torrent({ state: 'missingFiles', content_path: '' })] });
+        const args = { id: HASH, location: '/data/media/movies' };
+        const preview = await h.call('set_torrent_location', args);
+        expect(preview.structuredContent.effects[0]).toContain('missing from /data/torrents/movies');
+        h.torrents[0]!.save_path = '/data/torrents/other';
+        const late = await h.call('set_torrent_location', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(late.structuredContent.effects[0]).toContain('missing from /data/torrents/other');
+        expect(h.posts).toEqual([]);
     });
 
     it('binds the folder a missing torrent is repointed from', async () => {
@@ -1160,6 +1200,18 @@ describe('set_torrent_category', () => {
         await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(
             /^qbittorrent permission denied: that category would move .* from its configured folder \/data\/torrents\/movies to \/data\/torrents\/tv/
         );
+        const preview = await h.call('set_torrent_category', { id: HASH, category: 'tv', move_files: true });
+        expect(preview.structuredContent.effects.join(' ')).toContain('from its configured folder /data/torrents/movies to /data/torrents/tv');
+    });
+
+    it('names the configured incomplete folder as the source of unfinished data whose folder cannot be told', async () => {
+        const h = harness({
+            files: [],
+            torrents: [torrent({ auto_tmm: true, state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete', content_path: '' })],
+            preferences: { torrent_changed_tmm_enabled: true, temp_path_enabled: false, max_ratio_act: 0 },
+            categories: { movies: {}, tv: { savePath: '/data/torrents/tv', download_path: '/data/torrents/incomplete/tv' } }
+        });
+        await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(/from its configured folder \/data\/torrents\/incomplete to \/data\/torrents\/incomplete\/tv/);
     });
 
     it('treats an unreadable relocation preference as moving', async () => {

@@ -483,7 +483,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         name: 'set_torrent_location',
         title: 'Set a torrent location',
         description:
-            'Points a torrent at a new save path inside the allowed paths. qBittorrent cannot change a path without moving what it finds there, so by default this is only for a torrent at `missing files`, still fetching metadata, or with its unfinished data in the incomplete-downloads folder. Follow it with recheck_torrents. `move_files: true` has qBittorrent physically move existing data, and needs `destructive`. Previews first; confirm to apply. Field reference: arr://docs/set_torrent_location.',
+            'Points a torrent at a new save path inside the allowed paths. qBittorrent cannot change a path without moving what it finds there, so by default this is only for a torrent at `missing files`, still fetching metadata, or with its unfinished data in the incomplete-downloads folder. Follow a `missing files` repoint with recheck_torrents. `move_files: true` has qBittorrent physically move existing data, and needs `destructive`. Previews first; confirm to apply. Field reference: arr://docs/set_torrent_location.',
         inputSchema: LocationInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'set_torrent_location',
@@ -532,25 +532,36 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             }
             // Unfinished and gathered: the files go to the incomplete folder now, and the new path only applies once finished.
             const gatheredOnly = gathersTo !== undefined && keepsUnfinished;
-            // Both hops of unfinished data: where it is (or will be written) now, and `path` once the download finishes.
-            const firstHop = storedIn ?? incompleteDir;
-            const secondHop = firstHop === path ? 'keeps it there once the download finishes' : `moves it to ${path} once the download finishes`;
+            // Gathered into the folder it is pointed at, so nothing moves on once it finishes.
+            const gatheredHome = gatheredOnly && gathersTo === path;
+            // Both hops of unfinished data: where it is (or, with no metadata, will be written) now, and `path` once the download finishes.
+            // A second move is ruled out only where that first folder is known.
+            const onFinish = (now: string | undefined) => (now === path ? 'keeps it there once the download finishes' : `moves it to ${path} once the download finishes`);
             const unfinishedEffect = !details.hasMetadata
-                ? `It has no metadata yet, so nothing is on disk. qBittorrent downloads it into ${incompleteDir} and ${secondHop}.`
-                : `qBittorrent leaves its unfinished data where it is, ${storedIn === undefined ? `which it is set to keep in ${incompleteDir}` : `in ${storedIn}`}, and ${secondHop}.`;
+                ? `It has no metadata yet, so nothing is on disk. qBittorrent downloads it into ${incompleteDir} and ${onFinish(incompleteDir)}.`
+                : details.state === 'missingFiles'
+                ? `qBittorrent reports its unfinished data missing from ${storedIn ?? incompleteDir}. ${path} only becomes where it goes once the download finishes.`
+                : storedIn === undefined
+                ? `qBittorrent leaves its unfinished data where it is, which it is set to keep in ${incompleteDir}, and saves it in ${path} once the download finishes.`
+                : `qBittorrent leaves its unfinished data where it is, in ${storedIn}, and ${onFinish(storedIn)}.`;
             // A repoint at missing files moves whatever is left at the old path, which the applied sentence must not hide.
             const repointsMissing = details.state === 'missingFiles' && !keepsUnfinished;
-            const missingFrom = movesFrom ?? details.savePath?.replace(/\/+$/, '');
+            // Never the folder the files are gathered into: with that folder unknown, the sentence says "the old path" instead.
+            const missingFrom = storedIn ?? (gathersTo === undefined ? details.savePath?.replace(/\/+$/, '') : undefined);
             return {
                 target,
-                summary: gatheredOnly
+                summary: gatheredHome
+                    ? `Move ${details.title} to ${path} on ${client.id}, where it stays once it finishes.`
+                    : gatheredOnly
                     ? `Move ${details.title} to ${gathersTo} now, and on to ${path} once it finishes, on ${client.id}.`
                     : keepsUnfinished
                     ? `Point ${details.title} at ${path} on ${client.id}, where its data goes once the download finishes.`
                     : `${moves ? 'Move' : 'Point'} ${details.title} ${moves ? 'to' : 'at'} ${path} on ${client.id}.`,
                 effects: [
                     ...(gathersTo === undefined ? [] : [`Turning off automatic management first moves its files to ${gathersTo}.`]),
-                    gatheredOnly
+                    gatheredHome
+                        ? 'qBittorrent keeps them there once the download finishes.'
+                        : gatheredOnly
                         ? `qBittorrent moves them on from ${gathersTo} to ${path} once the download finishes.`
                         : keepsUnfinished
                         ? unfinishedEffect
@@ -568,7 +579,10 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         },
 
         applied: (_outcome, plan) => {
-            if (plan.args?.gatheredOnly === true) return `qBittorrent accepted this for ${plan.target} and moves the files to ${String(plan.args.gathersTo)} in the background. They move on to the new location once the torrent finishes.`;
+            if (plan.args?.gatheredOnly === true) {
+                const gathersTo = String(plan.args.gathersTo);
+                return `qBittorrent accepted this for ${plan.target} and moves the files to ${gathersTo} in the background. ${gathersTo === plan.args.location ? 'They stay there' : 'They move on to the new location'} once the torrent finishes.`;
+            }
             if (plan.args?.repointsMissing === true) {
                 const from = String(plan.args.missingFrom);
                 return `qBittorrent accepted the new location for ${plan.target}. Any file of it left ${from === '' ? 'at the old path' : `in ${from}`} may still be moving to ${String(plan.args.location)} in the background, so wait until get_queue no longer shows it at \`moving\` before running recheck_torrents.`;
