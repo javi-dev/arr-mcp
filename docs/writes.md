@@ -224,14 +224,15 @@ setting, and `reannounce_torrent` a SHA-256 of the torrent's tracker URLs. For
 those, the same call is refused when that has moved since the old preview, and
 the new effects are what the caller reads before confirming again.
 
-Confirmed writes to one instance run one at a time, from the reads that check the
-token to the write itself, so two confirmations sent together cannot interleave
-their writes and leave a mix of both. Previews, dry runs and writes to other
-instances do not wait. A confirmation still waiting after 30 seconds, or whose
-request is cancelled while it waits or while its plan runs, is refused without
-being applied, and its token stays unused for another try. Cancelling means ending that request: over
-HTTP, the client dropping it. A `notifications/cancelled` sent as a request of
-its own does not reach a call already waiting.
+Confirmed writes to one instance run one at a time, from the reads that check
+the token to the write itself, so two confirmations sent together cannot
+interleave their writes and leave a mix of both. Previews, dry runs and writes
+to other instances do not wait. A confirmation still waiting after 30 seconds,
+or whose request is cancelled while it waits or while its plan runs, is refused
+without being applied, and its token stays unused for another try. Cancelling
+means ending that request: over HTTP, the client dropping it. A
+`notifications/cancelled` sent as a request of its own does not reach a call
+already waiting.
 
 The lane is the instance the tool is routed to, within one arr-mcp process. A
 write that also changes a second service, as `delete_media` does when it adds

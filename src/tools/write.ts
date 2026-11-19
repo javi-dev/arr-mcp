@@ -263,16 +263,22 @@ const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolR
 });
 
 /**
- * An outcome that stopped part way (`update_book`, `set_watched`) reports the
- * error that stopped it as `failed`, and that error can quote a URL the caller
- * passed. Scrubbed here, before the applied sentence or the result is built
- * from it, like a thrown error (#6).
+ * An outcome that landed only in part reports the error that stopped the rest
+ * in a field named for it: `failed` (`update_book`, `set_watched`),
+ * `seerrBlocklistFailed` (`delete_media`), `syncFailed` (the indexer tools).
+ * That error can quote a URL, so every top-level field whose name ends in
+ * `failed` is scrubbed here, before the applied sentence or the result is
+ * built from it, like a thrown error (#6). A new partial outcome gets the
+ * scrub by following that naming.
  */
+const FAILURE_FIELD = /failed$/i;
 function scrubbedOutcome(outcome: unknown): unknown {
-    if (typeof outcome !== 'object' || outcome === null || !('failed' in outcome)) return outcome;
-    const { failed } = outcome;
-    const clean = (value: unknown): unknown => (typeof value === 'string' ? scrubUrls(value) : value);
-    return { ...outcome, failed: Array.isArray(failed) ? failed.map(clean) : clean(failed) };
+    if (typeof outcome !== 'object' || outcome === null || Array.isArray(outcome)) return outcome;
+    const clean = (value: unknown): unknown =>
+        typeof value === 'string' ? scrubUrls(value) : Array.isArray(value) ? (value as unknown[]).map(item => (typeof item === 'string' ? scrubUrls(item) : item)) : value;
+    const entries = Object.entries(outcome);
+    if (!entries.some(([key]) => FAILURE_FIELD.test(key))) return outcome;
+    return Object.fromEntries(entries.map(([key, value]) => [key, FAILURE_FIELD.test(key) ? clean(value) : value]));
 }
 
 const TARGET_KEYS = [
@@ -590,7 +596,7 @@ export function registerWriteTool<
             deny(service, target, detail);
             return new Error(
                 `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token${when}. ` +
-                    'A token that has expired by then comes back as a fresh preview with a new one, unless that write already made the change.'
+                    'A token that has expired by then comes back as a fresh preview with a new one, unless another write already made the change.'
             );
         };
 
@@ -601,6 +607,12 @@ export function registerWriteTool<
             } catch (err) {
                 refused(service, err);
                 throw err;
+            }
+            // The plan's reads take time, and a confirm whose caller has gone
+            // meanwhile is refused here, before any outcome is recorded, so its
+            // token is not spent on a write nobody will hear about.
+            if (presented !== undefined && !dryRun && signal?.aborted === true) {
+                throw unspent(plan.target, 'the request was cancelled while this write was being planned');
             }
 
             const record = {
@@ -711,9 +723,6 @@ export function registerWriteTool<
 
             // --- 4. Confirmation --------------------------------------------------
             if (presented !== undefined) {
-                // The plan's reads take time, and a caller that has gone meanwhile
-                // must not have its token spent on a write it will never hear about.
-                if (signal?.aborted === true) throw unspent(plan.target, 'the request was cancelled while this write was being planned');
                 const check = confirm.verifyAndConsume(presented, intent);
                 if (!check.ok) {
                     // An already-spent token is the one rejection that does not

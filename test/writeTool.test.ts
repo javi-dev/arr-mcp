@@ -62,6 +62,7 @@ function buildHarness(
         plan?: WritePlan | ((args: { id: string }) => Promise<WritePlan>);
         route?: (args: { id: string }) => string;
         apply?: (plan: WritePlan, args: { id: string }) => Promise<unknown>;
+        applied?: (outcome: unknown, plan: WritePlan) => string | undefined;
         tier?: 'safe' | 'destructive';
         caller?: string;
         crossChecks?: CrossChecker;
@@ -103,6 +104,7 @@ function buildHarness(
             tier: opts.tier ?? 'destructive',
             plan,
             apply,
+            ...(opts.applied === undefined ? {} : { applied: opts.applied }),
             ...(opts.crossCheck === undefined ? {} : { crossCheck: opts.crossCheck })
         }
     );
@@ -803,13 +805,22 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         expect(err.message).toBe('upstream refused https://tracker.example.org/... and (a magnet link, left out)');
     });
 
-    it('scrubs the error a write that stopped part way reports, in the result and the sentence built from it', async () => {
-        const harness = buildHarness({ apply: () => Promise.resolve({ done: ['unlock title'], failed: `write the metadata: rejected ${PASTED}` }) });
-        // Scrubbed before `applied` or the result sees it, so a sentence a tool builds from `failed` is clean too.
-        const applied = harness.call('delete_media', { id: '5' }).then(preview => harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token }));
-        const { structuredContent } = await applied;
-        expect(structuredContent.result).toEqual({ done: ['unlock title'], failed: 'write the metadata: rejected https://tracker.example.org/...' });
-        expect(JSON.stringify(structuredContent)).not.toContain(KEY);
+    it.each([
+        { as: 'failed', field: 'failed', outcome: { done: ['unlock title'], failed: `write the metadata: rejected ${PASTED}` } },
+        { as: 'seerrBlocklistFailed', field: 'seerrBlocklistFailed', outcome: { deleted: true, seerrBlocklistFailed: `refused ${PASTED}` } },
+        { as: 'syncFailed', field: 'syncFailed', outcome: { indexer: 'x', syncFailed: `refused ${PASTED}` } },
+        { as: 'a list under failed', field: 'failed', outcome: { done: 1, failed: [`one ${PASTED}`, 2] } }
+    ])('scrubs the error a write that stopped part way reports as $as, in the result and the sentence built from it', async ({ field, outcome }) => {
+        const harness = buildHarness({
+            apply: () => Promise.resolve(outcome),
+            // Built from the field, as update_book, delete_media and the indexer tools build theirs.
+            applied: done => `Partly applied, but: ${JSON.stringify((done as Record<string, unknown>)[field])}`
+        });
+        const preview = await harness.call('delete_media', { id: '5' });
+        const { content, structuredContent } = await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token });
+        expect(JSON.stringify([content, structuredContent])).not.toContain(KEY);
+        expect(content[0]?.text).toContain('https://tracker.example.org/...');
+        expect(structuredContent.result).toMatchObject(Object.fromEntries(Object.keys(outcome).filter(key => key !== field).map(key => [key, (outcome as Record<string, unknown>)[key]])));
     });
 
     it('rethrows a refusal with no URL in it untouched', async () => {
@@ -977,6 +988,23 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         expect(retried.structuredContent.applied).toBe(true);
         const after = await r.h.call('delete_media', { id: '5' });
         expect((await r.h.call('delete_media', { id: '5', confirm: after.structuredContent.confirm_token })).structuredContent.applied).toBe(true);
+    });
+
+    it('records a confirm cancelled mid-plan as refused, even when the plan finds nothing left to do', async () => {
+        const abort = new AbortController();
+        let confirming = false;
+        const h = buildHarness({
+            plan: () => {
+                if (!confirming) return Promise.resolve(PLAN);
+                abort.abort();
+                return Promise.resolve({ ...PLAN, noop: true });
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        confirming = true;
+        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled while this write was being planned/);
+        expect(outcomes(h)).toEqual(['unconfirmed', 'denied']);
+        expect(h.apply).not.toHaveBeenCalled();
     });
 
     it('leaves the token unspent when the request is cancelled while the confirm is being planned', async () => {
