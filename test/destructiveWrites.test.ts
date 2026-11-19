@@ -771,7 +771,7 @@ describe('remove_queue_item', () => {
         return { h, radarr, reads: () => radarr.sent.filter(s => s.path === '/api/v3/history') };
     };
     const KEPT_ALONE = 'Nothing was changed: a torrent keeps seeding, and the row stays. To delete the download too, leave out remove_from_client.';
-    const ORPHAN_REFUSAL = `radarr not found: radarr matched nothing in its library to this download, so it cannot leave the download alone and drop the row. ${KEPT_ALONE}`;
+    const ORPHAN_REFUSAL = `radarr invalid request: radarr matched nothing in its library to this download, so it cannot leave the download alone and drop the row. ${KEPT_ALONE}`;
     const ORPHAN = { ...KNOWN, movieId: undefined };
 
     // The four blocklist a download through its grab record, which usually goes
@@ -807,7 +807,7 @@ describe('remove_queue_item', () => {
         for (const blocklist of [false, true]) {
             for (const dry_run of [false, true]) {
                 await expect(h.call({ service: 'radarr', id: '91', remove_from_client: false, blocklist, dry_run })).rejects.toMatchObject({
-                    kind: 'NotFound',
+                    kind: 'InvalidRequest',
                     message: ORPHAN_REFUSAL
                 });
             }
@@ -826,8 +826,8 @@ describe('remove_queue_item', () => {
             const lidarr = recordingFetch({ '/api/v1/queue': { records: [{ ...LIDARR_QUEUE.records[0], albumId }] } });
             const h = harness(registerRemoveQueueItem, { adapters: [new LidarrAdapter(keyed(8686), lidarr.impl)], permissions: { lidarr: tiered(false, true) } });
             await expect(h.call({ service: 'lidarr', id: '91', remove_from_client: false, dry_run: true })).rejects.toMatchObject({
-                kind: 'NotFound',
-                message: `lidarr not found: lidarr matched no album to this download, so it cannot leave the download alone and drop the row. ${KEPT_ALONE}`
+                kind: 'InvalidRequest',
+                message: `lidarr invalid request: lidarr matched no album to this download, so it cannot leave the download alone and drop the row. ${KEPT_ALONE}`
             });
             expect(lidarr.sent.filter(s => s.method === 'DELETE')).toEqual([]);
         }

@@ -21,7 +21,7 @@ type Client = ServiceAdapter & NzbAddCapable;
 
 const clientOf = (adapters: readonly ServiceAdapter[], instance: string | undefined): Client => {
     const adapter = resolveInstance(adapters, 'sabnzbd', instance);
-    if (!hasNzbAdd(adapter)) throw new ServiceError('NotFound', adapter.id, `${adapter.id} cannot take an NZB`);
+    if (!hasNzbAdd(adapter)) throw new ServiceError('InvalidRequest', adapter.id, `${adapter.id} cannot take an NZB`);
     return adapter;
 };
 
@@ -56,7 +56,7 @@ type AddSource = { request: NzbSource; digest: string; label: string };
 
 function nzbSource(service: string, args: { url?: string | undefined; nzb_base64?: string | undefined; filename?: string | undefined }): AddSource {
     if ((args.url === undefined) === (args.nzb_base64 === undefined)) {
-        throw new ServiceError('NotFound', service, 'pass exactly one of `url` or `nzb_base64`', { remedy: 'Each is a different way to name the NZB to add.' });
+        throw new ServiceError('InvalidRequest', service, 'pass exactly one of `url` or `nzb_base64`', { remedy: 'Each is a different way to name the NZB to add.' });
     }
     if (args.url !== undefined) {
         const host = downloadHost(service, args.url);
@@ -64,14 +64,14 @@ function nzbSource(service: string, args: { url?: string | undefined; nzb_base64
     }
     const encoded = args.nzb_base64 ?? '';
     if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
-        throw new ServiceError('NotFound', service, '`nzb_base64` is not valid base64', { remedy: 'Send the whole .nzb file, base64 encoded.' });
+        throw new ServiceError('InvalidRequest', service, '`nzb_base64` is not valid base64', { remedy: 'Send the whole .nzb file, base64 encoded.' });
     }
     const bytes = Buffer.from(encoded, 'base64');
-    if (bytes.length > MAX_NZB_BYTES) throw new ServiceError('NotFound', service, 'that NZB is larger than the 3 MB limit', { remedy: 'Pass its `url` instead.' });
-    if (!looksLikeNzb(bytes)) throw new ServiceError('NotFound', service, 'that file is not an NZB', { remedy: 'Send a .nzb or .nzb.gz file, base64 encoded.' });
+    if (bytes.length > MAX_NZB_BYTES) throw new ServiceError('InvalidRequest', service, 'that NZB is larger than the 3 MB limit', { remedy: 'Pass its `url` instead.' });
+    if (!looksLikeNzb(bytes)) throw new ServiceError('InvalidRequest', service, 'that file is not an NZB', { remedy: 'Send a .nzb or .nzb.gz file, base64 encoded.' });
     const filename = args.filename ?? 'upload.nzb';
     if (!/^[\w .()[\]-]{1,200}\.nzb(?:\.gz)?$/i.test(filename)) {
-        throw new ServiceError('NotFound', service, '`filename` must be a plain file name ending in .nzb or .nzb.gz');
+        throw new ServiceError('InvalidRequest', service, '`filename` must be a plain file name ending in .nzb or .nzb.gz');
     }
     return {
         request: { kind: 'file', bytes, filename },
@@ -216,18 +216,18 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
             const client = clientOf(adapters, args.instance);
             const requested = Object.fromEntries(SETTING_NAMES.flatMap(name => (args[name] === undefined ? [] : [[name, args[name]]]))) as SabSettingChange;
             if (Object.keys(requested).length === 0) {
-                throw new ServiceError('NotFound', client.id, 'pass at least one setting to change', { remedy: 'get_client_settings lists them.' });
+                throw new ServiceError('InvalidRequest', client.id, 'pass at least one setting to change', { remedy: 'get_client_settings lists them.' });
             }
             const current = await client.getClientSettings();
             const unsupported = Object.keys(requested).filter(name => current[name as keyof SabClientSettings] === null && name !== 'history_retention_number');
             if (unsupported.length > 0) {
-                throw new ServiceError('NotFound', client.id, `this SABnzbd has no setting named ${unsupported.join(', ')}`, { remedy: 'Check its version: these settings need SABnzbd 4.4 or later.' });
+                throw new ServiceError('VersionUnsupported', client.id, `this SABnzbd has no setting named ${unsupported.join(', ')}`, { remedy: 'Check its version: these settings need SABnzbd 4.4 or later.' });
             }
 
             const option = requested.history_retention_option ?? current.history_retention_option;
             const number = requested.history_retention_number ?? current.history_retention_number;
             if (option !== null && /^(?:number|days)-/.test(option) && (number === null || number < 1)) {
-                throw new ServiceError('NotFound', client.id, `history retention "${option}" needs \`history_retention_number\``);
+                throw new ServiceError('InvalidRequest', client.id, `history retention "${option}" needs \`history_retention_number\``);
             }
 
             const changes = Object.fromEntries(Object.entries(requested).filter(([name, value]) => !same(value, current[name as keyof SabClientSettings])));
