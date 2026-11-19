@@ -422,6 +422,18 @@ describe('update_client_settings', () => {
         await expect(harness().call('update_client_settings', args)).rejects.toThrow();
     });
 
+    it.each([['foo..nfo'], ['images/..nfo'], ['sub..dir/*'], ['*..tmp']])('refuses the cleanup entry %s, which SABnzbd would store and never apply', async entry => {
+        const h = harness();
+        await expect(h.call('update_client_settings', { cleanup_list: ['nfo', entry] })).rejects.toThrow(/must not contain \.\., which SABnzbd stores but never applies/);
+        expect(h.sent('set_config')).toEqual([]);
+    });
+
+    it('accepts outer dots SABnzbd strips from an entry with no folder', async () => {
+        const h = harness();
+        await confirmed(h.call, 'update_client_settings', { cleanup_list: ['..srt', 'sfv..'] });
+        expect(h.settings.cleanup_list).toEqual(['srt', 'sfv']);
+    });
+
     it('never puts the API key in a preview', async () => {
         const preview = await harness().call('update_client_settings', { fail_hopeless_jobs: false });
         expect(JSON.stringify(preview)).not.toContain(API_KEY);

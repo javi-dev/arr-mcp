@@ -3538,6 +3538,8 @@ repeated and the token binds its SHA-256.
 A fixed list of settings and nothing else: `fail_hopeless_jobs`,
 `unwanted_extensions`, `action_on_unwanted_extensions`, `cleanup_list`,
 `history_retention_option` and `history_retention_number`.
+A `cleanup_list` entry holding `..` is refused, since SABnzbd stores one but
+never cleans up with it.
 `unwanted_extensions_mode` is read beside them, because it decides whether the
 list blocks or allows, and is never written. Each setting is read on its own
 request, so no answer can hold a server, a password or an API key. An update needs
