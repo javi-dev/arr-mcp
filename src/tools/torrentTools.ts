@@ -730,7 +730,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 target,
                 summary: `Reannounce ${details.title} on ${client.id}.`,
                 effects: [hosts === '' ? 'It has no tracker to announce to, so only DHT hears about it.' : `Contacts: ${hosts}.`],
-                args: { id: details.id }
+                // A digest of the trackers the preview named, so a token cannot announce to a list the caller never saw.
+                args: { id: details.id, trackers_sha256: details.trackerDigest }
             };
         },
 

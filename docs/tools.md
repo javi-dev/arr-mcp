@@ -3520,7 +3520,8 @@ relocated until the check ends.
 ## `reannounce_torrent`
 
 Announces one torrent to its trackers now. Trackers rate-limit announces, so do
-not call it in a loop.
+not call it in a loop. The confirm token binds a SHA-256 of the tracker URLs, so
+a torrent whose trackers changed since the preview needs a new one.
 
 **Unverified live** (qBittorrent): the reannounce.
 

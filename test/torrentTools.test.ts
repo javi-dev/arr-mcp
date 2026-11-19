@@ -1506,6 +1506,39 @@ describe('reannounce_torrent', () => {
         expect(h.posts).toEqual([{ path: '/torrents/reannounce', form: { hashes: HASH } }]);
     });
 
+    it.each([
+        ['a tracker added', (list: Record<string, unknown>[]) => list.push({ url: 'https://other.example.net/announce', status: 2, msg: '' })],
+        ['a passkey swapped on the same host', (list: Record<string, unknown>[]) => (list[1] = { ...list[1], url: 'https://tracker.example.org:443/0123456789abcdef0123456789abcdef/announce' })]
+    ])('refuses a token once the tracker list changed: %s', async (_why, change) => {
+        const trackers: Record<string, unknown>[] = [
+            { url: '** [DHT] **', status: 2, msg: '' },
+            { url: `https://tracker.example.org:443/${PASSKEY}/announce`, status: 2, msg: '' }
+        ];
+        const h = harness({ trackers });
+        const preview = await h.call('reannounce_torrent', { id: HASH });
+        change(trackers);
+        const late = await h.call('reannounce_torrent', { id: HASH, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(late.structuredContent.confirm_error).toBeDefined();
+        expect(h.posts).toEqual([]);
+        // The digest binds the list; neither the preview nor the audit row may carry a URL from it.
+        expect(JSON.stringify([preview, late, h.context.audit.recent()])).not.toContain(PASSKEY);
+        expect(JSON.stringify([preview, late, h.context.audit.recent()])).not.toContain('0123456789abcdef0123456789abcdef');
+    });
+
+    it('still applies when only a tracker status or the order changed', async () => {
+        const trackers: Record<string, unknown>[] = [
+            { url: 'https://one.example.org/announce', status: 2, msg: '' },
+            { url: 'https://two.example.org/announce', status: 2, msg: '' }
+        ];
+        const h = harness({ trackers });
+        const preview = await h.call('reannounce_torrent', { id: HASH });
+        trackers.reverse();
+        trackers[0] = { ...trackers[0], status: 4 };
+        const applied = await h.call('reannounce_torrent', { id: HASH, confirm: preview.structuredContent.confirm_token });
+        expect(applied.structuredContent.applied).toBe(true);
+    });
+
     it('has nothing to do for a stopped torrent', async () => {
         const preview = await harness({ torrents: [torrent({ state: 'stoppedUP' })] }).call('reannounce_torrent', { id: HASH });
         expect(preview.structuredContent.noop).toBe(true);

@@ -18,7 +18,7 @@ export const TOOL_DOCS: Readonly<Record<string, string>> = {
     set_torrent_category:
         'Sets an existing category, or clears it with an empty string. The preview warns when an *arr watches the old or new category. When the client would relocate an automatically managed torrent, the destination and the folder the files leave must be inside `allowed_paths` and the call needs `move_files: true`, which needs the `destructive` permission. A category whose share limits would make qBittorrent remove the torrent, which it did not risk before, is refused unless `allow_removal: true`, which needs `destructive` too.',
     reannounce_torrent:
-        'Announces one torrent to its trackers now. The preview names each tracker by hostname with its status. A stopped torrent is a no-op. Trackers rate-limit announces, so this is not for a loop.',
+        'Announces one torrent to its trackers now. The preview names each tracker by hostname with its status. The confirm token binds a SHA-256 of the tracker URLs, so a changed tracker list needs a new preview. A stopped torrent is a no-op. Trackers rate-limit announces, so this is not for a loop.',
     add_nzb:
         'Adds an NZB to SABnzbd from a `url` or the file as `nzb_base64` (up to 3 MB, plain or gzip, the most a request can carry), with an optional `filename` ending in .nzb or .nzb.gz. `category` must already exist. The preview warns when an *arr watches that category. The source is never repeated: the confirm token and the audit row carry its SHA-256.',
     get_client_settings:
