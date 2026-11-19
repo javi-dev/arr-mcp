@@ -241,8 +241,8 @@ waits: each *arr command a rename or import waits on (up to three minutes), a
 recheck that `recheck_torrents` watches (up to 45 seconds), each step of a
 Jellyfin or Plex metadata repair (up to two minutes). Some applies wait more
 than once: a rename that rotates file names, or an import that remaps episodes,
-can hold the lane for about six minutes, and a Plex match followed by a refresh
-for about four. A plan holds the lane too: a `grab_release` confirm runs the
+can hold the lane for about six minutes, a remap that also has to rotate names
+for about nine, and a Plex match followed by a refresh for about four. A plan holds the lane too: a `grab_release` confirm runs the
 indexer search again before it grabs (often 15 seconds or more, up to two
 minutes), so several grabs confirmed at once on one instance can be refused. A
 confirmation sent to that instance meanwhile is refused after 30 seconds without
