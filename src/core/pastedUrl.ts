@@ -43,7 +43,8 @@ export function scrubUrls(text: string): string {
         // Judged on the text as written, not the parsed URL: the parser folds a
         // path such as `/key/%2e%2e` down to `/`, which would pass a key through.
         const bare = BARE_URL.test(raw) && url.username === '' && url.password === '';
-        if (bare && maskedHost(url.hostname) === url.hostname) return match;
+        // maskedHost lowercases, and a parser keeps the case of a host for a scheme it does not know (`smb://NAS`).
+        if (bare && maskedHost(url.hostname) === url.hostname.toLowerCase()) return match;
         // The placeholder already ends in dots, so a sentence's own are not added to them.
         return `${url.protocol}//${maskedHost(url.hostname)}${url.port === '' ? '' : `:${url.port}`}/...${tail.replace(/^\.+/, '')}`;
     });

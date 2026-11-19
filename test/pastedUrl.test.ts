@@ -50,14 +50,15 @@ describe('scrubUrls', () => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
-    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut'])('leaves %s alone', text => {
+    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS'])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
     });
 });
 
 describe('a very long value', () => {
     it('finds the end of a URL followed by a long run of punctuation in linear time', () => {
-        const text = `https://tracker.example/${'.'.repeat(200_000)}x`;
+        // Ending on the run, so the walk back over it is what is timed.
+        const text = `https://tracker.example/${'.'.repeat(200_000)}`;
         const started = Date.now();
         scrubUrls(text);
         expect(Date.now() - started).toBeLessThan(2_000);

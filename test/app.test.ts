@@ -1079,7 +1079,9 @@ describe('every tool declares the shape it answers in', () => {
                 return { commandId: 42 };
             }
         } as unknown as ServiceAdapter;
-        const shared = appWith(writable, [held]);
+        // The audit the writes go through, read below to show the second request reached the queue.
+        const trail = audit();
+        const shared = buildApp({ runtime: Runtime.fromConfig(writable, trail, { adapters: [held] }), audit: trail, logs: LogStore.ephemeral() });
         const send = (args: Record<string, unknown>, signal?: AbortSignal) =>
             shared.request('http://localhost:6060/mcp', {
                 ...rpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'trigger_scan', arguments: args } }, { Authorization: `Bearer ${TOKEN}` }),
@@ -1102,6 +1104,10 @@ describe('every tool declares the shape it answers in', () => {
             await settle();
             abort.abort();
             await waiting;
+            await settle();
+            // Refused while it waited behind the first: the wording a request cancelled before it queued never gets.
+            const rows = trail.recent() as { outcome: string; detail: string | null }[];
+            expect(rows.some(row => row.outcome === 'denied' && (row.detail ?? '').includes('cancelled while it waited'))).toBe(true);
             release();
             expect((await result(await applying)).structuredContent).toMatchObject({ applied: true });
             await settle();

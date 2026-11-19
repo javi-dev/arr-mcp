@@ -937,7 +937,7 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
             const [first, second] = await r.confirmAll(['5', '9']);
             await vi.advanceTimersByTimeAsync(30_000);
             const refusal = (await second) as Error;
-            expect(refusal.message).toMatch(/^Not applied: another confirmed write to radarr was still running after 30 seconds\. Its confirmation token was not used/);
+            expect(refusal.message).toMatch(/^Not applied: another confirmed write to radarr was still running after 30 seconds\. This request did not use its confirmation token/);
             r.release();
             await first;
             expect(r.log).not.toContain('plan 9');
@@ -971,7 +971,7 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         abort.abort();
         const preview = await r.h.call('delete_media', { id: '9' });
         await expect(r.h.call('delete_media', { id: '9', confirm: preview.structuredContent.confirm_token }, abort.signal)).rejects.toThrow(
-            /^Not applied: the request was cancelled before this write started\. Its confirmation token was not used/
+            /^Not applied: the request was cancelled before this write started\. This request did not use its confirmation token/
         );
         expect(outcomes(r.h)).toContain('denied');
         expect(r.h.apply).not.toHaveBeenCalled();
@@ -1035,6 +1035,8 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         const [row] = h.audit.recent() as { outcome: string; target: string }[];
         expect(row?.outcome).toBe('denied');
         expect(row?.target).not.toContain(passkey);
+        // Cut down rather than left out, so the row still names the host.
+        expect(row?.target).toBe('radarr:https://indexer.example/...');
     });
 
     it('records a confirm cancelled mid-plan as refused, even when the plan finds nothing left to do', async () => {
@@ -1067,7 +1069,7 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         });
         const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
         confirming = true;
-        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled while this write was being planned\. Its confirmation token was not used/);
+        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled while this write was being planned\. This request did not use its confirmation token/);
         expect(h.apply).not.toHaveBeenCalled();
         expect(outcomes(h)).toContain('denied');
         confirming = false;

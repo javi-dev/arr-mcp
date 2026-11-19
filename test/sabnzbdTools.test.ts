@@ -472,6 +472,12 @@ describe('update_client_settings', () => {
         expect(h.settings.cleanup_list).toEqual(['srt']);
     });
 
+    it('stops at the format for an entry that fails it, without checking it further', async () => {
+        const call = harness().call('update_client_settings', { cleanup_list: [`a${'.'.repeat(5_000)}b`] });
+        await expect(call).rejects.toThrow(/must be an extension, file name or pattern/);
+        await expect(call).rejects.not.toThrow(/must not contain \.\./);
+    });
+
     it('accepts outer dots SABnzbd strips from an entry with no folder', async () => {
         const h = harness();
         await confirmed(h.call, 'update_client_settings', { cleanup_list: ['..srt', 'sfv..'] });

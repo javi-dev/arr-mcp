@@ -229,10 +229,10 @@ the token to the write itself, so two confirmations sent together cannot
 interleave their writes and leave a mix of both. Previews, dry runs and writes
 to other instances do not wait. A confirmation still waiting after 30 seconds,
 or whose request is cancelled while it waits or while its plan runs, is refused
-without being applied, and its token stays unused for another try. Cancelling
-means ending that request: over HTTP, the client dropping it. A
-`notifications/cancelled` sent as a request of its own does not reach a call
-already waiting.
+without being applied, and that request does not use its token, which stays good
+for another try. Cancelling means ending that request: over HTTP, the client
+dropping it. A `notifications/cancelled` sent as a request of its own does not
+reach a call already waiting.
 
 The lane is the instance the tool is routed to, within one arr-mcp process. A
 write that also changes a second service, as `delete_media` does when it adds
@@ -240,10 +240,10 @@ the title to Seerr's blocklist, is not serialised against writes to that one.
 An apply that waits on the service after writing holds the lane while it waits:
 each *arr command a rename or import waits on (up to three minutes), a recheck
 that `recheck_torrents` watches (up to 45 seconds), each step of a Jellyfin or
-Plex metadata repair (up to two minutes). Some applies wait more than once: a
-rename that rotates file names, or an import that remaps episodes, can hold the
-lane for about six minutes, a remap that also has to rotate names for about
-nine, and a Plex match followed by a refresh for about four. A plan holds the
+Plex metadata repair (up to two minutes). Some applies wait more than once: an
+import that remaps episodes and renames them once can hold the lane for about
+six minutes, one that has to rotate file names for about nine, and a Plex match
+followed by a refresh for about four. A plan holds the
 lane too: a `grab_release` confirm runs the indexer search again before it grabs
 (often 15 seconds or more, up to two minutes), so several grabs confirmed at
 once on one instance can be refused. A confirmation sent to that instance

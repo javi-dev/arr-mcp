@@ -327,7 +327,7 @@ function writeInput(schema: z.ZodObject): z.ZodObject {
 const LANE_WAIT_MS = 30_000;
 
 /** The confirmed writes waiting for an instance, oldest first. Present only while one runs. */
-type Lane = { waiting: (() => void)[] };
+type Lane = { waiting: Set<() => void> };
 
 /**
  * One lane per instance id, shared by every request's server: a confirmed
@@ -339,8 +339,13 @@ const writeLanes = new Map<string, Lane>();
 
 /** Hands the instance to the oldest write still waiting, or frees it. */
 function release(service: string, lane: Lane): void {
-    const next = lane.waiting.shift();
-    if (next !== undefined) next();
+    // A Set keeps insertion order, so the first entry is the oldest waiter, and
+    // one that gives up leaves it without a scan of the rest.
+    const next = lane.waiting.values().next().value;
+    if (next !== undefined) {
+        lane.waiting.delete(next);
+        next();
+    }
     else writeLanes.delete(service);
 }
 
@@ -358,7 +363,7 @@ async function inLane<T>(service: string, signal: AbortSignal | undefined, task:
     const aborted = (): boolean => signal?.aborted === true;
     let lane = writeLanes.get(service);
     if (lane === undefined) {
-        lane = { waiting: [] };
+        lane = { waiting: new Set() };
         writeLanes.set(service, lane);
     } else {
         const queue = lane.waiting;
@@ -368,15 +373,14 @@ async function inLane<T>(service: string, signal: AbortSignal | undefined, task:
             const settle = (outcome: 'go' | 'busy' | 'cancelled'): void => {
                 clearTimeout(timer);
                 signal?.removeEventListener('abort', cancelled);
-                const at = queue.indexOf(go);
-                if (at !== -1) queue.splice(at, 1);
+                queue.delete(go);
                 resolve(outcome);
             };
             const go = (): void => settle('go');
             const cancelled = (): void => settle('cancelled');
             const timer = setTimeout(() => settle('busy'), LANE_WAIT_MS);
             signal?.addEventListener('abort', cancelled, { once: true });
-            queue.push(go);
+            queue.add(go);
         });
         if (turn !== 'go') return { ran: false, why: turn };
         if (performance.now() >= deadline) {
@@ -590,10 +594,10 @@ export function registerWriteTool<
          * Not a ServiceError: no kind fits, since the service was never asked to write.
          */
         const unspent = (target: string, detail: string, when = ''): Error => {
-            // Through shownValue, as every refusal's target is: a plan's target can be a URL.
-            deny(service, shownValue(target), detail);
+            // Cut down as the audit cuts every target, so the row still names the host.
+            deny(service, scrubUrls(target), detail);
             return new Error(
-                `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token${when}. ` +
+                `Not applied: ${detail}. This request did not use its confirmation token: call ${spec.name} again with the same arguments and token${when}. ` +
                     'The call plans again against the state then: if another write has made the change, it can find nothing to do or nothing left to act on; otherwise it applies, or comes back as a fresh preview with a new token if this one has expired or no longer matches what the plan finds.'
             );
         };
