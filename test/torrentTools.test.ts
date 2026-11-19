@@ -1270,18 +1270,19 @@ describe('set_torrent_category', () => {
         expect(moved.structuredContent.effects.join(' ')).toContain('from /data/torrents/movies to /data/torrents/tv');
     });
 
-    it('names the configured folder as the source when where the files are cannot be told', async () => {
+    it('does not call the configured folder the source when where the files are cannot be told', async () => {
         const h = harness({ files: [], torrents: [torrent({ auto_tmm: true, content_path: '' })] });
         await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(
-            /^qbittorrent permission denied: that category would move .* to \/data\/torrents\/tv, and where its files are now cannot be told; it is set to keep them in \/data\/torrents\/movies/
+            /^qbittorrent permission denied: that category would move \S+ to \/data\/torrents\/tv, and where its files are now cannot be told; it is set to keep them in \/data\/torrents\/movies/
         );
         const preview = await h.call('set_torrent_category', { id: HASH, category: 'tv', move_files: true });
         expect(preview.structuredContent.effects.join(' ')).toContain(
             "to /data/torrents/tv, because qBittorrent manages this torrent's path by category. Where its files are now cannot be told; it is set to keep them in /data/torrents/movies."
         );
+        expect(preview.structuredContent.effects.join(' ')).not.toContain('from /data/torrents/movies');
     });
 
-    it('names the configured incomplete folder as the source of unfinished data whose folder cannot be told', async () => {
+    it('does not call the configured incomplete folder the source of unfinished data whose folder cannot be told', async () => {
         const h = harness({
             files: [],
             torrents: [torrent({ auto_tmm: true, state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete', content_path: '' })],
@@ -1408,6 +1409,18 @@ describe('set_torrent_category', () => {
     it('lets a manual torrent stored outside the roots change category, since nothing moves', async () => {
         const h = harness({ torrents: [torrent({ save_path: '/downloads', content_path: '/downloads/Some.Film/film.mkv' })] });
         expect((await h.call('set_torrent_category', { id: HASH, category: 'tv' })).structuredContent.tier).toBe('safe');
+    });
+
+    it('does not let a category token survive where the files are becoming unknown', async () => {
+        const h = harness({ torrents: [torrent({ auto_tmm: true })] });
+        const args = { id: HASH, category: 'tv', move_files: true };
+        const preview = await h.call('set_torrent_category', args);
+        expect(preview.structuredContent.effects.join(' ')).toContain('from /data/torrents/movies to /data/torrents/tv');
+        h.torrents[0]!.content_path = '';
+        const late = await h.call('set_torrent_category', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(late.structuredContent.effects.join(' ')).toContain('Where its files are now cannot be told');
+        expect(h.posts).toEqual([]);
     });
 
     it('does not let a category token survive the files turning up somewhere else', async () => {

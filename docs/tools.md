@@ -3491,10 +3491,12 @@ the new one at once, and the preview says so; if that old folder is outside
 `allowed_paths`, the repoint needs `move_files: true`. The exception is an
 unfinished torrent with an incomplete-downloads folder: its new path only applies
 once the download finishes, so nothing moves now and its old folder is not
-checked, unless turning off automatic management first gathers its files into
-that folder, which needs `move_files: true`. Any
-other move out of a folder outside `allowed_paths` is refused. After `missing
-files`, follow it with `recheck_torrents` once `get_queue` no longer shows the
+checked. For an automatically managed torrent, at `missing files` too, turning off
+automatic management first gathers its files into the folder it is set to keep
+them in (the incomplete-downloads folder while unfinished, else the save path)
+when they are not there yet; that gather needs `move_files: true`. Any other move out of a folder outside
+`allowed_paths` is refused. After a `missing files` repoint of a torrent that has
+metadata, follow it with `recheck_torrents` once `get_queue` no longer shows the
 torrent at `moving`. `move_files: true` needs `destructive`. The move runs in
 the background after the call returns. A torrent being checked is refused until
 the check ends.

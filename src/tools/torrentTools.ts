@@ -483,7 +483,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         name: 'set_torrent_location',
         title: 'Set a torrent location',
         description:
-            'Points a torrent at a new save path inside the allowed paths. qBittorrent cannot change a path without moving what it finds there, so by default this is only for a torrent at `missing files`, still fetching metadata, or with its unfinished data in the incomplete-downloads folder. Follow a `missing files` repoint with recheck_torrents. `move_files: true` has qBittorrent physically move existing data, and needs `destructive`. Previews first; confirm to apply. Field reference: arr://docs/set_torrent_location.',
+            'Points a torrent at a new save path inside the allowed paths. qBittorrent moves what it finds there, so without `move_files` this is only for a torrent at `missing files`, fetching metadata, or with unfinished data in the incomplete folder, and not if dropping automatic management gathers its files first. After a `missing files` repoint with metadata, run recheck_torrents. `move_files: true` moves data and needs `destructive`. Previews first; confirm to apply. Field reference: arr://docs/set_torrent_location.',
         inputSchema: LocationInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'set_torrent_location',
@@ -580,7 +580,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                         ? 'It has no metadata yet, so there is nothing on disk to move.'
                         : noData
                         ? `qBittorrent reports its data missing${storedIn !== undefined ? ` from ${storedIn}` : savedAt !== undefined ? `; its save path is ${savedAt}` : ''}. It has no call that changes the path alone, so any file of this torrent still at its old path moves too.`
-                        : `Physically moves ${size(details.completedBytes)} ${movesFrom === undefined ? '' : `from ${movesFrom} `}to ${path}.${movesFrom === undefined && savedAt !== undefined ? ` Where its files are now cannot be told; it is set to keep them in ${savedAt}.` : ''} Hardlinks into the library break if that crosses a filesystem.`,
+                        : `Physically moves ${size(details.completedBytes)} ${movesFrom === undefined ? '' : `from ${movesFrom} `}to ${path}.${movesFrom === undefined && savedAt !== undefined && gathersTo === undefined ? ` Where its files are now cannot be told; it is set to keep them in ${savedAt}.` : ''} Hardlinks into the library break if that crosses a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
                     ...(repointsMissing ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
@@ -748,7 +748,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
-                args: { id: details.id, category, moves: destination !== undefined, movesFrom: destination === undefined ? '' : (storedIn ?? configuredIn ?? ''), destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal, overridesProtection: protection !== undefined }
+                args: { id: details.id, category, moves: destination !== undefined, movesFrom: destination === undefined ? '' : (storedIn ?? ''), configuredFrom: unknownSource === undefined || destination === undefined ? '' : (configuredIn ?? ''), destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal, overridesProtection: protection !== undefined }
             };
         },
 
