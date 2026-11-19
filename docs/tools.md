@@ -1932,16 +1932,17 @@ Instead of the ids it takes `release_title`, the release name exactly as
 an exact match, ignoring only surrounding whitespace. Two indexers often list
 the same release under the same name, so a name that matches more than one row
 is refused with each row's `indexer_id` and `guid`. Pass `indexer_id` with the
-title to pick one. When those guids are URLs, the refusal lists only the
-indexers, and `get_releases` with `detail: "full"` has the exact guids. The
+title to pick one. When any of those guids is a URL, the refusal lists only
+the indexers, and `get_releases` with `detail: "full"` has the exact guids. The
 token binds to the guid and indexer the title resolved to, and the confirmation
 resolves it again, so a re-search that maps the name to a different row voids
 the token.
 
 A guid is often the indexer's download URL, which can carry an API key, so the
-preview and the result name such a release by a SHA-256 of its guid
-(`radarr:guid-<digest>`), as `add_torrent` names a torrent URL. The guid itself
-goes to the *arr unchanged.
+preview, the result and the audit target name such a release by the first 16
+hex digits of its guid's SHA-256 (`radarr:guid-<digest>`), much as `add_torrent`
+names a torrent URL. The audit row's arguments keep only the guid's scheme and
+host. The guid itself goes to the *arr unchanged.
 
 Safe tier: a download comes back off with `remove_queue_item`.
 
@@ -3528,9 +3529,10 @@ relocated until the check ends.
 
 Announces one torrent to its trackers now. Trackers rate-limit announces, so do
 not call it in a loop. The confirm token binds a SHA-256 of the tracker URLs, so
-a torrent whose trackers changed since the preview needs a new one. If
-qBittorrent's tracker list cannot be read, both the preview and the confirm are
-refused. The confirm checks the list as it reads it while planning, shortly
+a torrent whose trackers changed since the preview needs a new one. A stopped
+torrent has nothing to announce and is a no-op before its trackers are looked
+at. For any other, if qBittorrent's tracker list cannot be read, both the
+preview and the confirm are refused. The confirm checks the list as it reads it while planning, shortly
 before the reannounce: qBittorrent takes only the torrent's hash, so a tracker
 edited in qBittorrent between that read and the reannounce can still hear it.
 

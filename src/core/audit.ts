@@ -251,7 +251,9 @@ export class WriteAudit {
                 record.service,
                 record.operation,
                 record.tier,
-                record.target,
+                // A backstop: a tool names a credential-bearing target by a digest,
+                // and one that did not would still keep the key out of this row.
+                scrubUrls(record.target),
                 safeArgs(record.args),
                 record.caller
             );

@@ -180,12 +180,20 @@ describe('grab_release', () => {
         expect(JSON.stringify([first.content, firstShown, replaced.content, replacedShown, applied, h.audit.recent()])).not.toContain(key);
     });
 
-    it('points to get_releases when releases sharing a name differ only in a URL guid', async () => {
-        const rows = [release({ guid: 'https://indexer.example/release/123' }), release({ guid: 'https://indexer.example/release/456' })];
+    it.each([
+        ['both URLs', 'https://indexer.example/release/123', 'https://indexer.example/release/456'],
+        ['one a URL', 'https://indexer.example/release/123', 'plain-guid-456']
+    ])('points to get_releases, listing only indexers, when releases sharing a name have guids that are %s', async (_why, a, b) => {
+        const rows = [release({ guid: a }), release({ guid: b })];
         const h = harness({ releases: rows });
-        await expect(h.call({ service: 'radarr', id: '1', release_title: rows[0]?.title })).rejects.toThrow(
-            /take the exact `guid` and `indexer_id` from get_releases with `detail: "full"`/
+        const message = await h.call({ service: 'radarr', id: '1', release_title: rows[0]?.title }).then(
+            () => '',
+            (err: unknown) => (err as Error).message
         );
+        expect(message).toMatch(/take the exact `guid` and `indexer_id` from get_releases with `detail: "full"`/);
+        expect(message).toContain('has indexer_id 3');
+        expect(message).not.toContain('indexer.example');
+        expect(message).not.toContain('plain-guid');
     });
 
     it('narrows the confirming re-search to the episode or season it was given', async () => {

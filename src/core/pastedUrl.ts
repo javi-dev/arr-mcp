@@ -19,6 +19,8 @@ export const maskedHost = (hostname: string): string =>
 // An apostrophe is a legal part of a URL path, so it does not end one.
 const MAGNET_IN_TEXT = /magnet:\?[^\s"<>`]+/gi;
 const URL_IN_TEXT = /[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"<>`]+/gi;
+/** A scheme and an authority with nothing after them but one slash. */
+const BARE_URL = /^[a-z][a-z0-9+.-]{0,31}:\/\/[^/?#\\]*\/?$/i;
 
 /**
  * Free text with every URL cut down to its scheme and host, and every magnet
@@ -32,7 +34,9 @@ export function scrubUrls(text: string): string {
         const raw = match.slice(0, match.length - tail.length);
         if (!URL.canParse(raw)) return `(a URL, left out)${tail}`;
         const url = new URL(raw);
-        const bare = (url.pathname === '' || url.pathname === '/') && url.search === '' && url.hash === '' && url.username === '' && url.password === '';
+        // Judged on the text as written, not the parsed URL: the parser folds a
+        // path such as `/key/%2e%2e` down to `/`, which would pass a key through.
+        const bare = BARE_URL.test(raw) && url.username === '' && url.password === '';
         if (bare && maskedHost(url.hostname) === url.hostname) return match;
         return `${url.protocol}//${maskedHost(url.hostname)}${url.port === '' ? '' : `:${url.port}`}/...${tail}`;
     });

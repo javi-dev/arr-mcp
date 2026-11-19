@@ -81,7 +81,8 @@ rejected confirmation token comes back with and what a confirmed write reports
 once it has run, such as the error a write that stopped part way gives beside
 what it did. A reply's target is left as the plan resolved it, the same in
 every reply, so a receipt matches its preview. A release guid that is a URL is
-named there by its SHA-256, as a torrent or NZB URL is.
+named there by the first 16 hex digits of its SHA-256, much as a torrent or NZB
+URL is, and an audit target that is still a URL is cut down like an argument.
 
 ## The repair page renders the config file verbatim
 

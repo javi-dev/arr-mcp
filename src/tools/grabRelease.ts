@@ -32,6 +32,19 @@ import { titled } from '../core/labels.ts';
  * is removable again with `remove_queue_item`. Nothing on disk is lost.
  */
 
+/** Whether a guid is a URL, which a refusal would cut down and the audit would too. */
+const isUrlGuid = (guid: string): boolean => shownValue(guid) !== guid;
+
+/**
+ * The target a release is named by. A guid is often the indexer's download URL,
+ * which can carry an API key or a passkey (#6), so such a guid is named by the
+ * first 16 hex digits of its SHA-256 instead, as add_torrent names a torrent
+ * URL: the same in every preview, receipt and audit target, and still one per
+ * release. The guid itself goes to the *arr unchanged.
+ */
+const releaseTarget = (adapterId: string, guid: string): string =>
+    isUrlGuid(guid) ? `${adapterId}:guid-${createHash('sha256').update(guid).digest('hex').slice(0, 16)}` : `${adapterId}:${guid}`;
+
 /**
  * The one release named `title` (#507). For a client that only shows the model
  * text, a name it can read beats an id it has to be handed. Exact match on the
@@ -40,17 +53,6 @@ import { titled } from '../core/labels.ts';
  * may narrow it, and a name still shared is refused with each row's ids rather
  * than resolved to whichever came first.
  */
-/**
- * The target a release is named by. A guid is often the indexer's download URL,
- * which can carry an API key or a passkey (#6), so such a guid is named by its
- * SHA-256 instead, as add_torrent names a torrent URL: the same in every preview,
- * receipt and audit target, and still one per release. The guid itself goes to
- * the *arr unchanged.
- */
-const isUrlGuid = (guid: string): boolean => shownValue(guid) !== guid;
-const releaseTarget = (adapterId: string, guid: string): string =>
-    isUrlGuid(guid) ? `${adapterId}:guid-${createHash('sha256').update(guid).digest('hex').slice(0, 16)}` : `${adapterId}:${guid}`;
-
 function byTitle<T extends { title: string; guid?: string; indexerId?: number; indexer: string }>(
     candidates: readonly T[],
     title: string,

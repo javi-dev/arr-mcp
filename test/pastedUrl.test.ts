@@ -39,7 +39,11 @@ describe('scrubUrls', () => {
         [`magnet:?xt=urn:btih:abc&tr=${PASSKEY} was refused`, '(a magnet link, left out) was refused'],
         [`title https://tracker.example.org/owner's/${PASSKEY}/announce here`, 'title https://tracker.example.org/... here'],
         [`got https://${PASSKEY}.tracker.example`, 'got https://***.tracker.example/...'],
-        [`quoted 'https://tracker.example/${PASSKEY}'`, "quoted 'https://tracker.example/...'"]
+        [`quoted 'https://tracker.example/${PASSKEY}'`, "quoted 'https://tracker.example/...'"],
+        // Paths the parser folds to `/`: judged as written, they still hold the key.
+        [`got https://tracker.example/${PASSKEY}/%2e%2e`, 'got https://tracker.example/...'],
+        [`got https://tracker.example/${PASSKEY}/..`, 'got https://tracker.example/.....'],
+        [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
