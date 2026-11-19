@@ -342,11 +342,12 @@ function release(service: string, lane: Lane): void {
     // A Set keeps insertion order, so the first entry is the oldest waiter, and
     // one that gives up leaves it without a scan of the rest.
     const next = lane.waiting.values().next().value;
-    if (next !== undefined) {
-        lane.waiting.delete(next);
-        next();
+    if (next === undefined) {
+        writeLanes.delete(service);
+        return;
     }
-    else writeLanes.delete(service);
+    lane.waiting.delete(next);
+    next();
 }
 
 type Turn<T> = { ran: true; value: T } | { ran: false; why: 'busy' | 'cancelled' };
@@ -594,11 +595,13 @@ export function registerWriteTool<
          * Not a ServiceError: no kind fits, since the service was never asked to write.
          */
         const unspent = (target: string, detail: string, when = ''): Error => {
-            // Cut down as the audit cuts every target, so the row still names the host.
+            // The audit cuts every target down too; this one is cut here as well so the
+            // row names the host whichever way it reaches the audit. A refusal before
+            // the plan has only the arguments, so it records `rawTarget` instead.
             deny(service, scrubUrls(target), detail);
             return new Error(
                 `Not applied: ${detail}. This request did not use its confirmation token: call ${spec.name} again with the same arguments and token${when}. ` +
-                    'The call plans again against the state then: if another write has made the change, it can find nothing to do or nothing left to act on; otherwise it applies, or comes back as a fresh preview with a new token if this one has expired or no longer matches what the plan finds.'
+                    'The call plans again against the state then: if another write has made the change, it can find nothing to do or nothing left to act on; if another request used the same token, it is refused as already used; otherwise it applies, or comes back as a fresh preview with a new token if this one has expired or no longer matches what the plan finds.'
             );
         };
 

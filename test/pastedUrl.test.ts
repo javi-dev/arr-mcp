@@ -45,20 +45,24 @@ describe('scrubUrls', () => {
         [`got https://tracker.example/${PASSKEY}/..`, 'got https://tracker.example/...'],
         // A sentence's full stop after a cut URL is not doubled onto the placeholder.
         [`refused https://tracker.example/${PASSKEY}.`, 'refused https://tracker.example/...'],
+        [`got http://[2001:db8::1]/${PASSKEY}]`, 'got http://[2001:db8::1]/...]'],
         [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
-    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS'])('leaves %s alone', text => {
+    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS', 'could not reach http://[2001:db8::1]', 'redirected to (https://[2001:db8::1]:8443).'])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
     });
 });
 
 describe('a very long value', () => {
-    it('finds the end of a URL followed by a long run of punctuation in linear time', () => {
-        // Ending on the run, so the walk back over it is what is timed.
-        const text = `https://tracker.example/${'.'.repeat(200_000)}`;
+    it.each([
+        // A regex for the tail would retry from every dot before the `x`.
+        ['before more of the URL', `https://tracker.example/${'.'.repeat(200_000)}x`],
+        // The walk back covers the whole run.
+        ['at its end', `https://tracker.example/${'.'.repeat(200_000)}`]
+    ])('finds the end of a URL with a long run of punctuation %s in linear time', (_why, text) => {
         const started = Date.now();
         scrubUrls(text);
         expect(Date.now() - started).toBeLessThan(2_000);

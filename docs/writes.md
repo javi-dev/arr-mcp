@@ -230,9 +230,10 @@ interleave their writes and leave a mix of both. Previews, dry runs and writes
 to other instances do not wait. A confirmation still waiting after 30 seconds,
 or whose request is cancelled while it waits or while its plan runs, is refused
 without being applied, and that request does not use its token, which stays good
-for another try. Cancelling means ending that request: over HTTP, the client
-dropping it. A `notifications/cancelled` sent as a request of its own does not
-reach a call already waiting.
+for another try unless another request sent the same token and used it.
+Cancelling means ending that request: over HTTP, the client dropping it. A
+`notifications/cancelled` sent as a request of its own does not reach a call
+already waiting.
 
 The lane is the instance the tool is routed to, within one arr-mcp process. A
 write that also changes a second service, as `delete_media` does when it adds

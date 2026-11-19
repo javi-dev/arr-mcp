@@ -949,6 +949,24 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         }
     });
 
+    it('refuses a retry as already used when a duplicate of the refused request spent the token', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const r = racing('5');
+            const token = (await r.h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+            const first = r.h.call('delete_media', { id: '5', confirm: token });
+            // The same request sent twice: the first spends the token and holds the lane.
+            const second = r.h.call('delete_media', { id: '5', confirm: token }).catch((e: unknown) => e);
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(await second).toMatchObject({ message: expect.stringMatching(/This request did not use its confirmation token/) });
+            r.release();
+            await first;
+            await expect(r.h.call('delete_media', { id: '5', confirm: token })).rejects.toThrow(/already used/);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('refuses a queued confirmation whose request was cancelled, and never plans or applies it', async () => {
         const r = racing('5');
         const abort = new AbortController();

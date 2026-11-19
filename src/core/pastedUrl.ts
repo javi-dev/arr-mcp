@@ -34,8 +34,22 @@ export function scrubUrls(text: string): string {
     return text.replace(MAGNET_IN_TEXT, '(a magnet link, left out)').replace(URL_IN_TEXT, match => {
         // Walked back from the end: a regex for the tail retries from every point
         // of a long run of punctuation, and this runs on whatever a caller sends.
+        // A `]` that closes an IPv6 host (`http://[2001:db8::1]`) is the URL's own,
+        // so one is taken off only while there are more of them than `[`.
+        let opens = 0;
+        let closes = 0;
+        for (const char of match) {
+            if (char === '[') opens += 1;
+            else if (char === ']') closes += 1;
+        }
         let cut = match.length;
-        while (cut > 0 && TRAILING.has(match[cut - 1] ?? '')) cut -= 1;
+        while (cut > 0 && TRAILING.has(match[cut - 1] ?? '')) {
+            if (match[cut - 1] === ']') {
+                if (closes <= opens) break;
+                closes -= 1;
+            }
+            cut -= 1;
+        }
         const tail = match.slice(cut);
         const raw = match.slice(0, cut);
         if (!URL.canParse(raw)) return `(a URL, left out)${tail}`;
