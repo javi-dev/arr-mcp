@@ -245,11 +245,25 @@ export type WriteToolResult = {
 /** What a write tool call answers with. */
 type ToolReply = { content: { type: 'text'; text: string }[]; structuredContent: WriteToolResult };
 
+/** Every string in a value scrubbed, through plain objects and arrays. */
+function scrubbedDeep(value: unknown): unknown {
+    if (typeof value === 'string') return scrubUrls(value);
+    if (Array.isArray(value)) return value.map(scrubbedDeep);
+    if (typeof value !== 'object' || value === null) return value;
+    const proto: unknown = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value;
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, scrubbedDeep(inner)]));
+}
+
 /**
- * A refusal's reply with every URL the caller reads cut down (#6): a rejected
- * token's fresh preview can repeat what the plan quoted, and a target can be a
- * release guid that is a URL. The token is left as it is: it binds the target
- * the plan resolved, not this copy.
+ * A reply with every URL the caller reads cut down (#6), for a rejected token
+ * and for a confirmed write that ran. A rejected token's fresh preview can
+ * repeat what the plan quoted, and a target can be a release guid that is a
+ * URL. A write that ran can report an upstream error beside what it did, under
+ * whatever name its tool gives it, so all of `result` is scrubbed; no write
+ * tool returns a URL the caller needs from it. The token and the next steps
+ * are left as they are: the token binds the target the plan resolved, and a
+ * next step is a call to make.
  */
 const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolReply => ({
     content: content.map(part => ({ ...part, text: scrubUrls(part.text) })),
@@ -258,28 +272,10 @@ const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolR
         target: scrubUrls(result.target),
         summary: scrubUrls(result.summary),
         effects: result.effects.map(scrubUrls),
-        ...(result.warnings === undefined ? {} : { warnings: result.warnings.map(scrubUrls) })
+        ...(result.warnings === undefined ? {} : { warnings: result.warnings.map(scrubUrls) }),
+        ...('result' in result ? { result: scrubbedDeep(result.result) } : {})
     }
 });
-
-/**
- * An outcome that landed only in part reports the error that stopped the rest
- * in a field named for it: `failed` (`update_book`, `set_watched`),
- * `seerrBlocklistFailed` (`delete_media`), `syncFailed` (the indexer tools).
- * That error can quote a URL, so every top-level field whose name ends in
- * `failed` is scrubbed here, before the applied sentence or the result is
- * built from it, like a thrown error (#6). A new partial outcome gets the
- * scrub by following that naming.
- */
-const FAILURE_FIELD = /failed$/i;
-function scrubbedOutcome(outcome: unknown): unknown {
-    if (typeof outcome !== 'object' || outcome === null || Array.isArray(outcome)) return outcome;
-    const clean = (value: unknown): unknown =>
-        typeof value === 'string' ? scrubUrls(value) : Array.isArray(value) ? (value as unknown[]).map(item => (typeof item === 'string' ? scrubUrls(item) : item)) : value;
-    const entries = Object.entries(outcome);
-    if (!entries.some(([key]) => FAILURE_FIELD.test(key))) return outcome;
-    return Object.fromEntries(entries.map(([key, value]) => [key, FAILURE_FIELD.test(key) ? clean(value) : value]));
-}
 
 const TARGET_KEYS = [
     'id',
@@ -596,7 +592,7 @@ export function registerWriteTool<
             deny(service, target, detail);
             return new Error(
                 `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token${when}. ` +
-                    'A token that has expired by then comes back as a fresh preview with a new one, unless another write already made the change.'
+                    'If another write has made the change by then, the call says there is nothing to do; otherwise a token that has expired comes back as a fresh preview with a new one.'
             );
         };
 
@@ -793,7 +789,7 @@ export function registerWriteTool<
             const id = audit.begin(record);
             let outcome: unknown;
             try {
-                outcome = scrubbedOutcome(await spec.apply(plan, args, adapter));
+                outcome = await spec.apply(plan, args, adapter);
             } catch (err) {
                 audit.settle(id, 'failed', err instanceof Error ? err.message : String(err));
                 throw err;
@@ -819,7 +815,7 @@ export function registerWriteTool<
             // `summary` too, not only in the text.
             const said = spec.applied?.(outcome, plan);
             const landed = spec.landed?.(outcome) ?? true;
-            return respond(
+            return scrubbedReply(respond(
                 {
                     ...preview({ audit_id: id }),
                     applied: landed,
@@ -830,11 +826,12 @@ export function registerWriteTool<
                 },
                 // In the text as well as the field (#234).
                 (said ?? `Applied. ${plan.summary}`) + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
-            );
+            ));
         };
 
         const finish = async (reply: ToolReply | (() => Promise<ToolReply>)): Promise<ToolReply> => (typeof reply === 'function' ? reply() : reply);
         if (presented === undefined || dryRun) return finish(await proceed());
+        if (signal?.aborted === true) throw unspent(rawTarget(args), 'the request was cancelled before this write started');
         // A confirm call holds its instance's lane from the plan's reads to the
         // apply, so the state its token is checked against is still the state
         // it writes over. Everything else runs at once.

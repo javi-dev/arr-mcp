@@ -2,7 +2,6 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { type ServiceId, serviceOf, VALUES_KEY } from '../config/schema.ts';
 import { ServiceError } from '../core/errors.ts';
-import { scrubUrls } from '../core/pastedUrl.ts';
 import {
     hasCommandStatus,
     hasBookLibraryScan,
@@ -161,8 +160,7 @@ async function applyBookScan(adapter: ServiceAdapter & BookLibraryScanCapable, p
             started.push(id);
         } catch (err) {
             if (ids.length === 1) throw err;
-            // Into the applied sentence itself, where the harness cannot reach it: scrubbed here (#6).
-            failed.push(`${id} (${scrubUrls(err instanceof Error ? err.message : String(err))})`);
+            failed.push(`${id} (${err instanceof Error ? err.message : String(err)})`);
         }
     }
     if (started.length === 0) {

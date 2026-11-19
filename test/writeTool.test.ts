@@ -809,7 +809,10 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         { as: 'failed', field: 'failed', outcome: { done: ['unlock title'], failed: `write the metadata: rejected ${PASTED}` } },
         { as: 'seerrBlocklistFailed', field: 'seerrBlocklistFailed', outcome: { deleted: true, seerrBlocklistFailed: `refused ${PASTED}` } },
         { as: 'syncFailed', field: 'syncFailed', outcome: { indexer: 'x', syncFailed: `refused ${PASTED}` } },
-        { as: 'a list under failed', field: 'failed', outcome: { done: 1, failed: [`one ${PASTED}`, 2] } }
+        { as: 'a list under failed', field: 'failed', outcome: { done: 1, failed: [`one ${PASTED}`, 2] } },
+        // Whatever the tool calls it: fix_metadata and pause_downloads use `note`.
+        { as: 'note', field: 'note', outcome: { resumed: 2, note: `could not remove the label: ${PASTED}` } },
+        { as: 'a nested field', field: 'steps', outcome: { steps: [{ step: 'sync', error: `refused ${PASTED}` }] } }
     ])('scrubs the error a write that stopped part way reports as $as, in the result and the sentence built from it', async ({ field, outcome }) => {
         const harness = buildHarness({
             apply: () => Promise.resolve(outcome),
@@ -944,7 +947,10 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         const abort = new AbortController();
         abort.abort();
         const preview = await r.h.call('delete_media', { id: '9' });
-        await expect(r.h.call('delete_media', { id: '9', confirm: preview.structuredContent.confirm_token }, abort.signal)).rejects.toThrow(/cancelled/);
+        await expect(r.h.call('delete_media', { id: '9', confirm: preview.structuredContent.confirm_token }, abort.signal)).rejects.toThrow(
+            /^Not applied: the request was cancelled before this write started\. Its confirmation token was not used/
+        );
+        expect(outcomes(r.h)).toContain('denied');
         expect(r.h.apply).not.toHaveBeenCalled();
     });
 

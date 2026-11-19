@@ -249,8 +249,9 @@ lane too: a `grab_release` confirm runs the indexer search again before it grabs
 once on one instance can be refused. A confirmation sent to that instance
 meanwhile is refused after 30 seconds without being applied, and can be sent
 again with the same token until that token expires, five minutes after its
-preview. An expired one comes back as a fresh preview with a new token, or as
-nothing to do when the write ahead of it already made the change.
+preview. If the write ahead of it has made the change by then, the retry says
+there is nothing to do; otherwise an expired token comes back as a fresh preview
+with a new one.
 
 A destructive preview says what it costs in the units that matter:
 

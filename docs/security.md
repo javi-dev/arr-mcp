@@ -75,8 +75,9 @@ the whole magnet link. The reason an audit row records for a refusal has every U
 cut down to its scheme and host, and every magnet link removed, so a tracker URL
 pasted into the wrong argument leaves no passkey there. The error a write tool
 returns to the caller gets the same treatment, and so do the fresh preview a
-rejected confirmation token comes back with and the error a write that stopped
-part way reports beside what it did.
+rejected confirmation token comes back with and everything a confirmed write
+reports once it has run, such as the error a write that stopped part way gives
+beside what it did.
 
 ## The repair page renders the config file verbatim
 
