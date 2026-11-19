@@ -803,6 +803,15 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         expect(err.message).toBe('upstream refused https://tracker.example.org/... and (a magnet link, left out)');
     });
 
+    it('scrubs the error a write that stopped part way reports, in the result and the sentence built from it', async () => {
+        const harness = buildHarness({ apply: () => Promise.resolve({ done: ['unlock title'], failed: `write the metadata: rejected ${PASTED}` }) });
+        // Scrubbed before `applied` or the result sees it, so a sentence a tool builds from `failed` is clean too.
+        const applied = harness.call('delete_media', { id: '5' }).then(preview => harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token }));
+        const { structuredContent } = await applied;
+        expect(structuredContent.result).toEqual({ done: ['unlock title'], failed: 'write the metadata: rejected https://tracker.example.org/...' });
+        expect(JSON.stringify(structuredContent)).not.toContain(KEY);
+    });
+
     it('rethrows a refusal with no URL in it untouched', async () => {
         const refusal = new ServiceError('NotFound', 'radarr', 'no movie 5 at http://192.0.2.10:7878');
         const refusing = buildHarness({ plan: () => Promise.reject(refusal) });
@@ -968,6 +977,25 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         expect(retried.structuredContent.applied).toBe(true);
         const after = await r.h.call('delete_media', { id: '5' });
         expect((await r.h.call('delete_media', { id: '5', confirm: after.structuredContent.confirm_token })).structuredContent.applied).toBe(true);
+    });
+
+    it('leaves the token unspent when the request is cancelled while the confirm is being planned', async () => {
+        const abort = new AbortController();
+        let confirming = false;
+        const h = buildHarness({
+            plan: () => {
+                // The caller goes while the plan reads the service.
+                if (confirming) abort.abort();
+                return Promise.resolve(PLAN);
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        confirming = true;
+        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled while this write was being planned\. Its confirmation token was not used/);
+        expect(h.apply).not.toHaveBeenCalled();
+        expect(outcomes(h)).toContain('denied');
+        confirming = false;
+        expect((await h.call('delete_media', { id: '5', confirm: token })).structuredContent.applied).toBe(true);
     });
 
     it('builds the fresh preview for a rejected token outside the lane, so its cross-checks hold up no write', async () => {

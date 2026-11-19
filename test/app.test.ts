@@ -1044,6 +1044,14 @@ describe('every tool declares the shape it answers in', () => {
      * as an error. This one stops before `apply` — no token was presented —
      * but it exercises the same validation on the same shape.
      */
+    it('validates a write preview, token and all', async () => {
+        const result = await call('trigger_scan', { service: 'radarr' });
+
+        expect(result.isError).toBeFalsy();
+        expect(result.structuredContent).toMatchObject({ applied: false, tool: 'trigger_scan', tier: 'safe' });
+        expect(result.structuredContent?.['confirm_token']).toEqual(expect.any(String));
+    });
+
     /**
      * The lane a confirmed write waits in (#7) listens to the request's own
      * abort signal. Over HTTP, that is the caller dropping the request: this
@@ -1056,11 +1064,18 @@ describe('every tool declares the shape it answers in', () => {
         const gate = new Promise<void>(resolve => {
             release = resolve;
         });
+        let entered = (): void => undefined;
+        const holding = new Promise<void>(resolve => {
+            entered = resolve;
+        });
         const held = {
             ...(radarr() as unknown as Record<string, unknown>),
             startLibraryScan: async () => {
                 scans += 1;
-                if (scans === 1) await gate;
+                if (scans === 1) {
+                    entered();
+                    await gate;
+                }
                 return { commandId: 42 };
             }
         } as unknown as ServiceAdapter;
@@ -1072,19 +1087,23 @@ describe('every tool declares the shape it answers in', () => {
             });
         const result = async (res: Response) => ((await rpcPayload(res)).result ?? {}) as { structuredContent?: Record<string, unknown> };
         const token = async () => (await result(await send({ service: 'radarr' }))).structuredContent?.['confirm_token'];
-        const [first, second] = [await token(), await token()];
-        const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+        const settle = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms));
+        const first = await token();
+        // A token is issued per millisecond, so the second preview waits one out to get its own.
+        await settle(2);
+        const second = await token();
+        expect(second).not.toBe(first);
 
         try {
-            const holding = send({ service: 'radarr', confirm: first });
-            await settle();
+            const applying = send({ service: 'radarr', confirm: first });
+            await holding;
             const abort = new AbortController();
             const waiting = Promise.resolve(send({ service: 'radarr', confirm: second }, abort.signal)).catch((err: unknown) => err);
             await settle();
             abort.abort();
             await waiting;
             release();
-            expect((await result(await holding)).structuredContent).toMatchObject({ applied: true });
+            expect((await result(await applying)).structuredContent).toMatchObject({ applied: true });
             await settle();
             expect(scans).toBe(1);
         } finally {
@@ -1092,14 +1111,6 @@ describe('every tool declares the shape it answers in', () => {
         }
         expect((await result(await send({ service: 'radarr', confirm: second }))).structuredContent).toMatchObject({ applied: true });
         expect(scans).toBe(2);
-    });
-
-    it('validates a write preview, token and all', async () => {
-        const result = await call('trigger_scan', { service: 'radarr' });
-
-        expect(result.isError).toBeFalsy();
-        expect(result.structuredContent).toMatchObject({ applied: false, tool: 'trigger_scan', tier: 'safe' });
-        expect(result.structuredContent?.['confirm_token']).toEqual(expect.any(String));
     });
 });
 

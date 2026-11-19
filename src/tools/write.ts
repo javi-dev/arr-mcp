@@ -262,6 +262,19 @@ const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolR
     }
 });
 
+/**
+ * An outcome that stopped part way (`update_book`, `set_watched`) reports the
+ * error that stopped it as `failed`, and that error can quote a URL the caller
+ * passed. Scrubbed here, before the applied sentence or the result is built
+ * from it, like a thrown error (#6).
+ */
+function scrubbedOutcome(outcome: unknown): unknown {
+    if (typeof outcome !== 'object' || outcome === null || !('failed' in outcome)) return outcome;
+    const { failed } = outcome;
+    const clean = (value: unknown): unknown => (typeof value === 'string' ? scrubUrls(value) : value);
+    return { ...outcome, failed: Array.isArray(failed) ? failed.map(clean) : clean(failed) };
+}
+
 const TARGET_KEYS = [
     'id',
     'item_id',
@@ -569,6 +582,18 @@ export function registerWriteTool<
         }
 
         // A reply, or one still to finish once the lane is released.
+        /**
+         * A confirm refused before its token was checked, recorded as denied.
+         * Not a ServiceError: no kind fits, since the service was never asked to write.
+         */
+        const unspent = (target: string, detail: string, when = ''): Error => {
+            deny(service, target, detail);
+            return new Error(
+                `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token${when}. ` +
+                    'A token that has expired by then comes back as a fresh preview with a new one, unless that write already made the change.'
+            );
+        };
+
         const proceed = async (): Promise<ToolReply | (() => Promise<ToolReply>)> => {
             let plan: WritePlan<Bound>;
             try {
@@ -686,6 +711,9 @@ export function registerWriteTool<
 
             // --- 4. Confirmation --------------------------------------------------
             if (presented !== undefined) {
+                // The plan's reads take time, and a caller that has gone meanwhile
+                // must not have its token spent on a write it will never hear about.
+                if (signal?.aborted === true) throw unspent(plan.target, 'the request was cancelled while this write was being planned');
                 const check = confirm.verifyAndConsume(presented, intent);
                 if (!check.ok) {
                     // An already-spent token is the one rejection that does not
@@ -756,7 +784,7 @@ export function registerWriteTool<
             const id = audit.begin(record);
             let outcome: unknown;
             try {
-                outcome = await spec.apply(plan, args, adapter);
+                outcome = scrubbedOutcome(await spec.apply(plan, args, adapter));
             } catch (err) {
                 audit.settle(id, 'failed', err instanceof Error ? err.message : String(err));
                 throw err;
@@ -803,15 +831,12 @@ export function registerWriteTool<
         // it writes over. Everything else runs at once.
         const turn = await inLane(service, signal, proceed);
         if (turn.ran) return finish(turn.value);
-        const detail =
+        throw unspent(
+            rawTarget(args),
             turn.why === 'busy'
                 ? `another confirmed write to ${service} was still running after ${LANE_WAIT_MS / 1000} seconds`
-                : `the request was cancelled while it waited for another confirmed write to ${service} to finish`;
-        deny(service, rawTarget(args), detail);
-        // Not a ServiceError: no kind fits, since the service was never asked anything.
-        throw new Error(
-            `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token once that write has finished. ` +
-                'A token that has expired by then comes back as a fresh preview with a new one, unless that write already made the change.'
+                : `the request was cancelled while it waited for another confirmed write to ${service} to finish`,
+            ' once that write has finished'
         );
     }
 }
