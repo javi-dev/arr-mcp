@@ -86,9 +86,12 @@ of its SHA-256 instead, much as a torrent or NZB URL is, so two releases stay
 apart, and an audit target that is still a URL is cut down like an argument.
 Besides `scheme://`, the scrub knows the other spellings a URL parser accepts
 for http, https, ws, wss and ftp: backslashes or a single slash after the colon,
-or none, and a tab inside the URL. One of those counts only when its host has a
-dot and a path, query, fragment, user name or passkey-like label goes with it,
-so text such as `HTTP:404` or a file named `FTP:Archive.mkv` is left alone.
+or none. One of those counts only when a parser reads it with the very host it
+was written with, that host has a dot, and a path, query, user name or
+passkey-like label goes with it, so text such as `HTTP:404`, `https:1.2/docs`
+or a file named `FTP:Archive.mkv` is left alone. A tab inside a URL or magnet
+link before more of it, or a line break before a query character, does not end
+it, since a parser drops both.
 
 ## The repair page renders the config file verbatim
 

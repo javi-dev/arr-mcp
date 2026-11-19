@@ -54,14 +54,18 @@ describe('scrubUrls', () => {
         [`refused https://tracker.example/${PASSKEY}.`, 'refused https://tracker.example/...'],
         // A parser drops a tab inside a URL, so the key after one is still the URL's.
         [`got https://indexer.example/get\t?apikey=${PASSKEY}`, 'got https://indexer.example/...'],
-        [`got https:${PASSKEY}.tracker.example`, 'got https://***.tracker.example/...']
+        [`got https:${PASSKEY}.tracker.example`, 'got https://***.tracker.example/...'],
+        // A passkey-like last label is still found when a port follows it.
+        [`got https:/download.example.${PASSKEY}:8443`, 'got https://download.example.***:8443/...'],
+        // A tab inside a magnet link does not leave its tracker parameter behind.
+        [`magnet:?xt=urn:btih:abc\t&tr=https%3A%2F%2Ftracker.example%2F${PASSKEY} was refused`, '(a magnet link, left out) was refused']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
     it.each([
         'HTTP 500 at /api/v2/torrents/start',
-        'could not reach http://192.168.1.20:8081',
+        'could not reach http://192.0.2.20:8081',
         'plain words: nothing to cut',
         // Text a looser match would take for a URL, or rewrite into an address nobody sent.
         'upstream said HTTP:404 Not Found',
@@ -73,7 +77,12 @@ describe('scrubUrls', () => {
         'videos/https:poster.jpg',
         'Invalid scheme http:, use https',
         'url must start with https: or http:.',
-        '(https:)'
+        '(https:)',
+        'Use http:// on the LAN',
+        // A parser reads `1.2` as the address 1.0.0.2: the host as written must be the host parsed.
+        'see https:1.2/docs',
+        'upstream said HTTP:1.1/404 Not Found',
+        'FTP:Archive.mkv#1'
     ])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
         // shownValue still leaves out any plain `scheme://` value whole, as it always has.
@@ -82,6 +91,24 @@ describe('scrubUrls', () => {
 
     it('leaves the next line alone after a URL that ends one', () => {
         expect(scrubUrls(`see https://tracker.example/${PASSKEY}\n\n- Files under it`)).toBe('see https://tracker.example/...\n\n- Files under it');
+    });
+
+    it('leaves a heading on the next line alone', () => {
+        expect(scrubUrls(`see https://tracker.example/${PASSKEY}\n# Heading`)).toBe('see https://tracker.example/...\n# Heading');
+    });
+
+    it.each([
+        ['tabs before a space', `https:${'\t'.repeat(200_000)} x`],
+        ['tabs at the end', `https:${'\t'.repeat(200_000)}`],
+        ['line breaks before a space', `https:${'\n'.repeat(200_000)} x`],
+        ['slashes before a space', `https:${'/'.repeat(200_000)} x`],
+        ['tabs inside a URL before a space', `https://tracker.example/a${'\t'.repeat(200_000)} x`],
+        ['tabs inside a magnet before a space', `magnet:?xt=a${'\t'.repeat(200_000)} x`]
+    ])('scans %s in linear time', (_why, text) => {
+        const started = Date.now();
+        scrubUrls(text);
+        shownValue(text);
+        expect(Date.now() - started).toBeLessThan(2_000);
     });
 
     it('finds the end of a URL followed by a long run of punctuation in linear time', () => {

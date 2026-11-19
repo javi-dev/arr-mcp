@@ -54,6 +54,7 @@ describe('renamedPath', () => {
         expect(renamedPath('qb', 'a.mkv', 'b.mkv', ['a.mkv'])).toBe('b.mkv');
         // A colon after a scheme's name is a file name, not a URL.
         expect(renamedPath('qb', 'a.mkv', 'FTP:Archive.mkv', ['a.mkv'])).toBe('FTP:Archive.mkv');
+        expect(renamedPath('qb', 'Series/a.mkv', 'Series/FTP:Archive.mkv#1', ['Series/a.mkv'])).toBe('Series/FTP:Archive.mkv#1');
         expect(() => renamedPath('qb', 'a.mkv', 'sub/b.mkv', ['a.mkv'])).toThrow(/leave the torrent/);
     });
 
