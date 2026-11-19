@@ -57,6 +57,16 @@ describe('scrubUrls', () => {
         [`got https:${PASSKEY}.tracker.example`, 'got https://***.tracker.example/...'],
         // A passkey-like last label is still found when a port follows it.
         [`got https:/download.example.${PASSKEY}:8443`, 'got https://download.example.***:8443/...'],
+        // Tabs and line breaks a parser drops, inside a loose spelling's host or before its key.
+        [`got https:tracker.example\t/${PASSKEY}`, 'got https://tracker.example/...'],
+        [`got https:tracker.example\n?passkey=${PASSKEY}`, 'got https://tracker.example/...'],
+        [`got https:user:${PASSKEY}@tracker.example\t/announce`, 'got https://tracker.example/...'],
+        [`got https:/tracker.example\t:8443/${PASSKEY}`, 'got https://tracker.example:8443/...'],
+        [`got wss:tracker.example\t/${PASSKEY}`, 'got wss://tracker.example/...'],
+        [`got https:/index\ter.example/get?apikey=${PASSKEY}`, 'got https://indexer.example/...'],
+        // A mixed run of line breaks and tabs before a query is taken whole.
+        [`got https://indexer.example/get\n\t?apikey=${PASSKEY}`, 'got https://indexer.example/...'],
+        [`magnet:?xt=urn:btih:abc\n\t&tr=https%3A%2F%2Ftracker.example%2F${PASSKEY} was refused`, '(a magnet link, left out) was refused'],
         // A tab inside a magnet link does not leave its tracker parameter behind.
         [`magnet:?xt=urn:btih:abc\t&tr=https%3A%2F%2Ftracker.example%2F${PASSKEY} was refused`, '(a magnet link, left out) was refused']
     ])('cuts %s down', (text, expected) => {
@@ -79,7 +89,7 @@ describe('scrubUrls', () => {
         'url must start with https: or http:.',
         '(https:)',
         'Use http:// on the LAN',
-        // A parser reads `1.2` as the address 1.0.0.2: the host as written must be the host parsed.
+        // A parser reads `1.2` as another address: the host as written must be the host parsed.
         'see https:1.2/docs',
         'upstream said HTTP:1.1/404 Not Found',
         'FTP:Archive.mkv#1'
@@ -103,7 +113,10 @@ describe('scrubUrls', () => {
         ['line breaks before a space', `https:${'\n'.repeat(200_000)} x`],
         ['slashes before a space', `https:${'/'.repeat(200_000)} x`],
         ['tabs inside a URL before a space', `https://tracker.example/a${'\t'.repeat(200_000)} x`],
-        ['tabs inside a magnet before a space', `magnet:?xt=a${'\t'.repeat(200_000)} x`]
+        ['tabs inside a magnet before a space', `magnet:?xt=a${'\t'.repeat(200_000)} x`],
+        ['line breaks inside a URL before a space', `https://tracker.example/a${'\n'.repeat(200_000)} x`],
+        ['mixed tabs and line breaks inside a URL before a space', `https://tracker.example/a${'\n\t'.repeat(100_000)} x`],
+        ['mixed tabs and line breaks inside a magnet before a space', `magnet:?xt=a${'\t\n'.repeat(100_000)} x`]
     ])('scans %s in linear time', (_why, text) => {
         const started = Date.now();
         scrubUrls(text);

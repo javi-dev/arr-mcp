@@ -35,14 +35,14 @@ export const maskedHost = (hostname: string): string =>
 
 /**
  * What carries a URL or magnet on. A parser drops tabs and line breaks inside
- * one, so they do not end it when it plainly goes on: a tab before more of it,
- * or a line break before a character that continues a query. A line break
- * before anything else ends a line of text, and the next line is left alone.
- * Each run of tabs or line breaks is tried once from where it starts, so a long
- * run that leads nowhere costs one pass.
+ * one, so they do not end it when it plainly goes on: a run of tabs before more
+ * of it, or any run of tabs and line breaks before a character that continues
+ * a query. A line break before anything else ends a line of text, and the next
+ * line is left alone. A mixed run is taken whole (`(?=(?<run>...))\k<run>`
+ * cannot give any back), so a long run that leads nowhere costs one pass.
  */
 // An apostrophe is a legal part of a URL path, so it does not end one.
-const URL_BODY = String.raw`(?:[^\s"<>\x60]|\t+(?=[^\s"<>\x60])|[\r\n]+(?=[?&=%]))+`;
+const URL_BODY = String.raw`(?:[^\s"<>\x60]|\t+(?=[^\s"<>\x60])|(?=(?<run>[\t\r\n]+))\k<run>(?=[?&=%]))+`;
 const MAGNET_IN_TEXT = new RegExp(String.raw`magnet:\?${URL_BODY}`, 'gi');
 const URL_IN_TEXT = new RegExp(`${URL_START}${URL_BODY}`, 'gi');
 /** The plain `scheme://` spelling, as opposed to one only a special scheme allows. */
@@ -55,15 +55,21 @@ const BARE_URL = /^[a-z][a-z0-9+.-]{0,31}:\/\/[^/?#\\]*\/?$/i;
 /**
  * Whether a spelling only a special scheme allows is a URL worth cutting down.
  * It counts when a parser reads it as one with the very host it was written
- * with (so `https:1.2/docs` is not read as the address 1.0.0.2), that host has
- * a dot, and a path, a query or a user name goes with it, or the host has a
- * passkey-like label. Text such as `HTTP:404`, `https:strict` or a file named
- * `FTP:Archive.mkv#1` has none of that and stays as it is.
+ * with (so `https:1.2/docs` is not read as some other address), that host has
+ * a dot, and a path or a query goes with it before any fragment, or a user
+ * name, or the host has a passkey-like label. Text such as `HTTP:404`,
+ * `https:strict` or a file named `FTP:Archive.mkv#part@2` has none of that and
+ * stays as it is. The tabs and line breaks a parser drops are dropped here too
+ * before the host is read, so they cannot make the two hosts differ.
  */
 function looseUrl(raw: string): boolean {
     if (!URL.canParse(raw)) return false;
-    const after = raw.slice(raw.indexOf(':') + 1).replace(/^[\\/]+/, '');
-    const authority = after.split(/[\\/?#]/)[0] ?? '';
+    const after = raw
+        .slice(raw.indexOf(':') + 1)
+        .replace(/[\t\r\n]/g, '')
+        .replace(/^[\\/]+/, '');
+    const beforeFragment = after.split('#')[0] ?? '';
+    const authority = beforeFragment.split(/[\\/?]/)[0] ?? '';
     const written = authority
         .slice(authority.lastIndexOf('@') + 1)
         .replace(/:\d*$/, '')
@@ -71,7 +77,7 @@ function looseUrl(raw: string): boolean {
         .toLowerCase();
     const { hostname } = new URL(raw);
     if (hostname.replace(/\.$/, '') !== written || !written.includes('.')) return false;
-    return /[\\/?@]/.test(after) || maskedHost(hostname) !== hostname;
+    return /[\\/?]/.test(beforeFragment) || authority.includes('@') || maskedHost(hostname) !== hostname;
 }
 
 /**

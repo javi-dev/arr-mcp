@@ -89,9 +89,10 @@ for http, https, ws, wss and ftp: backslashes or a single slash after the colon,
 or none. One of those counts only when a parser reads it with the very host it
 was written with, that host has a dot, and a path, query, user name or
 passkey-like label goes with it, so text such as `HTTP:404`, `https:1.2/docs`
-or a file named `FTP:Archive.mkv` is left alone. A tab inside a URL or magnet
-link before more of it, or a line break before a query character, does not end
-it, since a parser drops both.
+or a file named `FTP:Archive.mkv` is left alone. A run of tabs inside a URL or
+magnet link before more of it, or a run of tabs and line breaks before a query
+character, does not end it, since a parser drops both, and they are dropped
+before a loose spelling's host is compared.
 
 ## The repair page renders the config file verbatim
 
