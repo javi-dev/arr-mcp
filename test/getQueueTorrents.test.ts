@@ -36,6 +36,16 @@ describe('get_queue on qBittorrent at detail "full"', () => {
     it('says `null` when nobody can know the private flag yet', async () => {
         const [row] = (await buildGetQueue([adapter(undefined, { torrents: [{ hash: HASH, name: 'New', state: 'metaDL' }], properties: { private: null } })], full)).items;
         expect(row!.private).toBeNull();
+        // An unknown flag must not read as public in the text: the delete guard treats unknown with the most care.
+        const line = queueLine(row!);
+        expect(line).toContain('private unknown');
+        expect(line).not.toMatch(/private (yes|no)/);
+    });
+
+    it('says `private no` in the text for a public torrent', async () => {
+        const [row] = (await buildGetQueue([adapter(undefined, { torrents: [torrent({ private: false })] })], full)).items;
+        expect(row!.private).toBe(false);
+        expect(queueLine(row!)).toContain('private no');
     });
 
     it('carries no tracker URL, passkey or tracker message', async () => {
