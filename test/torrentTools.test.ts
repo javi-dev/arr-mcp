@@ -856,7 +856,7 @@ describe('set_torrent_location', () => {
         const h = harness({ files: [], torrents: [torrent({ state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete', content_path: '' })] });
         const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/torrents/incomplete' });
         expect(preview.structuredContent.effects[0]).toBe(
-            'qBittorrent leaves its unfinished data where it is, which it is set to keep in /data/torrents/incomplete, and saves it in /data/torrents/incomplete once the download finishes.'
+            'qBittorrent leaves its unfinished data where it is, which it is set to keep in /data/torrents/incomplete, and saves it there once the download finishes.'
         );
     });
 
@@ -910,6 +910,32 @@ describe('set_torrent_location', () => {
         expect(preview.structuredContent.effects[0]).toBe(
             'qBittorrent reports its unfinished data missing from /data/torrents/movies. /data/media/movies only becomes where it goes once the download finishes.'
         );
+    });
+
+    it('does not name the incomplete folder as where unfinished data went missing when its folder cannot be told', async () => {
+        const h = harness({ files: [], torrents: [torrent({ state: 'missingFiles', amount_left: 500, completion_on: -1, download_path: '/data/torrents/incomplete', content_path: '' })] });
+        const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/media/movies' });
+        expect(preview.structuredContent.effects[0]).toBe(
+            'qBittorrent reports its unfinished data missing; it is set to keep it in /data/torrents/incomplete. /data/media/movies only becomes where it goes once the download finishes.'
+        );
+    });
+
+    it('promises no definite move when an unfinished torrent at missing files is gathered first', async () => {
+        const h = harness({ torrents: [torrent({ auto_tmm: true, state: 'missingFiles', amount_left: 500, completion_on: -1, download_path: '/data/torrents/incomplete' })] });
+        const args = { id: HASH, location: '/data/media/movies', move_files: true };
+        const preview = await h.call('set_torrent_location', args);
+        expect(preview.structuredContent.effects[0]).toBe('Turning off automatic management first moves any file of it that is left to /data/torrents/incomplete.');
+        expect(preview.structuredContent.effects[1]).toBe('qBittorrent moves them on from /data/torrents/incomplete to /data/media/movies once the download finishes.');
+        const applied = await h.call('set_torrent_location', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(applied.structuredContent.summary).toBe(
+            `qBittorrent accepted this for qbittorrent:${HASH}. Any file of it that is left may still be moving to /data/torrents/incomplete in the background. They move on to the new location once the torrent finishes.`
+        );
+    });
+
+    it('names a magnet\'s incomplete folder once when it is also the new path', async () => {
+        const h = harness({ torrents: [torrent({ state: 'metaDL', has_metadata: false, amount_left: 0, download_path: '/data/torrents/incomplete', content_path: '' })] });
+        const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/torrents/incomplete' });
+        expect(preview.structuredContent.effects).toContain('It has no metadata yet, so nothing is on disk. qBittorrent downloads it into /data/torrents/incomplete and keeps it there once the download finishes.');
     });
 
     it('keeps a torrent unfinished when it finished once and a later check found it incomplete', async () => {
@@ -1015,7 +1041,7 @@ describe('set_torrent_location', () => {
     it('warns after confirm that files left at the old path may still be moving, also when they are gathered first', async () => {
         const h = harness({ torrents: [torrent({ auto_tmm: true, state: 'missingFiles', content_path: '/data/torrents/incomplete/Some.Film/film.mkv' })] });
         const applied = await confirmed(h.call, 'set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true });
-        expect(applied.structuredContent.effects[0]).toContain('first moves its files to /data/torrents/movies');
+        expect(applied.structuredContent.effects[0]).toBe('Turning off automatic management first moves any file of it that is left to /data/torrents/movies.');
         expect(applied.structuredContent.summary).toContain(
             'Any file of it left in /data/torrents/incomplete may still be moving to /data/media/movies in the background, so wait until get_queue no longer shows it at `moving` before running recheck_torrents.'
         );
@@ -1024,7 +1050,7 @@ describe('set_torrent_location', () => {
     it('says "the old path" rather than the gather folder when a gathered missing torrent\'s folder cannot be told', async () => {
         const h = harness({ files: [], torrents: [torrent({ auto_tmm: true, state: 'missingFiles', content_path: '' })] });
         const applied = await confirmed(h.call, 'set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true });
-        expect(applied.structuredContent.effects[0]).toContain('first moves its files to /data/torrents/movies');
+        expect(applied.structuredContent.effects[0]).toContain('first moves any file of it that is left to /data/torrents/movies');
         expect(applied.structuredContent.summary).toContain('Any file of it left at the old path may still be moving to /data/media/movies');
     });
 
@@ -1106,6 +1132,18 @@ describe('set_torrent_location', () => {
     it('has nothing to do at the current path', async () => {
         const preview = await harness().call('set_torrent_location', { id: HASH, location: '/data/torrents/movies/' });
         expect(preview.structuredContent.noop).toBe(true);
+    });
+
+    it('says it is the save path that is already set, not where the files are', async () => {
+        const h = harness({ torrents: [torrent({ state: 'downloading', amount_left: 500, download_path: '/data/torrents/incomplete', content_path: '/data/torrents/incomplete/Some.Film/film.mkv' })] });
+        const preview = await h.call('set_torrent_location', { id: HASH, location: '/data/torrents/movies' });
+        expect(preview.structuredContent.noop).toBe(true);
+        expect(preview.structuredContent.summary).toMatch(/^The save path of .* is already \/data\/torrents\/movies\.$/);
+    });
+
+    it('calls the save path the configured folder when where the files are cannot be told', async () => {
+        const preview = await harness({ files: [], torrents: [torrent({ content_path: '' })] }).call('set_torrent_location', { id: HASH, location: '/data/media/movies', move_files: true });
+        expect(preview.structuredContent.effects.join(' ')).toContain('from its configured folder /data/torrents/movies to /data/media/movies');
     });
 });
 
@@ -1212,6 +1250,15 @@ describe('set_torrent_category', () => {
             categories: { movies: {}, tv: { savePath: '/data/torrents/tv', download_path: '/data/torrents/incomplete/tv' } }
         });
         await expect(h.call('set_torrent_category', { id: HASH, category: 'tv' })).rejects.toThrow(/from its configured folder \/data\/torrents\/incomplete to \/data\/torrents\/incomplete\/tv/);
+        // The token binds the folder the preview names, so a change to it asks for a new preview.
+        const args = { id: HASH, category: 'tv', move_files: true };
+        const preview = await h.call('set_torrent_category', args);
+        expect(preview.structuredContent.effects.join(' ')).toContain('from its configured folder /data/torrents/incomplete to /data/torrents/incomplete/tv');
+        h.torrents[0]!.download_path = '/data/torrents/incomplete2';
+        const late = await h.call('set_torrent_category', { ...args, confirm: preview.structuredContent.confirm_token });
+        expect(late.structuredContent.applied).toBe(false);
+        expect(late.structuredContent.effects.join(' ')).toContain('from its configured folder /data/torrents/incomplete2');
+        expect(h.posts).toEqual([]);
     });
 
     it('treats an unreadable relocation preference as moving', async () => {

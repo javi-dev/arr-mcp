@@ -342,7 +342,7 @@ describe('update_client_settings', () => {
         if (value === undefined) delete h.settings.cleanup_list;
         else h.settings.cleanup_list = value;
         await expect(h.call('update_client_settings', { cleanup_list: ['nfo'] })).rejects.toThrow(
-            /^sabnzbd version unsupported: this SABnzbd gave no readable value for cleanup_list\. These settings need SABnzbd 4\.4 or later\. If it is newer, get_client_settings shows what it answered\.$/
+            /^sabnzbd version unsupported: this SABnzbd gave no readable value for cleanup_list\. These settings need SABnzbd 4\.4 or later\. If it is newer, check them in SABnzbd itself\.$/
         );
     });
 

@@ -3487,8 +3487,9 @@ without moving what it finds there, so without `move_files` this is refused unle
 the torrent is at `missing files`, still fetching metadata, or has its unfinished
 data in the incomplete-downloads folder, where that data stays until the download
 finishes. Any file of a `missing files` torrent still at the old path moves too,
-and the preview says so; if that old folder is outside `allowed_paths`, the
-repoint needs `move_files: true`. Any other move out of a folder outside
+unless the torrent is unfinished and has an incomplete-downloads folder, and the
+preview says so; if that old folder is outside `allowed_paths`, the repoint needs
+`move_files: true`. Any other move out of a folder outside
 `allowed_paths` is refused. After `missing files`, follow it with
 `recheck_torrents` once `get_queue` no longer shows the torrent at `moving`.
 `move_files: true` needs `destructive`. The

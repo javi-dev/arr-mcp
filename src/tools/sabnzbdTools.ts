@@ -221,7 +221,7 @@ export function registerSabnzbdTools(server: McpServer, context: WriteContext, a
             const current = await client.getClientSettings();
             const unsupported = Object.keys(requested).filter(name => current[name as keyof SabClientSettings] === null && name !== 'history_retention_number');
             if (unsupported.length > 0) {
-                throw new ServiceError('VersionUnsupported', client.id, `this SABnzbd gave no readable value for ${unsupported.join(', ')}`, { remedy: 'These settings need SABnzbd 4.4 or later. If it is newer, get_client_settings shows what it answered.' });
+                throw new ServiceError('VersionUnsupported', client.id, `this SABnzbd gave no readable value for ${unsupported.join(', ')}`, { remedy: 'These settings need SABnzbd 4.4 or later. If it is newer, check them in SABnzbd itself.' });
             }
 
             const option = requested.history_retention_option ?? current.history_retention_option;

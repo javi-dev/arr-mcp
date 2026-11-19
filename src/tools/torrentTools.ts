@@ -495,7 +495,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const path = allowedPath(client.id, location, client.allowedPaths);
             const target = `${client.id}:${details.id}`;
             if (details.savePath !== undefined && details.savePath.replace(/\/+$/, '') === path) {
-                return { target, summary: `${details.title} is already at ${path}.`, effects: [], noop: true };
+                return { target, summary: `The save path of ${details.title} is already ${path}.`, effects: [], noop: true };
             }
             if (details.state === 'moving') {
                 throw new ServiceError('InvalidRequest', client.id, 'that torrent is already being moved', { remedy: 'Wait for the move to finish, then look at it again in get_queue.' });
@@ -534,18 +534,20 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const gatheredOnly = gathersTo !== undefined && keepsUnfinished;
             // Gathered into the folder it is pointed at, so nothing moves on once it finishes.
             const gatheredHome = gatheredOnly && gathersTo === path;
+            // qBittorrent cannot find the data, so anything said to move is only whatever is left of it.
+            const missing = details.state === 'missingFiles';
             // Both hops of unfinished data: where it is (or, with no metadata, will be written) now, and `path` once the download finishes.
             // A second move is ruled out only where that first folder is known.
             const onFinish = (now: string | undefined) => (now === path ? 'keeps it there once the download finishes' : `moves it to ${path} once the download finishes`);
             const unfinishedEffect = !details.hasMetadata
                 ? `It has no metadata yet, so nothing is on disk. qBittorrent downloads it into ${incompleteDir} and ${onFinish(incompleteDir)}.`
-                : details.state === 'missingFiles'
-                ? `qBittorrent reports its unfinished data missing from ${storedIn ?? incompleteDir}. ${path} only becomes where it goes once the download finishes.`
+                : missing
+                ? `qBittorrent reports its unfinished data missing${storedIn === undefined ? `; it is set to keep it in ${incompleteDir}` : ` from ${storedIn}`}. ${path} only becomes where it goes once the download finishes.`
                 : storedIn === undefined
-                ? `qBittorrent leaves its unfinished data where it is, which it is set to keep in ${incompleteDir}, and saves it in ${path} once the download finishes.`
+                ? `qBittorrent leaves its unfinished data where it is, which it is set to keep in ${incompleteDir}, and saves it ${incompleteDir === path ? 'there' : `in ${path}`} once the download finishes.`
                 : `qBittorrent leaves its unfinished data where it is, in ${storedIn}, and ${onFinish(storedIn)}.`;
             // A repoint at missing files moves whatever is left at the old path, which the applied sentence must not hide.
-            const repointsMissing = details.state === 'missingFiles' && !keepsUnfinished;
+            const repointsMissing = missing && !keepsUnfinished;
             // Never the folder the files are gathered into: with that folder unknown, the sentence says "the old path" instead.
             const missingFrom = storedIn ?? (gathersTo === undefined ? details.savePath?.replace(/\/+$/, '') : undefined);
             return {
@@ -558,7 +560,9 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ? `Point ${details.title} at ${path} on ${client.id}, where its data goes once the download finishes.`
                     : `${moves ? 'Move' : 'Point'} ${details.title} ${moves ? 'to' : 'at'} ${path} on ${client.id}.`,
                 effects: [
-                    ...(gathersTo === undefined ? [] : [`Turning off automatic management first moves its files to ${gathersTo}.`]),
+                    ...(gathersTo === undefined
+                        ? []
+                        : [missing ? `Turning off automatic management first moves any file of it that is left to ${gathersTo}.` : `Turning off automatic management first moves its files to ${gathersTo}.`]),
                     gatheredHome
                         ? 'qBittorrent keeps them there once the download finishes.'
                         : gatheredOnly
@@ -569,19 +573,20 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                         ? 'It has no metadata yet, so there is nothing on disk to move.'
                         : noData
                         ? `qBittorrent reports its data missing from ${missingFrom ?? 'its current path'}. It has no call that changes the path alone, so any file of this torrent still there moves too.`
-                        : `Physically moves ${size(details.completedBytes)} from ${movesFrom ?? details.savePath ?? 'its current path'} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
+                        : `Physically moves ${size(details.completedBytes)} from ${movesFrom ?? (details.savePath === undefined ? 'its current path' : `its configured folder ${details.savePath}`)} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
-                    ...(details.state === 'missingFiles' && !keepsUnfinished ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
+                    ...(repointsMissing ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
                 // `moves`, so a token from a preview that promised no move cannot apply to data that has since come back.
-                args: { id: details.id, location: path, moveFiles: move_files, moves, movesFrom: movesFrom ?? '', gathersTo: gathersTo ?? '', gatheredOnly, repointsMissing, missingFrom: repointsMissing ? (missingFrom ?? '') : '' }
+                args: { id: details.id, location: path, moveFiles: move_files, moves, movesFrom: movesFrom ?? '', gathersTo: gathersTo ?? '', gatheredOnly, missing, repointsMissing, missingFrom: repointsMissing ? (missingFrom ?? '') : '' }
             };
         },
 
         applied: (_outcome, plan) => {
             if (plan.args?.gatheredOnly === true) {
                 const gathersTo = String(plan.args.gathersTo);
-                return `qBittorrent accepted this for ${plan.target} and moves the files to ${gathersTo} in the background. ${gathersTo === plan.args.location ? 'They stay there' : 'They move on to the new location'} once the torrent finishes.`;
+                const now = plan.args.missing === true ? `. Any file of it that is left may still be moving to ${gathersTo} in the background` : ` and moves the files to ${gathersTo} in the background`;
+                return `qBittorrent accepted this for ${plan.target}${now}. ${gathersTo === plan.args.location ? 'They stay there' : 'They move on to the new location'} once the torrent finishes.`;
             }
             if (plan.args?.repointsMissing === true) {
                 const from = String(plan.args.missingFrom);
@@ -731,7 +736,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
-                args: { id: details.id, category, moves: destination !== undefined, movesFrom: destination === undefined ? '' : (storedIn ?? ''), destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal, overridesProtection: protection !== undefined }
+                args: { id: details.id, category, moves: destination !== undefined, movesFrom: destination === undefined ? '' : (storedIn ?? configuredIn ?? ''), destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal, overridesProtection: protection !== undefined }
             };
         },
 
