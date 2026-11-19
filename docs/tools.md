@@ -3486,17 +3486,18 @@ Points a torrent at a new save path. qBittorrent has no call that changes a path
 without moving what it finds there, so without `move_files` this is refused unless
 the torrent is at `missing files`, still fetching metadata, or has its unfinished
 data in the incomplete-downloads folder, where that data stays until the download
-finishes. Any file of a `missing files` torrent still at the old path moves too,
-and the preview says so; if that old folder is outside `allowed_paths`, the
-repoint needs `move_files: true`. For an unfinished torrent with an
-incomplete-downloads folder, the new path only applies once the download
-finishes, but turning off automatic management can still first gather any file
-that is left into that folder, which needs `move_files: true`. Any other move out of a folder outside
-`allowed_paths` is refused. After `missing files`, follow it with
-`recheck_torrents` once `get_queue` no longer shows the torrent at `moving`.
-`move_files: true` needs `destructive`. The
-move runs in the background after the call returns. A torrent being checked is
-refused until the check ends.
+finishes. Any file of a `missing files` torrent still at the old path moves to
+the new one at once, and the preview says so; if that old folder is outside
+`allowed_paths`, the repoint needs `move_files: true`. The exception is an
+unfinished torrent with an incomplete-downloads folder: its new path only applies
+once the download finishes, so nothing moves now and its old folder is not
+checked, unless turning off automatic management first gathers its files into
+that folder, which needs `move_files: true`. Any
+other move out of a folder outside `allowed_paths` is refused. After `missing
+files`, follow it with `recheck_torrents` once `get_queue` no longer shows the
+torrent at `moving`. `move_files: true` needs `destructive`. The move runs in
+the background after the call returns. A torrent being checked is refused until
+the check ends.
 
 **Unverified live** (qBittorrent): pointing a torrent at a new path, with and without moving its data.
 

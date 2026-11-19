@@ -550,10 +550,10 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 ? `qBittorrent leaves its unfinished data where it is, which it is set to keep in ${incompleteDir}, and saves it ${incompleteDir === path ? 'there' : `in ${path}`} once the download finishes.`
                 : `qBittorrent leaves its unfinished data where it is, in ${storedIn}, and ${onFinish(storedIn)}.`;
             // A repoint at missing files moves whatever is left at the old path, which the applied sentence must not hide.
-            const repointsMissing = missing && !keepsUnfinished;
-            // Never the folder the files are gathered into: with that folder unknown, the sentence says "the old path" instead.
+            const repointsMissing = missing && !keepsUnfinished && details.hasMetadata;
             const savedAt = details.savePath?.replace(/\/+$/, '');
-            const missingFrom = storedIn ?? (gathersTo === undefined ? savedAt : undefined);
+            // Only a folder the files are known to be in: with that folder unknown, the applied sentence says "the old path" instead.
+            const missingFrom = storedIn;
             const anyLeft = missing ? `any file of ${details.title} that is left` : details.title;
             return {
                 target,
@@ -563,7 +563,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ? `Move ${anyLeft} to ${gathersTo} now, and on to ${path} once it finishes, on ${client.id}.`
                     : keepsUnfinished
                     ? `Point ${details.title} at ${path} on ${client.id}, where its data goes once the download finishes.`
-                    : missing
+                    : repointsMissing
                     ? `Point ${details.title} at ${path} on ${client.id}, moving any file of it that is left.`
                     : `${moves ? 'Move' : 'Point'} ${details.title} ${moves ? 'to' : 'at'} ${path} on ${client.id}.`,
                 effects: [
@@ -580,7 +580,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                         ? 'It has no metadata yet, so there is nothing on disk to move.'
                         : noData
                         ? `qBittorrent reports its data missing${storedIn !== undefined ? ` from ${storedIn}` : savedAt !== undefined ? `; its save path is ${savedAt}` : ''}. It has no call that changes the path alone, so any file of this torrent still at its old path moves too.`
-                        : `Physically moves ${size(details.completedBytes)} from ${movesFrom ?? (savedAt === undefined ? 'its current path' : `its configured folder ${savedAt}`)} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
+                        : `Physically moves ${size(details.completedBytes)} ${movesFrom === undefined ? '' : `from ${movesFrom} `}to ${path}.${movesFrom === undefined && savedAt !== undefined ? ` Where its files are now cannot be told; it is set to keep them in ${savedAt}.` : ''} Hardlinks into the library break if that crosses a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
                     ...(repointsMissing ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
@@ -711,7 +711,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             if (destination !== undefined && storedIn !== undefined) allowedPath(client.id, storedIn, client.allowedPaths);
             // Named in the preview and the refusal. Where the files really are when that can be told, else where the torrent is set to keep them.
             const configuredIn = unfinished ? (incompleteDir ?? savedAt) : savedAt;
-            const leaves = storedIn !== undefined ? `from ${storedIn} ` : configuredIn !== undefined ? `from its configured folder ${configuredIn} ` : '';
+            const leaves = storedIn === undefined ? '' : `from ${storedIn} `;
+            const unknownSource = storedIn === undefined && configuredIn !== undefined ? `where its files are now cannot be told; it is set to keep them in ${configuredIn}` : undefined;
             const removal = removalAtLimit(details.share, categories, defaults, category);
             // Only a rule this change brings in: moving between categories under the same one exposes the torrent to nothing new.
             const introduced = removal !== undefined && JSON.stringify(removal) !== JSON.stringify(removalAtLimit(details.share, categories, defaults, details.category));
@@ -722,7 +723,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 });
             }
             if (destination !== undefined && !move_files) {
-                throw new ServiceError('PermissionDenied', client.id, `that category would move ${details.title} ${leaves}to ${destination}`, {
+                throw new ServiceError('PermissionDenied', client.id, `that category would move ${details.title} ${leaves}to ${destination}${unknownSource === undefined ? '' : `, and ${unknownSource}`}`, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_category again with `move_files: true`.'
                 });
             }
@@ -743,7 +744,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                             : finishedAt === undefined
                             ? 'The data stays where it is.'
                             : `Its unfinished data stays where it is, and goes to ${finishedAt} once finished.`
-                        : `Physically moves ${size(details.completedBytes)} ${leaves}to ${destination}, because qBittorrent manages this torrent's path by category.${finishedAt === undefined ? '' : ` It goes to ${finishedAt} once finished.`}`,
+                        : `Physically moves ${size(details.completedBytes)} ${leaves}to ${destination}, because qBittorrent manages this torrent's path by category.${unknownSource === undefined ? '' : ` Where its files are now cannot be told; it is set to keep them in ${configuredIn}.`}${finishedAt === undefined ? '' : ` It goes to ${finishedAt} once finished.`}`,
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
