@@ -786,7 +786,7 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         expect(JSON.stringify([content, shown])).not.toContain(KEY);
         // The target is what the token binds, shown as the plan resolved it in every reply.
         expect(structuredContent.target).toBe(PLAN.target);
-        expect(structuredContent.summary).toBe('Add it to category https://tracker.example.org/....');
+        expect(structuredContent.summary).toBe('Add it to category https://tracker.example.org/...');
         const applied = await h.call('delete_media', { id: '5', confirm: structuredContent.confirm_token });
         expect(applied.structuredContent.applied).toBe(true);
     });
@@ -826,17 +826,27 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         expect(structuredContent.result).toMatchObject(Object.fromEntries(Object.keys(outcome).filter(key => key !== field).map(key => [key, (outcome as Record<string, unknown>)[key]])));
     });
 
-    it('keeps the target a receipt names, and a bare address, while scrubbing what else the write reported', async () => {
-        // A release guid is often a URL: the preview showed it and the token bound it.
-        const guid = 'radarr:https://indexer.example/release/123';
+    it('names a URL target the same cut-down way in the preview, a rejection, the receipt and its result', async () => {
+        const target = `radarr:${PASTED}`;
         const harness = buildHarness({
-            plan: { ...PLAN, target: guid },
-            apply: () => Promise.resolve({ grabbed: guid, endpoint: 'http://192.0.2.10:7878', note: `the client said ${PASTED}` })
+            plan: { ...PLAN, target },
+            apply: () => Promise.resolve({ grabbed: target, endpoint: 'http://192.0.2.10:7878', note: `the client said ${PASTED}` })
         });
         const preview = await harness.call('delete_media', { id: '5' });
+        const rejected = await harness.call('delete_media', { id: '5', confirm: 'not-a-token' });
         const { structuredContent } = await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token });
-        expect(structuredContent.target).toBe(guid);
-        expect(structuredContent.result).toEqual({ grabbed: guid, endpoint: 'http://192.0.2.10:7878', note: 'the client said https://tracker.example.org/...' });
+        expect(preview.structuredContent.target).toBe('radarr:https://tracker.example.org/...');
+        expect(rejected.structuredContent.target).toBe(preview.structuredContent.target);
+        expect(structuredContent.target).toBe(preview.structuredContent.target);
+        // A bare address is kept: nothing in it can be a key.
+        expect(structuredContent.result).toEqual({ grabbed: preview.structuredContent.target, endpoint: 'http://192.0.2.10:7878', note: 'the client said https://tracker.example.org/...' });
+    });
+
+    it('scrubs a no-op, whose sentence can repeat a URL the plan quoted', async () => {
+        const harness = buildHarness({ plan: { ...PLAN, target: `radarr:${PASTED}`, summary: `${PASTED} is already imported.`, noop: true } });
+        const { content, structuredContent } = await harness.call('delete_media', { id: '5' });
+        expect(JSON.stringify([content, structuredContent])).not.toContain(KEY);
+        expect(structuredContent.noop).toBe(true);
     });
 
     it('rethrows a refusal with no URL in it untouched', async () => {

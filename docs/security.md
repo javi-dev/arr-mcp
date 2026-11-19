@@ -79,10 +79,13 @@ this version can still hold a release guid in full. The error a write tool
 returns to the caller gets the same treatment, and so do the fresh preview a
 rejected confirmation token comes back with and what a confirmed write reports
 once it has run, such as the error a write that stopped part way gives beside
-what it did. A reply's target is left as the plan resolved it, the same in
-every reply, so a receipt matches its preview. A release guid that is a URL is
-named there by the first 16 hex digits of its SHA-256, much as a torrent or NZB
-URL is, and an audit target that is still a URL is cut down like an argument.
+what it did, and a no-op's reply. A target that is a URL is cut down the same
+way in every reply, first previews included, so a receipt names what its
+preview named. A release guid that is a URL is named by the first 16 hex digits
+of its SHA-256 instead, much as a torrent or NZB URL is, so two releases stay
+apart, and an audit target that is still a URL is cut down like an argument.
+Besides `scheme://`, the scrub knows the other spellings a URL parser accepts
+for http and https, such as backslashes or a single slash after the colon.
 
 ## The repair page renders the config file verbatim
 

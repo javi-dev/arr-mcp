@@ -1,6 +1,14 @@
-/** A URL or magnet where a name or id belongs, which can carry a tracker passkey. */
+/**
+ * The start of a URL. Any scheme followed by `://`, and for the schemes a URL
+ * parser treats specially, any spelling it accepts: one slash, backslashes in
+ * place of slashes, or none at all (`https:\\host\\key` and `https:host/key`
+ * both parse as `https://host/...`).
+ */
 // The scheme is bounded so a long run of letters cannot make the match quadratic.
-const PASTED_URL = /[a-z][a-z0-9+.-]{0,31}:\/\/|magnet:\?/i;
+const URL_START = String.raw`(?:\b(?:https?|wss?|ftp):|[a-z][a-z0-9+.-]{0,31}:\/\/)`;
+
+/** A URL or magnet where a name or id belongs, which can carry a tracker passkey. */
+const PASTED_URL = new RegExp(String.raw`${URL_START}[^\s"<>\x60]|magnet:\?`, 'i');
 
 /** The value as a refusal or an audit row may repeat it. */
 export const shownValue = (value: string): string => (PASTED_URL.test(value) ? '(a URL, left out)' : value);
@@ -18,7 +26,7 @@ export const maskedHost = (hostname: string): string =>
 
 // An apostrophe is a legal part of a URL path, so it does not end one.
 const MAGNET_IN_TEXT = /magnet:\?[^\s"<>`]+/gi;
-const URL_IN_TEXT = /[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"<>`]+/gi;
+const URL_IN_TEXT = new RegExp(String.raw`${URL_START}[^\s"<>\x60]+`, 'gi');
 /** A scheme and an authority with nothing after them but one slash. */
 const BARE_URL = /^[a-z][a-z0-9+.-]{0,31}:\/\/[^/?#\\]*\/?$/i;
 
@@ -38,6 +46,7 @@ export function scrubUrls(text: string): string {
         // path such as `/key/%2e%2e` down to `/`, which would pass a key through.
         const bare = BARE_URL.test(raw) && url.username === '' && url.password === '';
         if (bare && maskedHost(url.hostname) === url.hostname) return match;
-        return `${url.protocol}//${maskedHost(url.hostname)}${url.port === '' ? '' : `:${url.port}`}/...${tail}`;
+        // The placeholder already ends in dots, so a sentence's own are not added to them.
+        return `${url.protocol}//${maskedHost(url.hostname)}${url.port === '' ? '' : `:${url.port}`}/...${tail.replace(/^\.+/, '')}`;
     });
 }

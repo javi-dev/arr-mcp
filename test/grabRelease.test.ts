@@ -160,6 +160,18 @@ describe('grab_release', () => {
         expect(applied.structuredContent.result).toEqual({ grabbed: preview.structuredContent.target });
     });
 
+    it('names a guid spelt with backslashes, which a URL parser still reads as a URL, by its digest', async () => {
+        const key = '0123456789abcdef0123456789abcdef';
+        const guid = `https:\\\\indexer.example\\get?apikey=${key}`;
+        const h = harness({ releases: [release({ guid })] });
+        const args = { service: 'radarr', id: '1', guid, indexer_id: 3 };
+        const preview = await h.call(args);
+        expect(preview.structuredContent.target).toMatch(/^radarr:guid-[0-9a-f]{16}$/);
+        const applied = await h.call({ ...args, confirm: preview.structuredContent.confirm_token });
+        expect(h.grabbed).toEqual([{ guid, indexerId: 3 }]);
+        expect(JSON.stringify([preview.structuredContent.target, applied, h.audit.recent()])).not.toContain(key);
+    });
+
     it('names a URL guid the same way in a replacement preview and the receipt for it, and never shows its key', async () => {
         const key = '0123456789abcdef0123456789abcdef';
         const rows = [release({ guid: `https://indexer.example/get/1?apikey=${key}` })];

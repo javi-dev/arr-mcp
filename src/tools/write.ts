@@ -245,37 +245,36 @@ export type WriteToolResult = {
 /** What a write tool call answers with. */
 type ToolReply = { content: { type: 'text'; text: string }[]; structuredContent: WriteToolResult };
 
-/** Every string in a value scrubbed, through plain objects and arrays, except `kept`. */
-function scrubbedDeep(value: unknown, kept?: string): unknown {
-    if (typeof value === 'string') return value === kept ? value : scrubUrls(value);
-    if (Array.isArray(value)) return value.map(item => scrubbedDeep(item, kept));
+/** Every string in a value scrubbed, through plain objects and arrays. */
+function scrubbedDeep(value: unknown): unknown {
+    if (typeof value === 'string') return scrubUrls(value);
+    if (Array.isArray(value)) return value.map(scrubbedDeep);
     if (typeof value !== 'object' || value === null) return value;
     const proto: unknown = Object.getPrototypeOf(value);
     if (proto !== Object.prototype && proto !== null) return value;
-    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, scrubbedDeep(inner, kept)]));
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, scrubbedDeep(inner)]));
 }
 
 /**
- * A reply with every URL the caller reads cut down (#6), for a rejected token
- * and for a confirmed write that ran. A rejected token's fresh preview can
+ * A reply with every URL the caller reads cut down (#6), for a rejected token,
+ * a no-op and a confirmed write that ran. A rejected token's fresh preview can
  * repeat what the plan quoted. A write that ran can report an upstream error
- * beside what it did, under whatever name its tool gives it, so every string
- * in `result` is scrubbed.
- *
- * The target is the one string left whole, in `target` and wherever a string
- * in `result` is exactly it: it names what the token binds, the same in every
- * reply, so a receipt matches the preview it confirms. A tool whose target
- * could hold a credential names it by a digest instead, as add_torrent, add_nzb
- * and grab_release do. Next steps are not passed through here, being calls to make.
+ * beside what it did, under whatever name its tool gives it, so every string in
+ * `result` is scrubbed. The target is cut down the same way in every reply,
+ * first previews included, so a receipt still names what its preview named; a
+ * tool whose target is a credential-bearing URL names it by a digest instead,
+ * as add_torrent, add_nzb and grab_release do, so two of them stay apart.
+ * Next steps are not passed through here, being calls to make.
  */
 const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolReply => ({
     content: content.map(part => ({ ...part, text: scrubUrls(part.text) })),
     structuredContent: {
         ...result,
+        target: scrubUrls(result.target),
         summary: scrubUrls(result.summary),
         effects: result.effects.map(scrubUrls),
         ...(result.warnings === undefined ? {} : { warnings: result.warnings.map(scrubUrls) }),
-        ...('result' in result ? { result: scrubbedDeep(result.result, result.target) } : {})
+        ...('result' in result ? { result: scrubbedDeep(result.result) } : {})
     }
 });
 
@@ -631,7 +630,8 @@ export function registerWriteTool<
                 service,
                 operation: spec.operation,
                 tier,
-                target: plan.target,
+                // Cut down in every reply alike, so a receipt names what its preview named.
+                target: scrubUrls(plan.target),
                 summary: plan.summary,
                 effects: plan.effects,
                 noop: plan.noop === true,
@@ -678,15 +678,15 @@ export function registerWriteTool<
                 const next = plan.next ?? [];
                 if (id !== undefined) audit.settle(id, 'dry_run', next.length > 0 ? 'no-op: listed only' : 'no-op: already in the requested state');
                 if (next.length > 0) {
-                    return respond(
+                    return scrubbedReply(respond(
                         preview({ ...(id === undefined ? {} : { audit_id: id }), next_steps: next }),
                         `${plan.summary}\n\n${plan.effects.map(e => `- ${e}`).join('\n')}\n\n${next.map(nextStepLine).join('\n')}\n\nNo change was made and no confirmation is needed.`
-                    );
+                    ));
                 }
-                return respond(
+                return scrubbedReply(respond(
                     preview(id === undefined ? {} : { audit_id: id }),
                     `Nothing to do: ${plan.summary} No change was made and no confirmation is needed.`
-                );
+                ));
             }
 
             // --- 2. dry_run: terminal preview, never gated ------------------------

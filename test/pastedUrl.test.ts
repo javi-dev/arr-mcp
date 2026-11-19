@@ -42,14 +42,26 @@ describe('scrubUrls', () => {
         [`quoted 'https://tracker.example/${PASSKEY}'`, "quoted 'https://tracker.example/...'"],
         // Paths the parser folds to `/`: judged as written, they still hold the key.
         [`got https://tracker.example/${PASSKEY}/%2e%2e`, 'got https://tracker.example/...'],
-        [`got https://tracker.example/${PASSKEY}/..`, 'got https://tracker.example/.....'],
-        [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...']
+        [`got https://tracker.example/${PASSKEY}/..`, 'got https://tracker.example/...'],
+        [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...'],
+        // Spellings a URL parser accepts for http and https without `://`.
+        [`got https:\\\\tracker.example\\${PASSKEY}\\announce`, 'got https://tracker.example/...'],
+        [`got https:\\tracker.example\\${PASSKEY}`, 'got https://tracker.example/...'],
+        [`got https:/\\tracker.example\\${PASSKEY}`, 'got https://tracker.example/...'],
+        [`got https:/tracker.example/${PASSKEY}`, 'got https://tracker.example/...'],
+        [`got https:tracker.example/${PASSKEY}`, 'got https://tracker.example/...'],
+        // A sentence's full stop after a cut URL is not doubled onto the placeholder.
+        [`refused https://tracker.example/${PASSKEY}.`, 'refused https://tracker.example/...']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
     it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.168.1.20:8081', 'plain words: nothing to cut'])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
+    });
+
+    it.each([`https:\\\\tracker.example\\${PASSKEY}`, `https:/tracker.example/${PASSKEY}`, `https:tracker.example/${PASSKEY}`])('treats %s as a pasted URL', value => {
+        expect(shownValue(value)).toBe('(a URL, left out)');
     });
 });
 
