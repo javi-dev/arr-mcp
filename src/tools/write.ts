@@ -245,14 +245,14 @@ export type WriteToolResult = {
 /** What a write tool call answers with. */
 type ToolReply = { content: { type: 'text'; text: string }[]; structuredContent: WriteToolResult };
 
-/** Every string in a value scrubbed, through plain objects and arrays. */
-function scrubbedDeep(value: unknown): unknown {
-    if (typeof value === 'string') return scrubUrls(value);
-    if (Array.isArray(value)) return value.map(scrubbedDeep);
+/** Every string in a value scrubbed, through plain objects and arrays, except `kept`. */
+function scrubbedDeep(value: unknown, kept?: string): unknown {
+    if (typeof value === 'string') return value === kept ? value : scrubUrls(value);
+    if (Array.isArray(value)) return value.map(item => scrubbedDeep(item, kept));
     if (typeof value !== 'object' || value === null) return value;
     const proto: unknown = Object.getPrototypeOf(value);
     if (proto !== Object.prototype && proto !== null) return value;
-    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, scrubbedDeep(inner)]));
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, scrubbedDeep(inner, kept)]));
 }
 
 /**
@@ -260,20 +260,22 @@ function scrubbedDeep(value: unknown): unknown {
  * and for a confirmed write that ran. A rejected token's fresh preview can
  * repeat what the plan quoted, and a target can be a release guid that is a
  * URL. A write that ran can report an upstream error beside what it did, under
- * whatever name its tool gives it, so all of `result` is scrubbed; no write
- * tool returns a URL the caller needs from it. The token and the next steps
- * are left as they are: the token binds the target the plan resolved, and a
- * next step is a call to make.
+ * whatever name its tool gives it, so every string in `result` is scrubbed.
+ *
+ * `kept` is the one string left whole: on a write that ran, the target its
+ * preview already showed and its token bound, so the receipt still names
+ * what was written (a release guid that is a URL, say) wherever it repeats it.
+ * Next steps are not passed through here, being calls to make.
  */
-const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolReply => ({
+const scrubbedReply = ({ content, structuredContent: result }: ToolReply, kept?: string): ToolReply => ({
     content: content.map(part => ({ ...part, text: scrubUrls(part.text) })),
     structuredContent: {
         ...result,
-        target: scrubUrls(result.target),
+        target: result.target === kept ? result.target : scrubUrls(result.target),
         summary: scrubUrls(result.summary),
         effects: result.effects.map(scrubUrls),
         ...(result.warnings === undefined ? {} : { warnings: result.warnings.map(scrubUrls) }),
-        ...('result' in result ? { result: scrubbedDeep(result.result) } : {})
+        ...('result' in result ? { result: scrubbedDeep(result.result, kept) } : {})
     }
 });
 
@@ -352,9 +354,9 @@ type Turn<T> = { ran: true; value: T } | { ran: false; why: 'busy' | 'cancelled'
  * write that gives up leaves the queue at once, holding nothing.
  */
 async function inLane<T>(service: string, signal: AbortSignal | undefined, task: () => Promise<T>): Promise<Turn<T>> {
-    // A function, so the check after the wait reads the signal as it is then.
+    // A function, so the check after the wait reads the signal as it is then. The
+    // harness refuses a request already cancelled before it calls this.
     const aborted = (): boolean => signal?.aborted === true;
-    if (aborted()) return { ran: false, why: 'cancelled' };
     let lane = writeLanes.get(service);
     if (lane === undefined) {
         lane = { waiting: [] };
@@ -589,10 +591,11 @@ export function registerWriteTool<
          * Not a ServiceError: no kind fits, since the service was never asked to write.
          */
         const unspent = (target: string, detail: string, when = ''): Error => {
-            deny(service, target, detail);
+            // Through shownValue, as every refusal's target is: a plan's target can be a URL.
+            deny(service, shownValue(target), detail);
             return new Error(
                 `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token${when}. ` +
-                    'If another write has made the change by then, the call says there is nothing to do; otherwise a token that has expired comes back as a fresh preview with a new one.'
+                    'The call plans again against the state then: if another write has made the change, it can find nothing to do or nothing left to act on; otherwise a token that has expired comes back as a fresh preview with a new one.'
             );
         };
 
@@ -815,18 +818,25 @@ export function registerWriteTool<
             // `summary` too, not only in the text.
             const said = spec.applied?.(outcome, plan);
             const landed = spec.landed?.(outcome) ?? true;
-            return scrubbedReply(respond(
-                {
-                    ...preview({ audit_id: id }),
-                    applied: landed,
-                    ...(landed ? {} : { noop: true }),
-                    ...(said === undefined ? {} : { summary: said }),
-                    ...(outcome === undefined ? {} : { result: outcome }),
-                    ...(nextSteps.length === 0 ? {} : { next_steps: nextSteps })
-                },
-                // In the text as well as the field (#234).
-                (said ?? `Applied. ${plan.summary}`) + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
-            ));
+            const reply = scrubbedReply(
+                respond(
+                    {
+                        ...preview({ audit_id: id }),
+                        applied: landed,
+                        ...(landed ? {} : { noop: true }),
+                        ...(said === undefined ? {} : { summary: said }),
+                        ...(outcome === undefined ? {} : { result: outcome })
+                    },
+                    said ?? `Applied. ${plan.summary}`
+                ),
+                plan.target
+            );
+            if (nextSteps.length === 0) return reply;
+            // Added after the scrub, so the text and the field carry the same calls (#234).
+            return respond(
+                { ...reply.structuredContent, next_steps: nextSteps },
+                (reply.content[0]?.text ?? '') + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
+            );
         };
 
         const finish = async (reply: ToolReply | (() => Promise<ToolReply>)): Promise<ToolReply> => (typeof reply === 'function' ? reply() : reply);

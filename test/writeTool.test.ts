@@ -826,6 +826,19 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         expect(structuredContent.result).toMatchObject(Object.fromEntries(Object.keys(outcome).filter(key => key !== field).map(key => [key, (outcome as Record<string, unknown>)[key]])));
     });
 
+    it('keeps the target a receipt names, and a bare address, while scrubbing what else the write reported', async () => {
+        // A release guid is often a URL: the preview showed it and the token bound it.
+        const guid = 'radarr:https://indexer.example/release/123';
+        const harness = buildHarness({
+            plan: { ...PLAN, target: guid },
+            apply: () => Promise.resolve({ grabbed: guid, endpoint: 'http://192.0.2.10:7878', note: `the client said ${PASTED}` })
+        });
+        const preview = await harness.call('delete_media', { id: '5' });
+        const { structuredContent } = await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token });
+        expect(structuredContent.target).toBe(guid);
+        expect(structuredContent.result).toEqual({ grabbed: guid, endpoint: 'http://192.0.2.10:7878', note: 'the client said https://tracker.example.org/...' });
+    });
+
     it('rethrows a refusal with no URL in it untouched', async () => {
         const refusal = new ServiceError('NotFound', 'radarr', 'no movie 5 at http://192.0.2.10:7878');
         const refusing = buildHarness({ plan: () => Promise.reject(refusal) });
@@ -996,6 +1009,24 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         expect((await r.h.call('delete_media', { id: '5', confirm: after.structuredContent.confirm_token })).structuredContent.applied).toBe(true);
     });
 
+    it('keeps a URL target out of the row a confirm cancelled mid-plan writes', async () => {
+        const passkey = '0123456789abcdef0123456789abcdef';
+        const abort = new AbortController();
+        let confirming = false;
+        const h = buildHarness({
+            plan: () => {
+                if (confirming) abort.abort();
+                return Promise.resolve({ ...PLAN, target: `radarr:https://indexer.example/get?apikey=${passkey}` });
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        confirming = true;
+        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/being planned/);
+        const [row] = h.audit.recent() as { outcome: string; target: string }[];
+        expect(row?.outcome).toBe('denied');
+        expect(row?.target).not.toContain(passkey);
+    });
+
     it('records a confirm cancelled mid-plan as refused, even when the plan finds nothing left to do', async () => {
         const abort = new AbortController();
         let confirming = false;
@@ -1010,6 +1041,7 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         confirming = true;
         await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled while this write was being planned/);
         expect(outcomes(h)).toEqual(['unconfirmed', 'denied']);
+        expect(h.audit.recent()[0]).toMatchObject({ outcome: 'denied', target: PLAN.target });
         expect(h.apply).not.toHaveBeenCalled();
     });
 
