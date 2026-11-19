@@ -102,6 +102,20 @@ describe('remove_queue_item on qBittorrent', () => {
         expect(h.posts).toEqual([]);
     });
 
+    it('does not trust the legacy flag of a paused magnet on a build that sends no has_metadata', async () => {
+        // qBittorrent 4.x: no `has_metadata`, no `private` in the list, and `is_private: false` whenever metadata is missing.
+        const paused = torrent({ state: 'pausedDL', size: 0, amount_left: 0, private: undefined, has_metadata: undefined });
+        const h = harness({ protect_private_torrents: true }, { torrents: [paused], properties: { is_private: false } });
+        await expect(h.call('remove_queue_item', ARGS)).rejects.toThrow(/not known yet/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('still reads the legacy flag of a torrent that has its metadata on such a build', async () => {
+        const seeding = torrent({ private: undefined, has_metadata: undefined });
+        const h = harness({ protect_private_torrents: true }, { torrents: [seeding], properties: { is_private: false } });
+        expect((await h.call('remove_queue_item', ARGS)).structuredContent.confirm_token).toBeDefined();
+    });
+
     it('fails closed when a proxy answers 404 for a torrent qBittorrent has just listed', async () => {
         const qb = fakeQbittorrent();
         const impl = ((input: string | URL | Request, init?: RequestInit) =>

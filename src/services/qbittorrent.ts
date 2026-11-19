@@ -234,8 +234,16 @@ const TRACKER_STATUS: Record<number, string> = {
     6: 'unreachable'
 };
 
-/** A stopped magnet has no metadata either, which only `has_metadata` says; a build too old to send it still has the states. */
-const hasMetadataOf = (t: RawTorrent): boolean => t.has_metadata !== false && t.state !== 'metaDL' && t.state !== 'forcedMetaDL';
+/**
+ * A stopped magnet has no metadata either, which only `has_metadata` says. A
+ * build too old to send it (4.x) still has the states, and reports no size for
+ * a torrent whose metadata never arrived.
+ */
+const hasMetadataOf = (t: RawTorrent): boolean => {
+    if (t.state === 'metaDL' || t.state === 'forcedMetaDL') return false;
+    if (t.has_metadata !== undefined) return t.has_metadata;
+    return t.size === undefined || t.size > 0;
+};
 
 /** `max_ratio_act` as the action names categories and torrents use. Unknown counts as removing: the guard fails closed. */
 const SHARE_ACTION_NAME: Record<number, string> = { 0: 'Stop', 1: 'Remove', 2: 'EnableSuperSeeding', 3: 'RemoveWithContent' };
