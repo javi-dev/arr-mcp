@@ -678,10 +678,15 @@ export function registerWriteTool<
                 const next = plan.next ?? [];
                 if (id !== undefined) audit.settle(id, 'dry_run', next.length > 0 ? 'no-op: listed only' : 'no-op: already in the requested state');
                 if (next.length > 0) {
-                    return scrubbedReply(respond(
-                        preview({ ...(id === undefined ? {} : { audit_id: id }), next_steps: next }),
-                        `${plan.summary}\n\n${plan.effects.map(e => `- ${e}`).join('\n')}\n\n${next.map(nextStepLine).join('\n')}\n\nNo change was made and no confirmation is needed.`
-                    ));
+                    // The listing is scrubbed and the calls added after, as on an
+                    // applied write, so the text and the field carry the same calls.
+                    const listed = scrubbedReply(
+                        respond(preview(id === undefined ? {} : { audit_id: id }), `${plan.summary}\n\n${plan.effects.map(e => `- ${e}`).join('\n')}`)
+                    );
+                    return respond(
+                        { ...listed.structuredContent, next_steps: next },
+                        `${listed.content[0]?.text ?? ''}\n\n${next.map(nextStepLine).join('\n')}\n\nNo change was made and no confirmation is needed.`
+                    );
                 }
                 return scrubbedReply(respond(
                     preview(id === undefined ? {} : { audit_id: id }),

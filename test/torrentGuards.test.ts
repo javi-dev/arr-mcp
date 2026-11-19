@@ -52,6 +52,8 @@ describe('renamedPath', () => {
 
     it('keeps a single-file torrent at the top level', () => {
         expect(renamedPath('qb', 'a.mkv', 'b.mkv', ['a.mkv'])).toBe('b.mkv');
+        // A colon after a scheme's name is a file name, not a URL.
+        expect(renamedPath('qb', 'a.mkv', 'FTP:Archive.mkv', ['a.mkv'])).toBe('FTP:Archive.mkv');
         expect(() => renamedPath('qb', 'a.mkv', 'sub/b.mkv', ['a.mkv'])).toThrow(/leave the torrent/);
     });
 

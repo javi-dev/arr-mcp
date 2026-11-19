@@ -6,7 +6,7 @@ import * as z from 'zod/v4';
 import { type ServiceId, serviceOf } from '../config/schema.ts';
 import { ServiceError } from '../core/errors.ts';
 import { guidForText, unfence } from '../core/fence.ts';
-import { shownValue } from '../core/pastedUrl.ts';
+import { scrubUrls, shownValue } from '../core/pastedUrl.ts';
 import { logger } from '../core/logger.ts';
 import { btihToHex } from '../services/qbittorrent.ts';
 import {
@@ -334,7 +334,8 @@ export function registerGrabRelease(
             ];
             if (match.rejected) {
                 effects.push(
-                    `${service} rejected this release on its own criteria: ${(match.rejections ?? []).join('; ')}. Grabbing it overrides that.`
+                    // Scrubbed: a rejection can quote the release's own guid, which can carry an API key.
+                    `${service} rejected this release on its own criteria: ${scrubUrls((match.rejections ?? []).join('; '))}. Grabbing it overrides that.`
                 );
             }
 

@@ -160,6 +160,16 @@ describe('grab_release', () => {
         expect(applied.structuredContent.result).toEqual({ grabbed: preview.structuredContent.target });
     });
 
+    it('scrubs a rejection reason that quotes the release guid in a first preview', async () => {
+        const key = '0123456789abcdef0123456789abcdef';
+        const guid = `https://indexer.example/get?apikey=${key}`;
+        const row = release({ guid, rejected: true, rejections: [`Release ${guid} is blocklisted`] });
+        const h = harness({ releases: [row] });
+        const preview = await h.call({ service: 'radarr', id: '1', release_title: row.title, indexer_id: 3 });
+        expect(JSON.stringify(preview)).not.toContain(key);
+        expect(preview.structuredContent.effects.join(' ')).toContain('Release https://indexer.example/... is blocklisted');
+    });
+
     it('names a guid spelt with backslashes, which a URL parser still reads as a URL, by its digest', async () => {
         const key = '0123456789abcdef0123456789abcdef';
         const guid = `https:\\\\indexer.example\\get?apikey=${key}`;

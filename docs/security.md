@@ -85,7 +85,10 @@ preview named. A release guid that is a URL is named by the first 16 hex digits
 of its SHA-256 instead, much as a torrent or NZB URL is, so two releases stay
 apart, and an audit target that is still a URL is cut down like an argument.
 Besides `scheme://`, the scrub knows the other spellings a URL parser accepts
-for http and https, such as backslashes or a single slash after the colon.
+for http, https, ws, wss and ftp: backslashes or a single slash after the colon,
+or none, and a tab inside the URL. One of those counts only when its host has a
+dot and a path, query, fragment, user name or passkey-like label goes with it,
+so text such as `HTTP:404` or a file named `FTP:Archive.mkv` is left alone.
 
 ## The repair page renders the config file verbatim
 

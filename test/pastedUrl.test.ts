@@ -51,13 +51,44 @@ describe('scrubUrls', () => {
         [`got https:/tracker.example/${PASSKEY}`, 'got https://tracker.example/...'],
         [`got https:tracker.example/${PASSKEY}`, 'got https://tracker.example/...'],
         // A sentence's full stop after a cut URL is not doubled onto the placeholder.
-        [`refused https://tracker.example/${PASSKEY}.`, 'refused https://tracker.example/...']
+        [`refused https://tracker.example/${PASSKEY}.`, 'refused https://tracker.example/...'],
+        // A parser drops a tab inside a URL, so the key after one is still the URL's.
+        [`got https://indexer.example/get\t?apikey=${PASSKEY}`, 'got https://indexer.example/...'],
+        [`got https:${PASSKEY}.tracker.example`, 'got https://***.tracker.example/...']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
-    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.168.1.20:8081', 'plain words: nothing to cut'])('leaves %s alone', text => {
+    it.each([
+        'HTTP 500 at /api/v2/torrents/start',
+        'could not reach http://192.168.1.20:8081',
+        'plain words: nothing to cut',
+        // Text a looser match would take for a URL, or rewrite into an address nobody sent.
+        'upstream said HTTP:404 Not Found',
+        'port https:443 open',
+        'listening on http:8080',
+        'https:strict is set',
+        'ws:local',
+        'FTP:Archive.mkv',
+        'videos/https:poster.jpg',
+        'Invalid scheme http:, use https',
+        'url must start with https: or http:.',
+        '(https:)'
+    ])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
+        // shownValue still leaves out any plain `scheme://` value whole, as it always has.
+        if (!text.includes('://')) expect(shownValue(text)).toBe(text);
+    });
+
+    it('leaves the next line alone after a URL that ends one', () => {
+        expect(scrubUrls(`see https://tracker.example/${PASSKEY}\n\n- Files under it`)).toBe('see https://tracker.example/...\n\n- Files under it');
+    });
+
+    it('finds the end of a URL followed by a long run of punctuation in linear time', () => {
+        const text = `https://tracker.example/${'.'.repeat(200_000)}x`;
+        const started = Date.now();
+        scrubUrls(text);
+        expect(Date.now() - started).toBeLessThan(2_000);
     });
 
     it.each([`https:\\\\tracker.example\\${PASSKEY}`, `https:/tracker.example/${PASSKEY}`, `https:tracker.example/${PASSKEY}`])('treats %s as a pasted URL', value => {
