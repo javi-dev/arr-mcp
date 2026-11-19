@@ -1526,19 +1526,32 @@ describe('reannounce_torrent', () => {
         expect(JSON.stringify([preview, late, h.context.audit.recent()])).not.toContain('0123456789abcdef0123456789abcdef');
     });
 
-    it('refuses to preview when qBittorrent answers with something other than a tracker list', async () => {
-        const h = harness({ trackers: { error: 'busy' } as unknown as unknown[] });
-        await expect(h.call('reannounce_torrent', { id: HASH })).rejects.toThrow(/did not list the trackers of this torrent/);
+    it.each([
+        ['an object', { error: 'busy' }],
+        ['a null row', [null]],
+        ['bare strings', ['https://tracker.example.org/announce']],
+        ['a row with no url', [{ url: '** [DHT] **', status: 2 }, { status: 2 }]],
+        ['a url that does not parse', [{ url: 'not a tracker', status: 2 }]]
+    ])('refuses to preview when the tracker answer is %s', async (_why, answer) => {
+        const h = harness({ trackers: answer as unknown as unknown[] });
+        await expect(h.call('reannounce_torrent', { id: HASH })).rejects.toThrow(/tracker list qBittorrent gave for this torrent could not be read/);
         expect(h.posts).toEqual([]);
     });
 
-    it('refuses a token, without announcing, once the tracker list stops reading as a list', async () => {
-        const opts: FakeOptions = {};
+    it('refuses a token, without announcing, once a tracker row stops reading', async () => {
+        const opts: FakeOptions = { trackers: [{ url: '** [DHT] **', status: 2 }] };
         const h = harness(opts);
         const preview = await h.call('reannounce_torrent', { id: HASH });
-        opts.trackers = { error: 'busy' } as unknown as unknown[];
-        await expect(h.call('reannounce_torrent', { id: HASH, confirm: preview.structuredContent.confirm_token })).rejects.toThrow(/did not list the trackers/);
+        expect(preview.structuredContent.effects).toEqual(['It has no tracker to announce to, so only DHT hears about it.']);
+        opts.trackers = [{ url: '** [DHT] **', status: 2 }, { status: 2 }];
+        await expect(h.call('reannounce_torrent', { id: HASH, confirm: preview.structuredContent.confirm_token })).rejects.toThrow(/could not be read/);
         expect(h.posts).toEqual([]);
+    });
+
+    it('still lists the trackers of a torrent whose answer has a null row, for the tools that only show them', async () => {
+        const h = harness({ trackers: [null, { url: `https://tracker.example.org/${PASSKEY}/announce`, status: 2 }] });
+        const preview = await h.call('set_torrent_category', { id: HASH, category: 'movies' });
+        expect(preview.structuredContent.applied).toBe(false);
     });
 
     it('still applies when only a tracker status or the order changed', async () => {
