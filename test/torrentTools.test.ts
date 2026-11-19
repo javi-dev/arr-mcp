@@ -1548,10 +1548,12 @@ describe('reannounce_torrent', () => {
         expect(h.posts).toEqual([]);
     });
 
-    it('still lists the trackers of a torrent whose answer has a null row, for the tools that only show them', async () => {
-        const h = harness({ trackers: [null, { url: `https://tracker.example.org/${PASSKEY}/announce`, status: 2 }] });
-        const preview = await h.call('set_torrent_category', { id: HASH, category: 'movies' });
-        expect(preview.structuredContent.applied).toBe(false);
+    it('still lists the trackers it can read beside rows it cannot, and refuses to reannounce from that list', async () => {
+        const trackers = [null, { url: { toString: 0 }, status: 2 }, { url: `https://tracker.example.org/${PASSKEY}/announce`, status: 2 }];
+        const details = await new QbittorrentAdapter(config(), fakeQbittorrent({ trackers }).impl).getTorrentDetails(HASH);
+        expect(details.trackers).toEqual([{ host: 'tracker.example.org', status: 'working' }]);
+        expect(details.trackerDigest).toBeNull();
+        await expect(harness({ trackers }).call('reannounce_torrent', { id: HASH })).rejects.toThrow(/could not be read/);
     });
 
     it('still applies when only a tracker status or the order changed', async () => {

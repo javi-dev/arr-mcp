@@ -278,7 +278,8 @@ const trackerRows = (rows: readonly unknown[]): TorrentTrackerRow[] =>
     rows.flatMap(entry => {
         if (typeof entry !== 'object' || entry === null) return [];
         const row = entry as RawTracker;
-        const host = trackerHost(row.url ?? '');
+        if (typeof row.url !== 'string') return [];
+        const host = trackerHost(row.url);
         if (host === undefined) return [];
         return [{ host, status: row.updating === true ? 'updating' : (TRACKER_STATUS[row.status ?? -1] ?? 'unknown') }];
     });
