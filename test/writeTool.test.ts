@@ -761,6 +761,31 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         expect(err.message).toBe('could not reach https://tracker.example.org/...');
     });
 
+    it('replaces a frozen error with a scrubbed copy, keeping the original as its cause', async () => {
+        const frozen = Object.freeze(new Error(`could not reach ${PASTED}`));
+        const err = (await buildHarness({ plan: () => Promise.reject(frozen) }).call('delete_media', { id: '5' }).catch((e: unknown) => e)) as Error;
+        expect(err.message).toBe('could not reach https://tracker.example.org/...');
+        expect(err.cause).toBe(frozen);
+    });
+
+    it('scrubs a stack that no longer repeats the message, still keeping its frames', async () => {
+        const thrown = new Error(`could not reach ${PASTED}`);
+        thrown.stack = `Error: was ${PASTED}\n    at plan (file:///app/src/tools/example.ts:12:34)`;
+        const err = (await buildHarness({ plan: () => Promise.reject(thrown) }).call('delete_media', { id: '5' }).catch((e: unknown) => e)) as Error;
+        expect(err.stack).toBe('Error: was https://tracker.example.org/...\n    at plan (file:///app/src/tools/example.ts:12:34)');
+    });
+
+    it('scrubs the fresh preview a rejected token gets back, and its token still applies', async () => {
+        const quoting: WritePlan = { ...PLAN, summary: `Add it to category ${PASTED}.`, effects: [`Files under ${PASTED}.`] };
+        const h = buildHarness({ plan: quoting });
+        const rejected = await h.call('delete_media', { id: '5', confirm: 'not-a-token' });
+        const { content, structuredContent } = rejected;
+        expect(JSON.stringify([content, structuredContent.summary, structuredContent.effects])).not.toContain(KEY);
+        expect(structuredContent.summary).toBe('Add it to category https://tracker.example.org/....');
+        const applied = await h.call('delete_media', { id: '5', confirm: structuredContent.confirm_token });
+        expect(applied.structuredContent.applied).toBe(true);
+    });
+
     it('scrubs only the first line of a stack, so frames given as file URLs keep their location', async () => {
         const thrown = new ServiceError('NotFound', 'radarr', `no such category ${PASTED}`);
         thrown.stack = `ServiceError: ${thrown.message}\n    at plan (file:///app/src/tools/example.ts:12:34)`;
@@ -898,6 +923,30 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         const preview = await r.h.call('delete_media', { id: '9' });
         await expect(r.h.call('delete_media', { id: '9', confirm: preview.structuredContent.confirm_token }, abort.signal)).rejects.toThrow(/cancelled/);
         expect(r.h.apply).not.toHaveBeenCalled();
+    });
+
+    it('hands the lane on past a waiter cancelled at the hand-off, and its token still applies later', async () => {
+        const r = racing('5');
+        // Aborted with no event, as a signal can be between the hand-off and the write starting.
+        const quiet = { aborted: false, addEventListener: () => undefined, removeEventListener: () => undefined };
+        const tokens: (string | undefined)[] = [];
+        for (const id of ['5', '9', '7']) tokens.push((await r.h.call('delete_media', { id })).structuredContent.confirm_token);
+        r.log.length = 0;
+        const first = r.h.call('delete_media', { id: '5', confirm: tokens[0] });
+        await settled();
+        const second = r.h.call('delete_media', { id: '9', confirm: tokens[1] }, quiet as unknown as AbortSignal).catch((e: unknown) => e);
+        const third = r.h.call('delete_media', { id: '7', confirm: tokens[2] });
+        await settled();
+        quiet.aborted = true;
+        r.release();
+        await first;
+        expect(await second).toMatchObject({ message: expect.stringMatching(/cancelled while it waited/) });
+        expect((await third).structuredContent.applied).toBe(true);
+        expect(r.log).toEqual(['plan 5', 'apply 5', 'applied 5', 'plan 7', 'apply 7', 'applied 7']);
+        const retried = await r.h.call('delete_media', { id: '9', confirm: tokens[1] });
+        expect(retried.structuredContent.applied).toBe(true);
+        const after = await r.h.call('delete_media', { id: '5' });
+        expect((await r.h.call('delete_media', { id: '5', confirm: after.structuredContent.confirm_token })).structuredContent.applied).toBe(true);
     });
 
     it('builds the fresh preview for a rejected token outside the lane, so its cross-checks hold up no write', async () => {

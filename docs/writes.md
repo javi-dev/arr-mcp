@@ -231,6 +231,15 @@ instances do not wait. A confirmation still waiting after 30 seconds, or whose
 request is cancelled while it waits, is refused without being applied, and its
 token stays unused for another try.
 
+The lane is the instance the tool is routed to, within one arr-mcp process. A
+write that also changes a second service, as `delete_media` does when it adds
+the title to Seerr's blocklist, is not serialised against writes to that one.
+An apply that waits on the service after writing holds the lane while it
+waits: a rename or import waiting on its *arr command (up to three minutes),
+a recheck that `recheck_torrents` watches (up to 45 seconds), a Jellyfin
+metadata repair (up to two minutes). A confirmation sent to that instance meanwhile can
+be refused after 30 seconds, and can be sent again with the same token.
+
 A destructive preview says what it costs in the units that matter:
 
 ```

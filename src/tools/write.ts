@@ -245,6 +245,21 @@ export type WriteToolResult = {
 /** What a write tool call answers with. */
 type ToolReply = { content: { type: 'text'; text: string }[]; structuredContent: WriteToolResult };
 
+/**
+ * A refusal's reply with every URL the caller reads cut down (#6): a rejected
+ * token's fresh preview can repeat what the plan quoted. The token and the ids
+ * are left as they are.
+ */
+const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolReply => ({
+    content: content.map(part => ({ ...part, text: scrubUrls(part.text) })),
+    structuredContent: {
+        ...result,
+        summary: scrubUrls(result.summary),
+        effects: result.effects.map(scrubUrls),
+        ...(result.warnings === undefined ? {} : { warnings: result.warnings.map(scrubUrls) })
+    }
+});
+
 const TARGET_KEYS = [
     'id',
     'item_id',
@@ -357,9 +372,16 @@ async function inLane<T>(service: string, signal: AbortSignal | undefined, task:
     }
 }
 
-/** A stack with its first line, which repeats the message, rewritten; the frames are kept as they are. */
-const restacked = (stack: string | undefined, from: string, to: string): string | undefined =>
-    stack === undefined ? undefined : stack.includes(from) ? stack.replace(from, () => to) : scrubUrls(stack);
+/**
+ * A stack with its first lines, which repeat the message, rewritten. The
+ * frames are kept as they are: `file:///` frames name where it was thrown.
+ */
+function restacked(stack: string | undefined, from: string, to: string): string | undefined {
+    if (stack === undefined) return undefined;
+    if (stack.includes(from)) return stack.replace(from, () => to);
+    const frames = stack.indexOf('\n    at ');
+    return frames === -1 ? scrubUrls(stack) : scrubUrls(stack.slice(0, frames)) + stack.slice(frames);
+}
 
 /**
  * The error a write tool throws, with every URL in its message cut down the
@@ -394,8 +416,9 @@ function scrubbedError(err: unknown): unknown {
             if (stack !== undefined) Object.defineProperty(err, 'stack', { value: stack, writable: true, configurable: true });
             return err;
         } catch {
-            // A frozen error: nothing on it can change.
-            return new Error(message);
+            // A frozen error: nothing on it can change, so the caller gets a copy
+            // of its text and the original stays the cause, for the logs.
+            return new Error(message, { cause: err });
         }
     }
     return typeof err === 'string' ? scrubUrls(err) : err;
@@ -678,7 +701,7 @@ export function registerWriteTool<
                     // and nothing from here on writes, so no confirm should wait for them.
                     return async () => {
                         const advice = await advise();
-                        return respond(
+                        return scrubbedReply(respond(
                             preview({
                                 audit_id: id,
                                 ...advice.fields,
@@ -699,7 +722,7 @@ export function registerWriteTool<
                                 (plan.effects.length === 0 ? '' : `${plan.effects.map(e => `- ${e}`).join('\n')}\n\n`) +
                                 `Do not resend the rejected one. To apply this, call ${spec.name} again with ` +
                                 `the same arguments plus \`confirm\` set to \`${fresh}\`.`
-                        );
+                        ));
                     };
                 }
             } else {
