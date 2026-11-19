@@ -220,8 +220,14 @@ as a fresh preview with a new token, and its text carries that preview's summary
 and effects as a first preview does. Some writes also bind what they act on, not
 only the arguments: `delete_episode_files` the file ids, `grab_release` the release, and a
 `fix_metadata` retag the files, their albums and Lidarr's Scrub Existing Tags
-setting. For those, the same call is refused when that has moved since the old
-preview, and the new effects are what the caller reads before confirming again.
+setting, and `reannounce_torrent` a SHA-256 of the torrent's tracker URLs. For
+those, the same call is refused when that has moved since the old preview, and
+the new effects are what the caller reads before confirming again.
+
+Confirmed writes to one instance run one at a time, from the reads that check the
+token to the write itself, so two confirmations sent together cannot interleave
+their writes and leave a mix of both. Previews, dry runs and writes to other
+instances do not wait.
 
 A destructive preview says what it costs in the units that matter:
 

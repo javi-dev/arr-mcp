@@ -7,7 +7,8 @@ import { nextStepLine, type NextStep } from '../core/nextStep.ts';
 import { checkPermission, type PermissionSource, type WriteTier } from '../core/permissions.ts';
 import { toolInput } from '../core/shape.ts';
 import { logger } from '../core/logger.ts';
-import { shownValue } from '../core/pastedUrl.ts';
+import { scrubUrls, shownValue } from '../core/pastedUrl.ts';
+import { serial } from '../core/serial.ts';
 import type { CrossCheckProfile, CrossCheckSubject, CrossChecker } from './crossChecks.ts';
 import type { LibraryLoader } from './library.ts';
 import { resolveTarget, type ServiceTarget } from './serviceTarget.ts';
@@ -283,6 +284,48 @@ function writeInput(schema: z.ZodObject): z.ZodObject {
 }
 
 /**
+ * One lane per instance id, shared by every request's server: a confirmed
+ * write runs its plan, its token check and its apply in that lane, so two
+ * confirmations racing on one instance cannot interleave their writes and
+ * leave a mix of both (#7). Previews and dry runs only read, so they never wait.
+ */
+const writeLanes = new Map<string, ReturnType<typeof serial>>();
+function laneOf(service: string): ReturnType<typeof serial> {
+    let lane = writeLanes.get(service);
+    if (lane === undefined) {
+        lane = serial();
+        writeLanes.set(service, lane);
+    }
+    return lane;
+}
+
+/**
+ * The error a write tool throws, with every URL cut down the way the audit
+ * detail is (#6). A refusal can quote what the caller passed, and a URL there
+ * can carry a tracker passkey. A `ServiceError` is rebuilt rather than edited,
+ * so its `detail` and `remedy` agree with its message.
+ */
+function scrubbedError(err: unknown): unknown {
+    if (err instanceof ServiceError) {
+        const detail = scrubUrls(err.detail);
+        const remedy = err.remedy === undefined ? undefined : scrubUrls(err.remedy);
+        if (detail === err.detail && remedy === err.remedy) return err;
+        return new ServiceError(err.kind, err.service, detail, {
+            ...(remedy === undefined ? {} : { remedy }),
+            ...(err.cause === undefined ? {} : { cause: err.cause }),
+            ...(err.reason === undefined ? {} : { reason: err.reason }),
+            ...(err.status === undefined ? {} : { status: err.status })
+        });
+    }
+    if (err instanceof Error) {
+        const message = scrubUrls(err.message);
+        if (message !== err.message) err.message = message;
+        return err;
+    }
+    return typeof err === 'string' ? scrubUrls(err) : err;
+}
+
+/**
  * The one place a write tool is turned into an MCP tool. Every branch below
  * either records an audit row or is a pure preview that records one as
  * `dry_run`; there is no path from arguments to `apply` that skips the tier
@@ -328,85 +371,100 @@ export function registerWriteTool<
             inputSchema: writeInput(spec.inputSchema),
             outputSchema: WriteOutputSchema
         },
+        // Every refusal and failure leaves through here, so one scrub covers all of them.
         async (raw: Record<string, unknown>) => {
-            const { dry_run: dryRun, confirm: presented, ...rest } = raw as {
-                dry_run: boolean;
-                confirm?: string;
-            };
-            const args = rest as z.infer<Schema>;
-
-            // Resolved from the arguments alone, before anything else runs, so
-            // the service whose permissions are checked is the service the
-            // audit names and the token binds to. Deriving it later, from the
-            // plan, say, would let the three disagree.
-            const tier = typeof spec.tier === 'function' ? spec.tier(args) : spec.tier;
-            // A refusal of a live call, and one row for it. A call the caller's
-            // own credential could never make is rate-limited per caller and
-            // tool (`refusedAboveCeiling`): a row each would let a read token
-            // grow the permanent audit table as fast as it can ask.
-            const deny = (named: string, target: string, detail: string): void => {
-                const record = { tool: spec.name, service: named, operation: spec.operation, tier, target, args: {}, caller };
-                if (permissions.permits?.(tier, named) === false) {
-                    audit.refusedAboveCeiling(record, detail);
-                    return;
-                }
-                audit.settle(audit.begin(record), 'denied', detail);
-            };
-            // An argument the plan or router refused, or a title it could not
-            // find. A dry run records nothing for it, whichever refused it.
-            const refused = (named: string, err: unknown): void => {
-                if (dryRun) return;
-                deny(named, rawTarget(args), err instanceof Error ? err.message : String(err));
-            };
-            let service: string;
-            let adapter: Adapter & ServiceAdapter;
-            if (spec.target !== undefined) {
-                const { service: type, instance } = args as { service: ServiceId; instance?: string };
-                try {
-                    adapter = resolveTarget(spec.target.adapters, spec.target.to, type, instance);
-                } catch (err) {
-                    // Refused before anything else ran, and recorded like any other refusal.
-                    refused(type, err);
-                    throw err;
-                }
-                service = adapter.id;
-            } else {
-                try {
-                    service = typeof spec.service === 'function' ? spec.service(args) : spec.service;
-                } catch (err) {
-                    // A router resolves the instance, so its refusal is the
-                    // `target` refusal above by another route.
-                    refused(String((args as { service?: unknown }).service ?? ''), err);
-                    throw err;
-                }
-                adapter = undefined as unknown as Adapter & ServiceAdapter;
+            try {
+                return await handle(raw);
+            } catch (err) {
+                throw scrubbedError(err);
             }
+        }
+    );
 
-            // A refusal costs no upstream read, so it names the argument as
-            // given rather than the resolved title. A dry run still resolves
-            // the plan, because that is how "what would I need to enable?"
-            // gets answered.
-            const verdict = checkPermission(permissions, service, tier);
-            const permission: WriteToolResult['permission'] = verdict.allowed
-                ? { allowed: true }
-                : { allowed: false, reason: verdict.reason, remedy: verdict.remedy };
-            // A preview from a credential whose tier refuses this write writes no
-            // audit row. It changes nothing and the token can never apply it, so
-            // a row per call would only let a read token grow the permanent
-            // audit table as fast as it can ask.
-            const quiet = permissions.permits?.(tier, service) === false;
+    async function handle(raw: Record<string, unknown>) {
+        const { dry_run: dryRun, confirm: presented, ...rest } = raw as {
+            dry_run: boolean;
+            confirm?: string;
+        };
+        const args = rest as z.infer<Schema>;
 
-            if (!verdict.allowed && !dryRun) {
-                const given = rawTarget(args);
-                deny(service, given, verdict.reason);
-                throw new ServiceError(
-                    'PermissionDenied',
-                    service,
-                    `${verdict.reason} (${tier} write ${spec.operation} on ${given === '' ? service : `${service}:${given}`})`,
-                    { remedy: verdict.remedy }
-                );
+        // Resolved from the arguments alone, before anything else runs, so
+        // the service whose permissions are checked is the service the
+        // audit names and the token binds to. Deriving it later, from the
+        // plan, say, would let the three disagree.
+        const tier = typeof spec.tier === 'function' ? spec.tier(args) : spec.tier;
+        // A refusal of a live call, and one row for it. A call the caller's
+        // own credential could never make is rate-limited per caller and
+        // tool (`refusedAboveCeiling`): a row each would let a read token
+        // grow the permanent audit table as fast as it can ask.
+        const deny = (named: string, target: string, detail: string): void => {
+            const record = { tool: spec.name, service: named, operation: spec.operation, tier, target, args: {}, caller };
+            if (permissions.permits?.(tier, named) === false) {
+                audit.refusedAboveCeiling(record, detail);
+                return;
             }
+            audit.settle(audit.begin(record), 'denied', detail);
+        };
+        // An argument the plan or router refused, or a title it could not
+        // find. A dry run records nothing for it, whichever refused it.
+        const refused = (named: string, err: unknown): void => {
+            if (dryRun) return;
+            deny(named, rawTarget(args), err instanceof Error ? err.message : String(err));
+        };
+        let service: string;
+        let adapter: Adapter & ServiceAdapter;
+        if (spec.target !== undefined) {
+            const { service: type, instance } = args as { service: ServiceId; instance?: string };
+            try {
+                adapter = resolveTarget(spec.target.adapters, spec.target.to, type, instance);
+            } catch (err) {
+                // Refused before anything else ran, and recorded like any other refusal.
+                refused(type, err);
+                throw err;
+            }
+            service = adapter.id;
+        } else {
+            try {
+                service = typeof spec.service === 'function' ? spec.service(args) : spec.service;
+            } catch (err) {
+                // A router resolves the instance, so its refusal is the
+                // `target` refusal above by another route.
+                refused(String((args as { service?: unknown }).service ?? ''), err);
+                throw err;
+            }
+            adapter = undefined as unknown as Adapter & ServiceAdapter;
+        }
 
+        // A refusal costs no upstream read, so it names the argument as
+        // given rather than the resolved title. A dry run still resolves
+        // the plan, because that is how "what would I need to enable?"
+        // gets answered.
+        const verdict = checkPermission(permissions, service, tier);
+        const permission: WriteToolResult['permission'] = verdict.allowed
+            ? { allowed: true }
+            : { allowed: false, reason: verdict.reason, remedy: verdict.remedy };
+        // A preview from a credential whose tier refuses this write writes no
+        // audit row. It changes nothing and the token can never apply it, so
+        // a row per call would only let a read token grow the permanent
+        // audit table as fast as it can ask.
+        const quiet = permissions.permits?.(tier, service) === false;
+
+        if (!verdict.allowed && !dryRun) {
+            const given = rawTarget(args);
+            deny(service, given, verdict.reason);
+            throw new ServiceError(
+                'PermissionDenied',
+                service,
+                `${verdict.reason} (${tier} write ${spec.operation} on ${given === '' ? service : `${service}:${given}`})`,
+                { remedy: verdict.remedy }
+            );
+        }
+
+        // A confirm call holds its instance's lane from the plan's reads to the
+        // apply, so the state its token is checked against is still the state
+        // it writes over. Everything else runs at once.
+        const run = presented !== undefined && !dryRun ? laneOf(service) : <T>(task: () => Promise<T>): Promise<T> => task();
+        return run(async () => {
             let plan: WritePlan<Bound>;
             try {
                 plan = await spec.plan(args, adapter);
@@ -627,6 +685,6 @@ export function registerWriteTool<
                 // In the text as well as the field (#234).
                 (said ?? `Applied. ${plan.summary}`) + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
             );
-        }
-    );
+        });
+    }
 }

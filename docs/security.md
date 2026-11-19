@@ -73,7 +73,8 @@ to the client: previews, targets, errors and the audit log carry a SHA-256 of it
 instead. Audit rows written by `grab_release` before this version can still hold
 the whole magnet link. The reason an audit row records for a refusal has every URL
 cut down to its scheme and host, and every magnet link removed, so a tracker URL
-pasted into the wrong argument leaves no passkey there.
+pasted into the wrong argument leaves no passkey there. The error a write tool
+returns to the caller gets the same treatment.
 
 ## The repair page renders the config file verbatim
 

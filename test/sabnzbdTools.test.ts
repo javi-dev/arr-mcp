@@ -428,6 +428,26 @@ describe('update_client_settings', () => {
         expect(h.sent('set_config')).toEqual([]);
     });
 
+    it('runs two racing confirmations one after the other, so the second reads what the first wrote', async () => {
+        const h = harness();
+        const first = { fail_hopeless_jobs: false };
+        const second = { history_retention_option: 'all-delete' };
+        const a = await h.call('update_client_settings', first);
+        const b = await h.call('update_client_settings', second);
+        const before = h.requests.length;
+        const applied = await Promise.all([
+            h.call('update_client_settings', { ...first, confirm: a.structuredContent.confirm_token }),
+            h.call('update_client_settings', { ...second, confirm: b.structuredContent.confirm_token })
+        ]);
+        expect(applied.map(r => r.structuredContent.applied)).toEqual([true, true]);
+        const during = h.requests.slice(before);
+        const firstWrite = during.findIndex(r => r.searchParams.get('mode') === 'set_config');
+        // The second plan reads every setting, and all of those reads come after the first write.
+        const readAfter = new Set(during.slice(firstWrite).filter(r => r.searchParams.get('mode') === 'get_config').map(r => r.searchParams.get('keyword')));
+        expect([...readAfter].sort()).toEqual(Object.keys(SETTINGS).sort());
+        expect(h.settings).toMatchObject({ fail_hopeless_jobs: '0', history_retention_option: 'all-delete' });
+    });
+
     it('accepts outer dots SABnzbd strips from an entry with no folder', async () => {
         const h = harness();
         await confirmed(h.call, 'update_client_settings', { cleanup_list: ['..srt', 'sfv..'] });
