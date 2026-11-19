@@ -77,8 +77,9 @@ pasted into the wrong argument leaves no passkey there. The error a write tool
 returns to the caller gets the same treatment, and so do the fresh preview a
 rejected confirmation token comes back with and what a confirmed write reports
 once it has run, such as the error a write that stopped part way gives beside
-what it did. The one thing left whole there is the target its preview already
-showed, so the receipt still names what was written.
+what it did. A reply's target is left as the plan resolved it, the same in
+every reply, so a receipt matches its preview. A release guid that is a URL is
+named there by its SHA-256, as a torrent or NZB URL is.
 
 ## The repair page renders the config file verbatim
 

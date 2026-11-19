@@ -251,7 +251,8 @@ meanwhile is refused after 30 seconds without being applied, and can be sent
 again with the same token until that token expires, five minutes after its
 preview. The retry plans again against the state then: if the write ahead of it
 has made the change, it can find nothing to do or nothing left to act on;
-otherwise an expired token comes back as a fresh preview with a new one.
+otherwise it applies, or comes back as a fresh preview with a new token if the
+old one has expired or no longer matches what the plan finds.
 
 A destructive preview says what it costs in the units that matter:
 

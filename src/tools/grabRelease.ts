@@ -6,6 +6,7 @@ import * as z from 'zod/v4';
 import { type ServiceId, serviceOf } from '../config/schema.ts';
 import { ServiceError } from '../core/errors.ts';
 import { guidForText, unfence } from '../core/fence.ts';
+import { shownValue } from '../core/pastedUrl.ts';
 import { logger } from '../core/logger.ts';
 import { btihToHex } from '../services/qbittorrent.ts';
 import {
@@ -39,6 +40,17 @@ import { titled } from '../core/labels.ts';
  * may narrow it, and a name still shared is refused with each row's ids rather
  * than resolved to whichever came first.
  */
+/**
+ * The target a release is named by. A guid is often the indexer's download URL,
+ * which can carry an API key or a passkey (#6), so such a guid is named by its
+ * SHA-256 instead, as add_torrent names a torrent URL: the same in every preview,
+ * receipt and audit target, and still one per release. The guid itself goes to
+ * the *arr unchanged.
+ */
+const isUrlGuid = (guid: string): boolean => shownValue(guid) !== guid;
+const releaseTarget = (adapterId: string, guid: string): string =>
+    isUrlGuid(guid) ? `${adapterId}:guid-${createHash('sha256').update(guid).digest('hex').slice(0, 16)}` : `${adapterId}:${guid}`;
+
 function byTitle<T extends { title: string; guid?: string; indexerId?: number; indexer: string }>(
     candidates: readonly T[],
     title: string,
@@ -49,9 +61,14 @@ function byTitle<T extends { title: string; guid?: string; indexerId?: number; i
     const named = candidates.filter(c => unfence(c.title).trim() === wanted);
     const narrowed = indexerId === undefined ? named : named.filter(c => c.indexerId === indexerId);
     if (narrowed.length > 1) {
-        const rows = narrowed.map(c => `${c.indexer} has indexer_id ${c.indexerId ?? '?'}, guid ${c.guid === undefined ? '?' : guidForText(c.guid, service)}`);
+        // A guid that is a URL is cut down in this refusal like any other URL, so
+        // two of them can read the same: the exact ones come from get_releases.
+        const urls = narrowed.some(c => c.guid !== undefined && isUrlGuid(c.guid));
+        const rows = narrowed.map(c => `${c.indexer} has indexer_id ${c.indexerId ?? '?'}${urls ? '' : `, guid ${c.guid === undefined ? '?' : guidForText(c.guid, service)}`}`);
         throw new Error(
-            `${narrowed.length} releases on offer from ${service} share that name. Pass \`indexer_id\` to pick one, or \`guid\` and \`indexer_id\` instead of the title: ${rows.join('; ')}.`
+            urls
+                ? `${narrowed.length} releases on offer from ${service} share that name. Pass \`indexer_id\` to pick one, or take the exact \`guid\` and \`indexer_id\` from get_releases with \`detail: "full"\` and pass those instead of the title: ${rows.join('; ')}.`
+                : `${narrowed.length} releases on offer from ${service} share that name. Pass \`indexer_id\` to pick one, or \`guid\` and \`indexer_id\` instead of the title: ${rows.join('; ')}.`
         );
     }
     return narrowed[0];
@@ -266,7 +283,7 @@ export function registerGrabRelease(
             ) {
                 const top = await topRelease(adapter, service, { id, season, episode, album });
                 return {
-                    target: `${adapter.id}:${top.guid}`,
+                    target: releaseTarget(adapter.id, top.guid),
                     summary: `Grab ${top.title} from ${top.indexer} for ${service}, the most-downloaded release on offer.`,
                     effects: [
                         `Sends this release to ${service}'s download client.${top.downloads === undefined ? ' No release on offer has a download count, so this is simply the first listed.' : ` It has ${top.downloads} downloads.`}`,
@@ -343,7 +360,7 @@ export function registerGrabRelease(
             };
 
             return {
-                target: `${adapter.id}:${match.guid}`,
+                target: releaseTarget(adapter.id, match.guid),
                 summary: `Grab ${match.title} from ${match.indexer} for ${adapter.id}.`,
                 effects,
                 // Both, because both decide what apply() sends. A token that
@@ -384,7 +401,7 @@ export function registerGrabRelease(
 
             const adapter = findAdapter(adapters, service, instance);
             await adapter.grabRelease({ guid: chosenGuid, indexerId: chosenIndexer });
-            return { grabbed: `${adapter.id}:${chosenGuid}` };
+            return { grabbed: releaseTarget(adapter.id, chosenGuid) };
         }
     });
 }

@@ -778,14 +778,14 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
     });
 
     it('scrubs the fresh preview a rejected token gets back, and its token still applies', async () => {
-        // A target can be a release guid, and a guid is often a URL.
-        const quoting: WritePlan = { ...PLAN, target: `radarr:${PASTED}`, summary: `Add it to category ${PASTED}.`, effects: [`Files under ${PASTED}.`] };
+        const quoting: WritePlan = { ...PLAN, summary: `Add it to category ${PASTED}.`, effects: [`Files under ${PASTED}.`] };
         const h = buildHarness({ plan: quoting });
         const rejected = await h.call('delete_media', { id: '5', confirm: 'not-a-token' });
         const { content, structuredContent } = rejected;
         const { confirm_token: _token, ...shown } = structuredContent;
         expect(JSON.stringify([content, shown])).not.toContain(KEY);
-        expect(structuredContent.target).toBe('radarr:https://tracker.example.org/...');
+        // The target is what the token binds, shown as the plan resolved it in every reply.
+        expect(structuredContent.target).toBe(PLAN.target);
         expect(structuredContent.summary).toBe('Add it to category https://tracker.example.org/....');
         const applied = await h.call('delete_media', { id: '5', confirm: structuredContent.confirm_token });
         expect(applied.structuredContent.applied).toBe(true);

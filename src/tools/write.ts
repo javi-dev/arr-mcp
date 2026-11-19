@@ -258,24 +258,24 @@ function scrubbedDeep(value: unknown, kept?: string): unknown {
 /**
  * A reply with every URL the caller reads cut down (#6), for a rejected token
  * and for a confirmed write that ran. A rejected token's fresh preview can
- * repeat what the plan quoted, and a target can be a release guid that is a
- * URL. A write that ran can report an upstream error beside what it did, under
- * whatever name its tool gives it, so every string in `result` is scrubbed.
+ * repeat what the plan quoted. A write that ran can report an upstream error
+ * beside what it did, under whatever name its tool gives it, so every string
+ * in `result` is scrubbed.
  *
- * `kept` is the one string left whole: on a write that ran, the target its
- * preview already showed and its token bound, so the receipt still names
- * what was written (a release guid that is a URL, say) wherever it repeats it.
- * Next steps are not passed through here, being calls to make.
+ * The target is the one string left whole, in `target` and wherever a string
+ * in `result` is exactly it: it names what the token binds, the same in every
+ * reply, so a receipt matches the preview it confirms. A tool whose target
+ * could hold a credential names it by a digest instead, as add_torrent, add_nzb
+ * and grab_release do. Next steps are not passed through here, being calls to make.
  */
-const scrubbedReply = ({ content, structuredContent: result }: ToolReply, kept?: string): ToolReply => ({
+const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolReply => ({
     content: content.map(part => ({ ...part, text: scrubUrls(part.text) })),
     structuredContent: {
         ...result,
-        target: result.target === kept ? result.target : scrubUrls(result.target),
         summary: scrubUrls(result.summary),
         effects: result.effects.map(scrubUrls),
         ...(result.warnings === undefined ? {} : { warnings: result.warnings.map(scrubUrls) }),
-        ...('result' in result ? { result: scrubbedDeep(result.result, kept) } : {})
+        ...('result' in result ? { result: scrubbedDeep(result.result, result.target) } : {})
     }
 });
 
@@ -595,7 +595,7 @@ export function registerWriteTool<
             deny(service, shownValue(target), detail);
             return new Error(
                 `Not applied: ${detail}. Its confirmation token was not used: call ${spec.name} again with the same arguments and token${when}. ` +
-                    'The call plans again against the state then: if another write has made the change, it can find nothing to do or nothing left to act on; otherwise a token that has expired comes back as a fresh preview with a new one.'
+                    'The call plans again against the state then: if another write has made the change, it can find nothing to do or nothing left to act on; otherwise it applies, or comes back as a fresh preview with a new token if this one has expired or no longer matches what the plan finds.'
             );
         };
 
@@ -828,8 +828,7 @@ export function registerWriteTool<
                         ...(outcome === undefined ? {} : { result: outcome })
                     },
                     said ?? `Applied. ${plan.summary}`
-                ),
-                plan.target
+                )
             );
             if (nextSteps.length === 0) return reply;
             // Added after the scrub, so the text and the field carry the same calls (#234).

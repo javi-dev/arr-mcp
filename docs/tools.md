@@ -1932,9 +1932,16 @@ Instead of the ids it takes `release_title`, the release name exactly as
 an exact match, ignoring only surrounding whitespace. Two indexers often list
 the same release under the same name, so a name that matches more than one row
 is refused with each row's `indexer_id` and `guid`. Pass `indexer_id` with the
-title to pick one. The token binds to the guid and indexer the title resolved
-to, and the confirmation resolves it again, so a re-search that maps the name
-to a different row voids the token.
+title to pick one. When those guids are URLs, the refusal lists only the
+indexers, and `get_releases` with `detail: "full"` has the exact guids. The
+token binds to the guid and indexer the title resolved to, and the confirmation
+resolves it again, so a re-search that maps the name to a different row voids
+the token.
+
+A guid is often the indexer's download URL, which can carry an API key, so the
+preview and the result name such a release by a SHA-256 of its guid
+(`radarr:guid-<digest>`), as `add_torrent` names a torrent URL. The guid itself
+goes to the *arr unchanged.
 
 Safe tier: a download comes back off with `remove_queue_item`.
 
