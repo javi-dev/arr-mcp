@@ -150,8 +150,11 @@ function migrate(db: Db): void {
 const SECRET_KEY = /(api[_-]?key|token|password|secret|authorization)/i;
 
 /** Recursive: matching key names only at the top level left a secret one
- *  level down to be serialised verbatim. */
+ *  level down to be serialised verbatim. A string has its URLs cut down as
+ *  the detail column's are: a value bound for its effect, such as a release
+ *  guid that is an indexer URL, can carry an API key under any key name (#6). */
 const scrub = (value: unknown): unknown => {
+    if (typeof value === 'string') return scrubUrls(value);
     if (Array.isArray(value)) return value.map(scrub);
     if (value !== null && typeof value === 'object') {
         return Object.fromEntries(

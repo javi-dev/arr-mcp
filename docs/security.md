@@ -71,9 +71,11 @@ looks like a passkey is masked, and a tracker's message is never read at all. Th
 source given to `add_torrent`, `add_nzb` or `grab_release` reaches only the request
 to the client: previews, targets, errors and the audit log carry a SHA-256 of it
 instead. Audit rows written by `grab_release` before this version can still hold
-the whole magnet link. The reason an audit row records for a refusal has every URL
-cut down to its scheme and host, and every magnet link removed, so a tracker URL
-pasted into the wrong argument leaves no passkey there. The error a write tool
+the whole magnet link. The reason an audit row records for a refusal, and every
+argument it records, has every URL cut down to its scheme and host and every
+magnet link removed, so a tracker URL pasted into the wrong argument, or a
+release guid that is an indexer URL, leaves no key there. Rows written before
+this version can still hold a release guid in full. The error a write tool
 returns to the caller gets the same treatment, and so do the fresh preview a
 rejected confirmation token comes back with and what a confirmed write reports
 once it has run, such as the error a write that stopped part way gives beside

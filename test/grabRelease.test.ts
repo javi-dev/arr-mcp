@@ -177,8 +177,7 @@ describe('grab_release', () => {
         expect(h.grabbed).toEqual([{ guid: `https://indexer.example/get/2?apikey=${key}`, indexerId: 3 }]);
         const { confirm_token: _a, ...firstShown } = first.structuredContent;
         const { confirm_token: _b, ...replacedShown } = replaced.structuredContent;
-        const targets = (h.audit.recent() as { target: string }[]).map(row => row.target);
-        expect(JSON.stringify([first.content, firstShown, replaced.content, replacedShown, applied, targets])).not.toContain(key);
+        expect(JSON.stringify([first.content, firstShown, replaced.content, replacedShown, applied, h.audit.recent()])).not.toContain(key);
     });
 
     it('points to get_releases when releases sharing a name differ only in a URL guid', async () => {
