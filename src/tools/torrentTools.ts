@@ -725,6 +725,11 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const details = await client.getTorrentDetails(id);
             const target = `${client.id}:${details.id}`;
             if (details.status === 'stopped') return { target, summary: `${details.title} is stopped, so it has nothing to announce.`, effects: [], noop: true };
+            if (details.trackerDigest === null) {
+                throw new ServiceError('UpstreamError', client.id, 'qBittorrent did not list the trackers of this torrent, so nobody can say where a reannounce would go', {
+                    remedy: 'Check that qBittorrent answers normally, then preview the reannounce again.'
+                });
+            }
             const hosts = details.trackers.map(t => `${t.host} (${t.status})`).join(', ');
             return {
                 target,

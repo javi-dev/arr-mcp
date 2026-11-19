@@ -284,12 +284,15 @@ const trackerRows = (rows: readonly RawTracker[]): TorrentTrackerRow[] =>
 /**
  * SHA-256 of the announce URLs `trackerRows` keeps, sorted so a reorder alone
  * does not count as a change. The whole URL, so a passkey swapped on the same
- * host changes it too; the URLs themselves never leave this adapter.
+ * host changes it too; the URLs themselves never leave this adapter. `null`
+ * when the answer was not a list, which proves nothing about the trackers.
  */
-const trackerDigest = (rows: readonly RawTracker[]): string =>
-    createHash('sha256')
-        .update(JSON.stringify(rows.flatMap(row => (trackerHost(row.url ?? '') === undefined ? [] : [row.url ?? ''])).sort()))
-        .digest('hex');
+const trackerDigest = (rows: unknown): string | null =>
+    Array.isArray(rows)
+        ? createHash('sha256')
+              .update(JSON.stringify((rows as RawTracker[]).flatMap(row => (trackerHost(row.url ?? '') === undefined ? [] : [row.url ?? ''])).sort()))
+              .digest('hex')
+        : null;
 
 /** Only the active tracker: torrents/info carries one. Cleanuparr checks every tracker. */
 function torrentOf(t: RawTorrent & { hash: string }): { torrent: TorrentFacts } {
@@ -742,7 +745,7 @@ export class QbittorrentAdapter
                 progress: f.progress ?? 0
             })),
             trackers: trackerRows(Array.isArray(trackers) ? trackers : []),
-            trackerDigest: trackerDigest(Array.isArray(trackers) ? trackers : [])
+            trackerDigest: trackerDigest(trackers)
         };
     }
 

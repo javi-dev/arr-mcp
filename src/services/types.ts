@@ -2057,8 +2057,9 @@ export type TorrentDetails = {
     fileNames: string[];
     files: TorrentFileRow[];
     trackers: TorrentTrackerRow[];
-    /** SHA-256 of the full tracker URLs, for a confirm token to bind. Never the URLs, which can carry a passkey. */
-    trackerDigest: string;
+    /** SHA-256 of the full tracker URLs, for a confirm token to bind. Never the URLs, which can carry a passkey.
+     *  `null` when qBittorrent's answer was not a tracker list, so nobody can say where an announce goes. */
+    trackerDigest: string | null;
 };
 
 /** Share limits as qBittorrent stores them: -2 and `Default` inherit, -1 means no limit. */

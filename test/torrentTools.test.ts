@@ -1526,6 +1526,21 @@ describe('reannounce_torrent', () => {
         expect(JSON.stringify([preview, late, h.context.audit.recent()])).not.toContain('0123456789abcdef0123456789abcdef');
     });
 
+    it('refuses to preview when qBittorrent answers with something other than a tracker list', async () => {
+        const h = harness({ trackers: { error: 'busy' } as unknown as unknown[] });
+        await expect(h.call('reannounce_torrent', { id: HASH })).rejects.toThrow(/did not list the trackers of this torrent/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('refuses a token, without announcing, once the tracker list stops reading as a list', async () => {
+        const opts: FakeOptions = {};
+        const h = harness(opts);
+        const preview = await h.call('reannounce_torrent', { id: HASH });
+        opts.trackers = { error: 'busy' } as unknown as unknown[];
+        await expect(h.call('reannounce_torrent', { id: HASH, confirm: preview.structuredContent.confirm_token })).rejects.toThrow(/did not list the trackers/);
+        expect(h.posts).toEqual([]);
+    });
+
     it('still applies when only a tracker status or the order changed', async () => {
         const trackers: Record<string, unknown>[] = [
             { url: 'https://one.example.org/announce', status: 2, msg: '' },
