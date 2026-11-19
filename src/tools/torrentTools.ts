@@ -580,7 +580,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                         ? 'It has no metadata yet, so there is nothing on disk to move.'
                         : noData
                         ? `qBittorrent reports its data missing${storedIn !== undefined ? ` from ${storedIn}` : savedAt !== undefined ? `; its save path is ${savedAt}` : ''}. It has no call that changes the path alone, so any file of this torrent still at its old path moves too.`
-                        : `Physically moves ${size(details.completedBytes)} ${(gathersTo ?? movesFrom) === undefined ? '' : `${gathersTo === undefined ? '' : 'on '}from ${gathersTo ?? movesFrom} `}to ${path}.${movesFrom === undefined && savedAt !== undefined && gathersTo === undefined ? ` Where its files are now cannot be told; it is set to keep them in ${savedAt}.` : ''} Hardlinks into the library break if that crosses a filesystem.`,
+                        : `Physically moves ${size(details.completedBytes)} ${(gathersTo ?? movesFrom) === undefined ? '' : `${gathersTo === undefined ? '' : 'on '}from ${gathersTo ?? movesFrom} `}to ${path}.${movesFrom === undefined && savedAt !== undefined && gathersTo === undefined ? ` Where its files are now cannot be told; it is set to keep them in ${savedAt}.` : ''} Hardlinks into the library break if ${gathersTo === undefined ? 'that crosses' : 'either move crosses'} a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
                     ...(repointsMissing ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],

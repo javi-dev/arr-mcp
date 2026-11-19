@@ -963,7 +963,9 @@ describe('set_torrent_location', () => {
         const preview = await h.call('set_torrent_location', args);
         expect(preview.structuredContent.effects[0]).toContain('first moves its files to /data/torrents/tv');
         // The second hop starts where the gather left the files.
-        expect(preview.structuredContent.effects[1]).toMatch(/^Physically moves \S+ GB on from \/data\/torrents\/tv to \/data\/media\/tv\./);
+        expect(preview.structuredContent.effects[1]).toMatch(
+            /^Physically moves \S+ GB on from \/data\/torrents\/tv to \/data\/media\/tv\. Hardlinks into the library break if either move crosses a filesystem\.$/
+        );
         h.torrents[0]!.save_path = '/data/media/other';
         const late = await h.call('set_torrent_location', { ...args, confirm: preview.structuredContent.confirm_token });
         expect(late.structuredContent.applied).toBe(false);
