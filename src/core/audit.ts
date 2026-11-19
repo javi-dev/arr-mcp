@@ -1,3 +1,4 @@
+import { scrubUrls } from './pastedUrl.ts';
 import Database from 'better-sqlite3';
 import type { Database as Db, Statement } from 'better-sqlite3';
 import { join } from 'node:path';
@@ -269,7 +270,8 @@ export class WriteAudit {
      */
     settle(id: number, outcome: Exclude<WriteOutcome, 'attempted'>, detail?: string): void {
         try {
-            this.#settle.run(outcome, detail ?? null, new Date().toISOString(), id);
+            // A refusal can quote what the caller passed, and a pasted tracker URL carries a passkey.
+            this.#settle.run(outcome, detail === undefined ? null : scrubUrls(detail), new Date().toISOString(), id);
         } catch (err) {
             logger.error({ err, id, outcome, path: this.#path }, 'could not settle write audit row');
         }

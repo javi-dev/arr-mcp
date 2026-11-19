@@ -1,5 +1,5 @@
 import { ServiceError } from './errors.ts';
-import { shownValue } from './pastedUrl.ts';
+import { maskedHost, shownValue } from './pastedUrl.ts';
 
 /**
  * The path rules every torrent write goes through. Pure string checks: arr-mcp
@@ -59,9 +59,6 @@ export function renamedPath(service: string, oldPath: string, newPath: string, e
     return newPath;
 }
 
-/** A long run of hex, or of letters and digits, is a passkey rather than a host name. */
-const PASSKEY_LABEL = /^(?:[0-9a-f]{16,}|[0-9a-z]{28,})$/i;
-
 /**
  * The host of a tracker URL, and nothing else from it: a tracker URL carries
  * the user's passkey in its path, query or userinfo. A host label that looks
@@ -72,7 +69,7 @@ export function trackerHost(url: string): string | undefined {
     if (!URL.canParse(url)) return undefined;
     const host = new URL(url).hostname.toLowerCase();
     if (host === '') return undefined;
-    return host.split('.').map(label => (PASSKEY_LABEL.test(label) ? '***' : label)).join('.');
+    return maskedHost(host);
 }
 
 /**

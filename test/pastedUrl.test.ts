@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { shownValue } from '../src/core/pastedUrl.ts';
+import { WriteAudit } from '../src/core/audit.ts';
+import { scrubUrls, shownValue } from '../src/core/pastedUrl.ts';
 import type { ServiceAdapter } from '../src/services/types.ts';
 import { selectAdapters } from '../src/tools/instanceOptions.ts';
 
@@ -26,5 +27,31 @@ describe('selectAdapters', () => {
         const adapters = [{ id: 'radarr', type: 'radarr' }] as unknown as ServiceAdapter[];
         expect(() => selectAdapters(adapters, { instance: `https://tracker.example/${PASSKEY}/announce` })).toThrow(/left out/);
         expect(() => selectAdapters(adapters, { instance: `https://tracker.example/${PASSKEY}/announce` })).not.toThrow(PASSKEY);
+    });
+});
+
+describe('scrubUrls', () => {
+    it.each([
+        [`no category "https://tracker.example/${PASSKEY}/announce".`, 'no category "https://tracker.example/...".'],
+        [`see udp://tracker.example:6969/${PASSKEY}, then retry`, 'see udp://tracker.example:6969/..., then retry'],
+        [`got https://user:${PASSKEY}@tracker.example`, 'got https://tracker.example/...'],
+        [`got https://${PASSKEY}.tracker.example/announce`, 'got https://***.tracker.example/...'],
+        [`magnet:?xt=urn:btih:abc&tr=${PASSKEY} was refused`, '(a magnet link, left out) was refused']
+    ])('cuts %s down', (text, expected) => {
+        expect(scrubUrls(text)).toBe(expected);
+    });
+
+    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.168.1.20:8081', 'plain words: nothing to cut'])('leaves %s alone', text => {
+        expect(scrubUrls(text)).toBe(text);
+    });
+});
+
+describe('the audit log', () => {
+    it('keeps no passkey from a refusal, whichever field the URL was pasted into', () => {
+        const audit = WriteAudit.ephemeral();
+        const id = audit.begin({ tool: 't', service: 's', operation: 'o', tier: 'safe', target: 'x', args: {}, caller: 'c' });
+        audit.settle(id, 'denied', `nothing named "https://tracker.example/${PASSKEY}/announce"`);
+        expect(JSON.stringify(audit.recent())).not.toContain(PASSKEY);
+        expect(JSON.stringify(audit.recent())).toContain('https://tracker.example/...');
     });
 });

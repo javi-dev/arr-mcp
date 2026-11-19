@@ -71,7 +71,9 @@ looks like a passkey is masked, and a tracker's message is never read at all. Th
 source given to `add_torrent`, `add_nzb` or `grab_release` reaches only the request
 to the client: previews, targets, errors and the audit log carry a SHA-256 of it
 instead. Audit rows written by `grab_release` before this version can still hold
-the whole magnet link.
+the whole magnet link. The reason an audit row records for a refusal has every URL
+cut down to its scheme and host, and every magnet link removed, so a tracker URL
+pasted into the wrong argument leaves no passkey there.
 
 ## The repair page renders the config file verbatim
 
