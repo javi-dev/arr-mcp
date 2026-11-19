@@ -911,6 +911,19 @@ describe('an argument this server does not have is refused, not ignored', () => 
     });
 
     /**
+     * The SDK refuses an unknown argument before any handler runs, so the scrub
+     * the write harness gives its own errors (#6) never sees this text. A
+     * tracker URL pasted as an argument name keeps only its scheme and host.
+     */
+    it('cuts a URL given as an argument name down to scheme and host', async () => {
+        const passkey = '0123456789abcdef0123456789abcdef';
+        const text = (await callTool('set_monitoring', { [`https://tracker.example.org/${passkey}/announce`]: 1 })).content?.[0]?.text ?? '';
+
+        expect(text).toContain('Unknown argument(s): https://tracker.example.org/...');
+        expect(text).not.toContain(passkey);
+    });
+
+    /**
      * The guard for tool number twenty. Strictness that has to be remembered
      * per tool is strictness that will be forgotten, and the failure mode is
      * silent — so this asserts the property across the whole surface rather

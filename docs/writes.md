@@ -227,7 +227,9 @@ the new effects are what the caller reads before confirming again.
 Confirmed writes to one instance run one at a time, from the reads that check the
 token to the write itself, so two confirmations sent together cannot interleave
 their writes and leave a mix of both. Previews, dry runs and writes to other
-instances do not wait.
+instances do not wait. A confirmation still waiting after 30 seconds, or whose
+request is cancelled while it waits, is refused without being applied, and its
+token stays unused for another try.
 
 A destructive preview says what it costs in the units that matter:
 

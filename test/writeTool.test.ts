@@ -17,7 +17,7 @@ import { rawTarget, registerWriteTool, type WritePlan, type WriteToolResult } fr
  * before the handler sees them. A fake that skipped the parse would hide the
  * fact that `dry_run` gets its `false` from the schema.
  */
-type Handler = (args: Record<string, unknown>) => Promise<{
+type Handler = (args: Record<string, unknown>, ctx?: unknown) => Promise<{
     content: { type: 'text'; text: string }[];
     structuredContent: WriteToolResult;
 }>;
@@ -30,10 +30,10 @@ function fakeServer() {
         }
     };
 
-    const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const call = async (name: string, args: Record<string, unknown> = {}, signal?: AbortSignal) => {
         const tool = tools.get(name);
         if (tool === undefined) throw new Error(`no such tool: ${name}`);
-        return tool.handler(tool.schema.parse(args) as Record<string, unknown>);
+        return tool.handler(tool.schema.parse(args) as Record<string, unknown>, signal === undefined ? undefined : { mcpReq: { signal } });
     };
 
     return { server: server as never, call, tools };
@@ -747,7 +747,16 @@ describe('write tool harness: URLs in what it throws (#6)', () => {
         expect(err).toBeInstanceOf(ServiceError);
         expect(err).toMatchObject({ kind: 'NotFound', service: 'radarr', status: 404 });
         expect(err.message).toContain('no such category https://tracker.example.org/...');
-        for (const text of [err.message, err.detail, err.remedy]) expect(text).not.toContain(KEY);
+        for (const text of [err.message, err.detail, err.remedy, err.stack]) expect(text).not.toContain(KEY);
+        // Still the stack of where it was thrown, not of the scrub.
+        expect(err.stack?.split('\n')[1]).toContain('writeTool.test.ts');
+    });
+
+    it('scrubs an error whose message cannot be set', async () => {
+        const harness = buildHarness({ apply: () => Promise.reject(new DOMException(`could not reach ${PASTED}`)) });
+        const preview = await harness.call('delete_media', { id: '5' });
+        const err = (await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token }).catch((e: unknown) => e)) as Error;
+        expect(err.message).toBe('could not reach https://tracker.example.org/...');
     });
 
     it('cuts a URL in a failed apply, and leaves out a magnet link', async () => {
@@ -787,13 +796,14 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
                 return { ok: true };
             }
         });
-        const confirmAll = async (ids: string[]) => {
-            const tokens: (string | undefined)[] = [];
+        const tokens: (string | undefined)[] = [];
+        const confirmAll = async (ids: string[], signal?: AbortSignal) => {
+            tokens.length = 0;
             for (const id of ids) tokens.push((await h.call('delete_media', { id })).structuredContent.confirm_token);
             log.length = 0;
-            return ids.map((id, i) => h.call('delete_media', { id, confirm: tokens[i] }).catch((e: unknown) => e));
+            return ids.map((id, i) => h.call('delete_media', { id, confirm: tokens[i] }, i === 0 ? undefined : signal).catch((e: unknown) => e));
         };
-        return { h, log, release, confirmAll };
+        return { h, log, release, confirmAll, tokens };
     }
 
     const settled = () => new Promise(resolve => setTimeout(resolve, 20));
@@ -828,6 +838,40 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         await Promise.all(calls);
         expect(seen).toContain('applied 9');
         expect(seen).not.toContain('applied 5');
+    });
+
+    it('refuses a confirmation that waited 30 seconds, unapplied and with its token unspent', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const r = racing('5');
+            const [first, second] = await r.confirmAll(['5', '9']);
+            await vi.advanceTimersByTimeAsync(30_000);
+            const refusal = (await second) as ServiceError;
+            expect(refusal).toBeInstanceOf(ServiceError);
+            expect(refusal.message).toMatch(/another confirmed write to radarr was still running after 30 seconds, so this one was not applied/);
+            expect(refusal.remedy).toMatch(/token was not used/);
+            r.release();
+            await first;
+            expect(r.log).not.toContain('plan 9');
+            expect(outcomes(r.h)).toContain('denied');
+            const retried = await r.h.call('delete_media', { id: '9', confirm: r.tokens[1] });
+            expect(retried.structuredContent.applied).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('refuses a queued confirmation whose request was cancelled, and never plans or applies it', async () => {
+        const r = racing('5');
+        const abort = new AbortController();
+        const [first, second] = await r.confirmAll(['5', '9'], abort.signal);
+        await settled();
+        abort.abort();
+        await expect(second).resolves.toMatchObject({ message: expect.stringMatching(/cancelled while it waited/) });
+        r.release();
+        await first;
+        await settled();
+        expect(r.log).toEqual(['plan 5', 'apply 5', 'applied 5']);
     });
 
     it('frees the instance after a write that failed', async () => {

@@ -290,13 +290,53 @@ function writeInput(schema: z.ZodObject): z.ZodObject {
  * leave a mix of both (#7). Previews and dry runs only read, so they never wait.
  */
 const writeLanes = new Map<string, ReturnType<typeof serial>>();
-function laneOf(service: string): ReturnType<typeof serial> {
+
+/**
+ * How long a confirmed write waits for its instance. Some applies wait on the
+ * service for minutes (a rename's command, a watched recheck), and a client
+ * stops waiting long before that, so a write queued behind one is refused
+ * rather than landing after its caller was told it failed.
+ */
+const LANE_WAIT_MS = 30_000;
+
+type Turn<T> = { ran: true; value: T } | { ran: false; why: 'busy' | 'cancelled' };
+
+/**
+ * Runs `task` once every confirmed write queued ahead of it on `service` has
+ * finished. Gives up without running it after `LANE_WAIT_MS`, or as soon as
+ * the request is cancelled, so the token it would have spent stays unused.
+ */
+function inLane<T>(service: string, signal: AbortSignal | undefined, task: () => Promise<T>): Promise<Turn<T>> {
     let lane = writeLanes.get(service);
     if (lane === undefined) {
         lane = serial();
         writeLanes.set(service, lane);
     }
-    return lane;
+    return new Promise<Turn<T>>(resolve => {
+        let settled = false;
+        const stop = (): void => {
+            settled = true;
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', cancelled);
+        };
+        const giveUp = (why: 'busy' | 'cancelled'): void => {
+            if (settled) return;
+            stop();
+            resolve({ ran: false, why });
+        };
+        const cancelled = (): void => giveUp('cancelled');
+        const timer = setTimeout(() => giveUp('busy'), LANE_WAIT_MS);
+        signal?.addEventListener('abort', cancelled, { once: true });
+        if (signal?.aborted === true) cancelled();
+        void lane(async () => {
+            if (settled) return;
+            stop();
+            const ran = task().then(value => ({ ran: true as const, value }));
+            // The caller gets the task's outcome, rejection included; the lane only waits for it.
+            resolve(ran);
+            await ran.catch(() => undefined);
+        });
+    });
 }
 
 /**
@@ -310,17 +350,27 @@ function scrubbedError(err: unknown): unknown {
         const detail = scrubUrls(err.detail);
         const remedy = err.remedy === undefined ? undefined : scrubUrls(err.remedy);
         if (detail === err.detail && remedy === err.remedy) return err;
-        return new ServiceError(err.kind, err.service, detail, {
+        const rebuilt = new ServiceError(err.kind, err.service, detail, {
             ...(remedy === undefined ? {} : { remedy }),
             ...(err.cause === undefined ? {} : { cause: err.cause }),
             ...(err.reason === undefined ? {} : { reason: err.reason }),
             ...(err.status === undefined ? {} : { status: err.status })
         });
+        // The original's stack, so a log still shows where it was thrown.
+        if (err.stack !== undefined) rebuilt.stack = scrubUrls(err.stack);
+        return rebuilt;
     }
     if (err instanceof Error) {
         const message = scrubUrls(err.message);
-        if (message !== err.message) err.message = message;
-        return err;
+        if (message === err.message) return err;
+        try {
+            err.message = message;
+            if (err.stack !== undefined) err.stack = scrubUrls(err.stack);
+            return err;
+        } catch {
+            // A `message` with no setter, as on a DOMException.
+            return new Error(message);
+        }
     }
     return typeof err === 'string' ? scrubUrls(err) : err;
 }
@@ -372,16 +422,16 @@ export function registerWriteTool<
             outputSchema: WriteOutputSchema
         },
         // Every refusal and failure leaves through here, so one scrub covers all of them.
-        async (raw: Record<string, unknown>) => {
+        async (raw: Record<string, unknown>, ctx?: unknown) => {
             try {
-                return await handle(raw);
+                return await handle(raw, (ctx as { mcpReq?: { signal?: AbortSignal } } | undefined)?.mcpReq?.signal);
             } catch (err) {
                 throw scrubbedError(err);
             }
         }
     );
 
-    async function handle(raw: Record<string, unknown>) {
+    async function handle(raw: Record<string, unknown>, signal: AbortSignal | undefined) {
         const { dry_run: dryRun, confirm: presented, ...rest } = raw as {
             dry_run: boolean;
             confirm?: string;
@@ -460,11 +510,7 @@ export function registerWriteTool<
             );
         }
 
-        // A confirm call holds its instance's lane from the plan's reads to the
-        // apply, so the state its token is checked against is still the state
-        // it writes over. Everything else runs at once.
-        const run = presented !== undefined && !dryRun ? laneOf(service) : <T>(task: () => Promise<T>): Promise<T> => task();
-        return run(async () => {
+        const proceed = async () => {
             let plan: WritePlan<Bound>;
             try {
                 plan = await spec.plan(args, adapter);
@@ -685,6 +731,21 @@ export function registerWriteTool<
                 // In the text as well as the field (#234).
                 (said ?? `Applied. ${plan.summary}`) + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
             );
+        };
+
+        if (presented === undefined || dryRun) return proceed();
+        // A confirm call holds its instance's lane from the plan's reads to the
+        // apply, so the state its token is checked against is still the state
+        // it writes over. Everything else runs at once.
+        const turn = await inLane(service, signal, proceed);
+        if (turn.ran) return turn.value;
+        const detail =
+            turn.why === 'busy'
+                ? `another confirmed write to ${service} was still running after ${LANE_WAIT_MS / 1000} seconds`
+                : 'the request was cancelled while it waited for another write to finish';
+        deny(service, rawTarget(args), detail);
+        throw new ServiceError('Timeout', service, `${detail}, so this one was not applied`, {
+            remedy: 'Its confirmation token was not used: call again with the same arguments and token once that write has finished.'
         });
     }
 }
