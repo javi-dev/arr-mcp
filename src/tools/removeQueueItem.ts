@@ -144,7 +144,7 @@ export function registerRemoveQueueItem(
                     });
                 }
                 if (!canListOrphans(adapter)) {
-                    throw new ServiceError('InvalidRequest', adapter.id, `${adapter.id} reports no orphaned items`, {
+                    throw new ServiceError('InvalidRequest', adapter.id, `${adapter.id} cannot list orphaned downloads`, {
                         remedy: 'orphaned works with Radarr, Sonarr, Whisparr and Lidarr only.'
                     });
                 }

@@ -258,7 +258,7 @@ const KIND_LABEL: Record<NonNullable<ConnectionDiagnosis['error']>['kind'], stri
     Timeout: 'Timeout',
     VersionUnsupported: 'Unsupported',
     PermissionDenied: 'Denied',
-    InvalidRequest: 'Invalid request',
+    InvalidRequest: 'Invalid',
     UpstreamError: 'Error'
 };
 

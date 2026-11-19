@@ -705,7 +705,7 @@ describe('remove_queue_item', () => {
     it('fails legibly when the id is no longer in the queue', async () => {
         const h = harness(registerRemoveQueueItem);
         await expect(h.call({ service: 'radarr', id: '999', dry_run: true })).rejects.toThrow(
-            /nothing in radarr's queue has id/
+            /^radarr not found: nothing in radarr's queue has id/
         );
     });
 

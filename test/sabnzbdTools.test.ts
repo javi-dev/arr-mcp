@@ -337,7 +337,7 @@ describe('update_client_settings', () => {
     it('refuses a setting this SABnzbd does not have', async () => {
         const h = harness();
         delete h.settings.cleanup_list;
-        await expect(h.call('update_client_settings', { cleanup_list: ['nfo'] })).rejects.toThrow(/^sabnzbd version unsupported: this SABnzbd has no setting named cleanup_list/);
+        await expect(h.call('update_client_settings', { cleanup_list: ['nfo'] })).rejects.toThrow(/^sabnzbd version unsupported: this SABnzbd has no setting named cleanup_list\. These settings need SABnzbd 4\.4 or later/);
     });
 
     it('does not let a token apply once the stored retention count has changed', async () => {
