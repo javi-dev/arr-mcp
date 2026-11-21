@@ -214,7 +214,7 @@ const keyed = (port: number): KeyedServiceConfig => ({
 // Shape and naming as probed live on Radarr: unset criteria come back absent.
 const radarrIndexers = (ratio?: number, minutes?: number) => [
     {
-        name: 'Nyaa.si (Prowlarr)',
+        name: 'Indexer 3 (Prowlarr)',
         protocol: 'torrent',
         fields: [
             { name: 'minimumSeeders', value: 1 },
@@ -222,7 +222,7 @@ const radarrIndexers = (ratio?: number, minutes?: number) => [
             { name: 'seedCriteria.seedTime', ...(minutes === undefined ? {} : { value: minutes }) }
         ]
     },
-    { name: 'DrunkenSlug (Prowlarr)', protocol: 'usenet', fields: [] }
+    { name: 'Indexer 2 (Prowlarr)', protocol: 'usenet', fields: [] }
 ];
 
 const radarr = (ratio?: number, minutes?: number) =>
@@ -244,7 +244,7 @@ const prowlarr = (ratio?: number) =>
                     ? i
                     : {
                           ...i,
-                          name: 'Nyaa.si',
+                          name: 'Indexer 3',
                           fields: i.fields?.map(f =>
                               f.name === 'torrentBaseSettings.seedRatio' && ratio !== undefined ? { ...f, value: ratio } : f
                           )
@@ -291,7 +291,7 @@ describe('client seed limits', () => {
 describe('indexer seed criteria', () => {
     it('reads torrent indexers only, with times in seconds', async () => {
         expect(await radarr(1.5, 60).getSeedCriteria()).toEqual([
-            { service: 'radarr', indexer: 'Nyaa.si (Prowlarr)', seedRatio: 1.5, seedTimeSeconds: 3600 }
+            { service: 'radarr', indexer: 'Indexer 3 (Prowlarr)', seedRatio: 1.5, seedTimeSeconds: 3600 }
         ]);
     });
 
@@ -320,7 +320,7 @@ describe('indexer seed criteria', () => {
     });
 
     it('omits criteria the indexer leaves unset', async () => {
-        expect(await radarr().getSeedCriteria()).toEqual([{ service: 'radarr', indexer: 'Nyaa.si (Prowlarr)' }]);
+        expect(await radarr().getSeedCriteria()).toEqual([{ service: 'radarr', indexer: 'Indexer 3 (Prowlarr)' }]);
     });
 
     it('reads Prowlarr privacy from the captured fixture', async () => {
@@ -358,7 +358,7 @@ describe('get_stack_health seeding rules', () => {
         const result = await buildStackHealth([limited(), healthy(radarr(1)), healthy(prowlarr(2))], full);
 
         expect(result.seedingRules?.notes).toEqual([
-            `radarr's copy of "Nyaa.si" has ratio 1, no seed time, but prowlarr has ratio 2, no seed time. ` +
+            `radarr's copy of "Indexer 3" has ratio 1, no seed time, but prowlarr has ratio 2, no seed time. ` +
                 'The copy is what radarr hands the client on a grab.'
         ]);
     });
@@ -372,7 +372,7 @@ describe('get_stack_health seeding rules', () => {
         const result = await buildStackHealth([unlimited(), healthy(radarr())], full);
 
         expect(result.seedingRules?.notes).toEqual([
-            '"Nyaa.si (Prowlarr)" in radarr sets no seed ratio or time, and no torrent client has a default limit, ' +
+            '"Indexer 3 (Prowlarr)" in radarr sets no seed ratio or time, and no torrent client has a default limit, ' +
                 'so its grabs seed until someone stops them.'
         ]);
     });

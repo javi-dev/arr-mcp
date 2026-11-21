@@ -28,8 +28,8 @@ const seedFields = (ratio: number | null) => [
 const INDEXERS = [
     {
         id: 21,
-        name: 'Nyaa.si',
-        definitionName: 'nyaasi',
+        name: 'Indexer 3',
+        definitionName: 'indexer3',
         enable: true,
         protocol: 'torrent',
         priority: 25,
@@ -39,7 +39,7 @@ const INDEXERS = [
     },
     {
         id: 8,
-        name: 'altHUB',
+        name: 'Indexer 1',
         definitionName: 'Newznab',
         enable: false,
         protocol: 'usenet',
@@ -63,7 +63,7 @@ const template = (definitionName: string, name: string, protocol: string, fields
 });
 
 const SCHEMA = [
-    template('nyaasi', 'Nyaa.si', 'torrent', seedFields(null)),
+    template('indexer3', 'Indexer 3', 'torrent', seedFields(null)),
     template('eztv', 'EZTV', 'torrent', seedFields(null)),
     {
         ...template('yts', 'YTS', 'torrent', seedFields(null)),
@@ -369,7 +369,7 @@ describe('manage_indexer edit', () => {
         });
 
         expect(structuredContent.summary).toBe(
-            'Edit Nyaa.si in prowlarr: priority 25 → 10; app profile Everything → Interactive only.'
+            'Edit Indexer 3 in prowlarr: priority 25 → 10; app profile Everything → Interactive only.'
         );
         const effects = structuredContent.effects.join(' | ');
         expect(effects).toContain("Radarr: keeps its copy's old settings");
@@ -409,7 +409,7 @@ describe('manage_indexer edit', () => {
 
     it('works out which apps lose it, and that only Full Sync removes the copy', async () => {
         const h = harness();
-        // altHUB carries tag 3, so Sonarr 4K has it. Swapping 3 for anime
+        // Indexer 1 carries tag 3, so Sonarr 4K has it. Swapping 3 for anime
         // keeps the untagged apps but drops Sonarr 4K.
         const { structuredContent } = await h.call({ id: 8, action: 'edit', tags: ['anime'] });
 
@@ -512,9 +512,9 @@ describe('manage_indexer add', () => {
 
     it('is a no-op for a definition already configured', async () => {
         const h = harness();
-        const { structuredContent } = await h.call({ action: 'add', definition: 'nyaasi' });
+        const { structuredContent } = await h.call({ action: 'add', definition: 'indexer3' });
         expect(structuredContent.noop).toBe(true);
-        expect(structuredContent.summary).toBe('Nyaa.si is already configured as prowlarr:21.');
+        expect(structuredContent.summary).toBe('Indexer 3 is already configured as prowlarr:21.');
     });
 
     it('suggests close credential-free matches for an unknown name', async () => {

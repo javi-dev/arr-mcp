@@ -945,13 +945,13 @@ describe('redactPlexSessions', () => {
 
     it('replaces User.title, a viewer username, alongside the IP it already redacted', () => {
         const body = sessions([
-            { ratingKey: '1', User: { id: '7', title: 'realname99' }, Player: { remotePublicAddress: '81.4.2.10' } }
+            { ratingKey: '1', User: { id: '7', title: 'realname99' }, Player: { remotePublicAddress: '198.51.100.20' } }
         ]);
         const [row] = (redactPlexSessions(body) as { MediaContainer: { Metadata: Record<string, unknown>[] } })
             .MediaContainer.Metadata;
         const user = row?.User as Record<string, unknown>;
         expect(user.title).not.toBe('realname99');
-        expect((row?.Player as Record<string, unknown>).remotePublicAddress).not.toBe('81.4.2.10');
+        expect((row?.Player as Record<string, unknown>).remotePublicAddress).not.toBe('198.51.100.20');
     });
 
     it('replaces User.thumb, which can embed an account identifier in a Plex avatar URL', () => {
@@ -969,10 +969,10 @@ describe('redactPlexSessions', () => {
     });
 
     it('still redacts a row with only a Player, no User, as before', () => {
-        const body = sessions([{ ratingKey: '1', Player: { remotePublicAddress: '81.4.2.10' } }]);
+        const body = sessions([{ ratingKey: '1', Player: { remotePublicAddress: '198.51.100.20' } }]);
         const [row] = (redactPlexSessions(body) as { MediaContainer: { Metadata: Record<string, unknown>[] } })
             .MediaContainer.Metadata;
-        expect((row?.Player as Record<string, unknown>).remotePublicAddress).not.toBe('81.4.2.10');
+        expect((row?.Player as Record<string, unknown>).remotePublicAddress).not.toBe('198.51.100.20');
     });
 
     /**

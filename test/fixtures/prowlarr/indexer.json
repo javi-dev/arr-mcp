@@ -292,7 +292,7 @@
     "priority": 1,
     "downloadClientId": 0,
     "added": "2021-08-23T11:32:28Z",
-    "sortName": "althub",
+    "sortName": "indexer 1",
     "name": "Indexer 1",
     "fields": [
       {
@@ -844,7 +844,7 @@
     "priority": 1,
     "downloadClientId": 0,
     "added": "2021-08-23T11:32:44Z",
-    "sortName": "drunkenslug",
+    "sortName": "indexer 2",
     "name": "Indexer 2",
     "fields": [
       {
@@ -1192,13 +1192,13 @@
     "priority": 25,
     "downloadClientId": 0,
     "added": "2022-12-17T11:07:44Z",
-    "sortName": "nyaa si",
+    "sortName": "indexer 3",
     "name": "Indexer 3",
     "fields": [
       {
         "order": 0,
         "name": "definitionFile",
-        "value": "nyaasi",
+        "value": "indexer3",
         "type": "textbox",
         "advanced": false,
         "hidden": "hidden",
@@ -1566,7 +1566,7 @@
     "implementationName": "Cardigann",
     "implementation": "Cardigann",
     "configContract": "CardigannSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#nyaasi",
+    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#indexer3",
     "tags": [],
     "id": 21
   },
@@ -2224,7 +2224,7 @@
     "priority": 1,
     "downloadClientId": 0,
     "added": "2025-05-19T14:17:47Z",
-    "sortName": "spotarr",
+    "sortName": "indexer 4",
     "name": "Indexer 4",
     "fields": [
       {
@@ -2840,13 +2840,13 @@
     "priority": 25,
     "downloadClientId": 0,
     "added": "2022-12-17T11:07:20Z",
-    "sortName": "pirate bay",
+    "sortName": "indexer 5",
     "name": "Indexer 5",
     "fields": [
       {
         "order": 0,
         "name": "definitionFile",
-        "value": "thepiratebay",
+        "value": "indexer5",
         "type": "textbox",
         "advanced": false,
         "hidden": "hidden",
@@ -2966,7 +2966,7 @@
         "order": 0,
         "name": "apiurl",
         "label": "API URL",
-        "value": "apibay.org",
+        "value": "indexer.example.test",
         "type": "textbox",
         "advanced": false,
         "privacy": "normal",
@@ -3023,7 +3023,7 @@
         "order": 2,
         "name": "info_top100",
         "label": "About the top100 selection",
-        "value": "TPB indexer uses <b>top100_recent</b> for its <i>TEST</i> and <i>keyword-less</i> searches. However TPB will often only include Movies and TV in its top100_recent list which makes setting up Lidarr for Audio or other similar *Arr apps problematic. By changing the top100 selector you will make the indexer use a more focused top100 for the category group your *Arr app uses.",
+        "value": "This indexer uses <b>top100_recent</b> for its <i>TEST</i> and <i>keyword-less</i> searches. However it will often only include Movies and TV in its top100_recent list which makes setting up Lidarr for Audio or other similar *Arr apps problematic. By changing the top100 selector you will make the indexer use a more focused top100 for the category group your *Arr app uses.",
         "type": "info",
         "advanced": false,
         "privacy": "normal",
@@ -3042,7 +3042,7 @@
         "order": 4,
         "name": "info_uploader",
         "label": "About filtering by Uploader",
-        "value": "You can filter by Uploader by entering a Case Sensitive username, or leave empty to get all results.<br>Note: this is the username of the Uploader and not the Groupname that often show up at the end of TPB titles, eg -MeGusta.",
+        "value": "You can filter by Uploader by entering a Case Sensitive username, or leave empty to get all results.<br>Note: this is the username of the Uploader and not the Groupname that often show up at the end of its titles, eg -MeGusta.",
         "type": "info",
         "advanced": false,
         "privacy": "normal",
@@ -3052,7 +3052,7 @@
     "implementationName": "Cardigann",
     "implementation": "Cardigann",
     "configContract": "CardigannSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#thepiratebay",
+    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#indexer5",
     "tags": [],
     "id": 20
   }

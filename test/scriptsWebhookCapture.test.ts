@@ -24,11 +24,11 @@ describe('anonymiseWebhook', () => {
             movie: { folderPath: 'D:\\Films\\The Matrix (1999)' },
             movieFile: { path: '/mnt/user/films/matrix.mkv', relativePath: 'matrix.mkv' },
             renamedMovieFiles: [{ previousPath: '/mnt/user/old.mkv', previousRelativePath: 'old.mkv' }],
-            somethingNew: '/home/bartus/private',
+            somethingNew: '/home/someone/private',
             alsoNew: '\\\\nas\\share\\films'
         });
         const text = JSON.stringify(out);
-        for (const leak of ['Films', 'mnt', 'matrix.mkv', 'old.mkv', 'bartus', 'nas']) expect(text).not.toContain(leak);
+        for (const leak of ['Films', 'mnt', 'matrix.mkv', 'old.mkv', 'someone', 'nas']) expect(text).not.toContain(leak);
         expect(typeof out.movieFile?.path).toBe('string');
     });
 

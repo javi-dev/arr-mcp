@@ -38,7 +38,7 @@ const tiered = (safe_write: boolean): AnyServiceConfig =>
 const release = (over: Record<string, unknown> = {}) => ({
     guid: 'abc',
     indexerId: 3,
-    indexer: 'DrunkenSlug (Prowlarr)',
+    indexer: 'Indexer 2 (Prowlarr)',
     title: 'Alien.1979.2160p.BluRay-GROUP',
     size: 25_900_000_000,
     quality: { quality: { name: 'Bluray-2160p' } },

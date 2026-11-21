@@ -437,9 +437,10 @@ const fromMerged = (item: FilmOrSeries, itemId: string): Resolved => ({
 });
 
 /**
- * The id get_metadata_issues printed, as `plex:119962` or bare. A title can
- * resolve to a different item than the one flagged (The Fall the series came
- * back as Fall the film), and the id cannot.
+ * The id get_metadata_issues printed, as `plex:12345` or bare. A title can
+ * resolve to a different item than the one flagged (a series whose title
+ * differs from a film's only by a leading article came back as the film), and
+ * the id cannot.
  */
 async function resolveById(loader: LibraryLoader, raw: string, adapter: ServiceAdapter): Promise<Resolved> {
     const prefix = `${adapter.id}:`;
@@ -623,7 +624,7 @@ const fixMetadataInput = byMediaServers(ids => z.object({
         .min(1)
         .optional()
         .describe(
-            'The media server item id, as get_metadata_issues prints it (`plex:119962`) or bare[[grimmory: , or a Grimmory book as `grimmory:<book id>`]][[lidarr: , or a Lidarr artist as `lidarr:<artistId>`]]. Wins over `query`.'
+            'The media server item id, as get_metadata_issues prints it (`plex:12345`) or bare[[grimmory: , or a Grimmory book as `grimmory:<book id>`]][[lidarr: , or a Lidarr artist as `lidarr:<artistId>`]]. Wins over `query`.'
         ),
     files: z
         .array(z.number().int().positive())
@@ -763,8 +764,8 @@ export function registerFixMetadata(
              * A refresh re-fetches an episode from the provider id stored *on
              * that episode*. An episode pinned to the wrong id is therefore
              * re-written with the same wrong metadata, and the repair reports
-             * success having changed nothing. Verified on Dragon Ball Kai: all
-             * 68 mismatching episodes carried their own AniDB/TVDB ids, the
+             * success having changed nothing. Seen on a live series: all of its
+             * mismatching episodes carried their own AniDB/TVDB ids, the
              * repair applied cleanly, and every title came back identical.
              */
             // Films are exempt. An episode pinned to a provider id keeps its
@@ -966,7 +967,7 @@ ${note}`;
              * film before the refresh landed and called that a failure.
              */
             // The write has landed by now, so a failed read is "not settled
-            // yet", never an error: Broken Darkness was repaired and reported
+            // yet", never an error: a live repair succeeded and was reported
             // as a 503.
             let readError: string | undefined;
             const readAfter = async (): Promise<Reading | undefined> => {

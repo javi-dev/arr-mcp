@@ -68,7 +68,7 @@
       ],
       "date": "2026-06-18T08:25:00Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "Creed III",
@@ -236,7 +236,7 @@
       ],
       "date": "2026-06-18T08:17:00Z",
       "protocol": "usenet",
-      "indexer": "Spotarr (Prowlarr)",
+      "indexer": "Indexer 4 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "Creed III",
@@ -404,7 +404,7 @@
       ],
       "date": "2026-06-18T08:16:00Z",
       "protocol": "usenet",
-      "indexer": "Spotarr (Prowlarr)",
+      "indexer": "Indexer 4 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "Creed III",
@@ -572,7 +572,7 @@
       ],
       "date": "2026-06-18T08:13:00Z",
       "protocol": "usenet",
-      "indexer": "DrunkenSlug (Prowlarr)",
+      "indexer": "Indexer 2 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "Creed III",
@@ -752,7 +752,7 @@
       ],
       "date": "2026-04-06T08:12:03Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "Apartment 7A",
@@ -897,7 +897,7 @@
       ],
       "date": "2026-02-02T12:43:16Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "The Lord of the Rings: The Return of the King",
@@ -1076,7 +1076,7 @@
       ],
       "date": "2026-02-02T12:41:46Z",
       "protocol": "usenet",
-      "indexer": "DrunkenSlug (Prowlarr)",
+      "indexer": "Indexer 2 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "The Lord of the Rings: The Return of the King",
@@ -1259,7 +1259,7 @@
       ],
       "date": "2026-02-02T12:41:00Z",
       "protocol": "usenet",
-      "indexer": "DrunkenSlug (Prowlarr)",
+      "indexer": "Indexer 2 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "The Lord of the Rings: The Return of the King",
@@ -1442,7 +1442,7 @@
       ],
       "date": "2026-02-02T11:15:01Z",
       "protocol": "usenet",
-      "indexer": "DrunkenSlug (Prowlarr)",
+      "indexer": "Indexer 2 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "The Lord of the Rings: The Return of the King",
@@ -1649,7 +1649,7 @@
       ],
       "date": "2026-01-27T13:13:05Z",
       "protocol": "usenet",
-      "indexer": "DrunkenSlug (Prowlarr)",
+      "indexer": "Indexer 2 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "movie": {
         "title": "Apartment 7A",

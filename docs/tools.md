@@ -2160,7 +2160,7 @@ reaches Sonarr, and the preview says which of the two kept it out.
 ### Adding
 
 `add` takes a `definition`, by the name in Prowlarr's Add Indexer list
-(`Nyaa.si`) or its definition name (`nyaasi`), and only adds **public indexers
+(`Example Indexer`) or its definition name (`exampleindexer`), and only adds **public indexers
 that need no login**: no password, cookie or captcha field. Private and
 semi-private ones are refused with a pointer to Prowlarr's UI, because arr-mcp
 never handles indexer credentials.
@@ -2365,7 +2365,7 @@ read differently.
 
 A scan asks whether a file is on disk; this asks whether the metadata attached
 to that file **describes** it, and replaces it when it does not (a file named
-`Specials/Episode 101 Videl's Crisis…` displayed as S1E1 *Prologue to Battle!*).
+`Specials/Episode 101 The Hero's Call…` displayed as S1E1 *Prologue to the First Battle!*).
 
 A Grimmory book is repaired too, by its id and through Grimmory's own metadata
 providers; see [A Grimmory book](#a-grimmory-book) below. A title that matches
@@ -2374,7 +2374,7 @@ through Lidarr; see [Music, through Lidarr](#music-through-lidarr).
 
 Give a film or series title as `query`, resolved through the library index the
 same way `get_media_details` resolves one, or the `id` that
-`get_metadata_issues` printed for it (`plex:119962`, or bare). The id wins when
+`get_metadata_issues` printed for it (`plex:12345`, or bare). The id wins when
 both are given.
 
 With two media servers it repairs on the primary. `service` picks the other, and
