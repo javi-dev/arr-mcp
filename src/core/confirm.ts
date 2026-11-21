@@ -185,7 +185,8 @@ export class ConfirmTokens {
         const issuedAt = Number.parseInt(issuedAtField, 36);
         const nonce = parts[3] ?? '';
         const signature = parts[4] ?? '';
-        if (!ISSUED_AT.test(issuedAtField) || !Number.isSafeInteger(issuedAt) || !NONCE.test(nonce) || signature === '') {
+        // Only the one spelling `issue` writes: no padding, sign or suffix.
+        if (!ISSUED_AT.test(issuedAtField) || !Number.isSafeInteger(issuedAt) || issuedAt.toString(36) !== issuedAtField || !NONCE.test(nonce) || signature === '') {
             return { ok: false, failure: 'malformed', remedy: REMEDY.malformed };
         }
 

@@ -290,7 +290,7 @@ describe('confirmation tokens', () => {
         const tokens = new ConfirmTokens();
         const token = tokens.issue(intent());
         const [version, keyId, issuedAt, nonce, signature] = token.split('.');
-        for (const field of [`${issuedAt}_x`, `${issuedAt}~`, `${issuedAt} `, ` ${issuedAt}`, `-${issuedAt}`, `+${issuedAt}`, (issuedAt ?? '').toUpperCase(), '']) {
+        for (const field of [`${issuedAt}_x`, `${issuedAt}~`, `${issuedAt} `, ` ${issuedAt}`, `-${issuedAt}`, `+${issuedAt}`, `0${issuedAt}`, `00${issuedAt}`, (issuedAt ?? '').toUpperCase(), '']) {
             const result = tokens.verifyAndConsume(`${version}.${keyId}.${field}.${nonce}.${signature}`, intent());
             if (result.ok) throw new Error(`expected a rejection for issued-at ${JSON.stringify(field)}`);
             expect(result.failure, field).toBe('malformed');
