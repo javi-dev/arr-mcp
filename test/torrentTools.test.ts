@@ -2130,11 +2130,15 @@ describe('reannounce_torrent', () => {
     });
 
     it.each([
-        ['a refused login', (path: string) => (path === '/auth/login' ? new Response('Fails.') : new Response('Forbidden', { status: 403 }))],
-        ['an unreachable client', () => {
+        ['a refused login', 1, 1, (path: string) => (path === '/auth/login' ? new Response('Fails.') : new Response('Forbidden', { status: 403 }))],
+        ['an unreachable client', 1, 0, () => {
             throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+        }],
+        // A read that times out is retried once, by the HTTP client, before it fails.
+        ['a client that does not answer', 2, 0, () => {
+            throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
         }]
-    ])('does not read the state again after %s', async (_why, answer) => {
+    ])('does not read the state again after %s', async (_why, reads, logins, answer) => {
         const paths: string[] = [];
         const impl = (async (input: string | URL | Request) => {
             const path = new URL(input instanceof Request ? input.url : String(input)).pathname.replace('/api/v2', '');
@@ -2145,8 +2149,8 @@ describe('reannounce_torrent', () => {
         const { server, call } = toolServer();
         registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)]);
         await expect(call('reannounce_torrent', { id: HASH })).rejects.toThrow();
-        expect(paths.filter(p => p === '/torrents/info')).toHaveLength(1);
-        expect(paths.filter(p => p === '/auth/login').length).toBeLessThanOrEqual(1);
+        expect(paths.filter(p => p === '/torrents/info')).toHaveLength(reads);
+        expect(paths.filter(p => p === '/auth/login')).toHaveLength(logins);
     });
 
     it('names a stopped torrent found by the fallback state read by its hash in lower case', async () => {
