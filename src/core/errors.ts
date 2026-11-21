@@ -159,16 +159,11 @@ function scrubUrls(text: string): string {
         }
         // A scheme with nothing after it names no address.
         if (cut === found.index + 3) continue;
-        const kept = hostOnly(text.slice(start, cut));
-        out += text.slice(copied, start);
-        if (kept === undefined) {
-            out += text.slice(start, end);
-        } else {
-            // Punctuation after a cut URL may be the end of its query, and nothing in
-            // the text says where the URL stops, so it goes with it. A quotation's
-            // closing mark can go too; the placeholder's dots stand in for a full stop.
-            out += kept;
-        }
+        // Punctuation after a URL may be the end of its path or query, and nothing in
+        // the text says where the URL stops, so it goes with it, whether the URL is
+        // cut or not. A quotation's closing mark or a full stop can go too.
+        const raw = text.slice(start, cut);
+        out += text.slice(copied, start) + (end - start > MAX_URL_LENGTH ? '(a URL, left out)' : (hostOnly(raw) ?? raw));
         copied = end;
         separator.lastIndex = end;
     }
@@ -180,7 +175,7 @@ function scrubUrls(text: string): string {
  * passkey masked, or `undefined` when it is already no more than that.
  */
 function hostOnly(raw: string): string | undefined {
-    const url = raw.length > MAX_URL_LENGTH ? null : URL.parse(raw);
+    const url = URL.parse(raw);
     if (url === null) return '(a URL, left out)';
     const host = masked(url.hostname.toLowerCase());
     // Left as written only when nothing in it, as written or as parsed, needs masking:

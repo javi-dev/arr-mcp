@@ -234,7 +234,10 @@ describe('classifyFetchError', () => {
         const cases: [string, string][] = [
             ['refused http://user:pw@host:1/key/path?apikey=abc', 'refused http://host:1/...'],
             ['refused https://0123456789abcdef0123.example.org/announce', 'refused https://***.example.org/...'],
-            ['refused http://host:1 and http://host:2/.', 'refused http://host:1 and http://host:2/.'],
+            ['refused http://host:1 and http://host:2/.', 'refused http://host:1 and http://host:2/'],
+            // Punctuation after a bare origin can be its path, so it goes too, and counts toward the length.
+            ['refused http://host:1/);,:..', 'refused http://host:1/'],
+            [`refused http://host:1/${')'.repeat(3000)}`, 'refused (a URL, left out)'],
             ["Failed to parse URL from 'http://host:1/key?apikey=abc'.", "Failed to parse URL from 'http://host:1/..."],
             // Folded to `/` by the parser, but the key is in the text as written.
             ['refused http://host:1/abc/%2e%2e', 'refused http://host:1/...'],

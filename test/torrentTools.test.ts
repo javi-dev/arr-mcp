@@ -2080,9 +2080,9 @@ describe('reannounce_torrent', () => {
         expect(h.posts).toEqual([]);
     });
 
-    it('has nothing to do for a torrent that stops after its details read failed', async () => {
+    it('has nothing to do for a torrent the fallback state read finds stopped', async () => {
         const qb = fakeQbittorrent({ failing: ['/torrents/trackers'] });
-        // The torrent stops as soon as its state has been read once.
+        // Running for the details read, stopped by the time the state is read on its own.
         const impl = (async (input: string | URL | Request, init?: RequestInit) => {
             const answer = await qb.impl(input, init);
             if (String(input instanceof Request ? input.url : input).includes('/torrents/info')) qb.torrents[0]!.state = 'stoppedUP';
