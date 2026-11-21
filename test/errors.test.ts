@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { ServiceError, classifyFetchError, classifyHttpStatus } from '../src/core/errors.ts';
-import { scrubUrls as scrubPastedUrls } from '../src/core/pastedUrl.ts';
 
 describe('ServiceError.message', () => {
     it('produces actionable text naming the service, cause, and target', () => {
@@ -231,30 +230,42 @@ describe('classifyFetchError', () => {
         expect(out.detail).toBe('bad response from http://host:1/... at host:1');
     });
 
-    it('cuts every URL down to scheme and host, and leaves out magnet links', () => {
+    it('cuts every URL down to scheme and host', () => {
         const cases: [string, string][] = [
             ['refused http://user:pw@host:1/key/path?apikey=abc', 'refused http://host:1/...'],
             ['refused https://0123456789abcdef0123.example.org/announce', 'refused https://***.example.org/...'],
-            ['refused magnet:?xt=urn:btih:abc&tr=http://tracker.example.org/key/announce', 'refused (a magnet link, left out)'],
             ['refused http://host:1 and http://host:2/.', 'refused http://host:1 and http://host:2/.'],
-            // A serialiser leaves a backtick in a query unescaped; the older scrub dropped the whole query, and so does this one.
+            ["Failed to parse URL from 'http://host:1/key?apikey=abc'.", "Failed to parse URL from 'http://host:1/...'."],
+            // Folded to `/` by the parser, but the key is in the text as written.
+            ['refused http://host:1/abc/%2e%2e', 'refused http://host:1/...'],
+            // A serialiser leaves a backtick raw in a query and in a host, so neither ends the URL.
             ['refused http://host:1/?apikey=ab`cdef', 'refused http://host:1/...'],
-            // A parser keeps a backtick in a host raw, so the URL goes on past it.
             ['refused http://a`b.example/api?apikey=abc', 'refused http://a`b.example/...'],
             [
                 'Request cannot be constructed from a URL that includes credentials: http://user:s3cret@a`b.example/api?apikey=abc',
                 'Request cannot be constructed from a URL that includes credentials: http://a`b.example/...'
             ],
             ['refused http://user:s3c`ret@example.com/path?apikey=abc', 'refused http://example.com/...'],
-            // Past the shared scrub's scheme bound, which the older read scrub had none of.
-            [`refused a${'0'.repeat(32)}://user:pw@host:1/?apikey=abc`, `refused a${'0'.repeat(32)}(a URL, left out)`]
+            ['refused https://0123456789abcdef0123`x.example/', 'refused https://***`x.example/...'],
+            // A long scheme is still a scheme, and digits before its first letter are the sentence's.
+            [`refused a${'0'.repeat(40)}://user:pw@host:1/?apikey=abc`, `refused a${'0'.repeat(40)}://host:1/...`],
+            ['version 1.5http://host:1/key', 'version 1.5http://host:1/...'],
+            // Nothing a URL parser accepts is left whole.
+            ['refused http://[::1/key?apikey=abc', 'refused (a URL, left out)'],
+            // Not addresses.
+            ['a bare https:// here, and ://abc', 'a bare https:// here, and ://abc']
         ];
         for (const [message, expected] of cases) {
-            const detail = classifyFetchError(new Error(message), 'radarr', 'http://h:7878').detail;
-            expect(detail).toBe(`${expected} at h:7878`);
-            // The same scrub write tools apply, so scrubbing again changes nothing.
-            expect(scrubPastedUrls(detail)).toBe(detail);
+            expect(classifyFetchError(new Error(message), 'radarr', 'http://h:7878').detail).toBe(`${expected} at h:7878`);
         }
+    });
+
+    it('reads a long message in linear time', () => {
+        const started = Date.now();
+        for (const message of ['a'.repeat(400_000), `${'a'.repeat(400_000)}://`, 'a://'.repeat(100_000), '0://'.repeat(100_000), 'a:// '.repeat(80_000), `http://h/${"'.".repeat(200_000)}x`]) {
+            classifyFetchError(new Error(message), 'radarr', 'http://h:7878');
+        }
+        expect(Date.now() - started).toBeLessThan(2_000);
     });
 
     it('leaves a URL with nothing but scheme and host as it is', () => {

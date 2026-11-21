@@ -1,4 +1,4 @@
-import { scrubUrls } from './pastedUrl.ts';
+import { maskedHost } from './pastedUrl.ts';
 
 export type ServiceErrorKind =
     | 'Unreachable'
@@ -107,6 +107,53 @@ function safeHost(url: string): string {
     } catch {
         return url;
     }
+}
+
+const SCHEME_CHAR = /[a-z0-9+.-]/i;
+/** What ends a URL in a message. Not a quote or a backtick: a URL serialiser
+ *  leaves either raw in a host or a query, and stopping there would keep the rest. */
+const URL_END = /[\s"<>]/;
+/** Punctuation a sentence or a quotation can close a URL with, which is not part of it. */
+const URL_TRAILING = new Set(['.', ',', ';', ':', ')', "'", '`']);
+
+/**
+ * Cuts every URL in a transport error's message down to its scheme and host.
+ * Node quotes the full URL when it refuses one, and a key can sit in its
+ * userinfo, its path or its query. One pass from each `://`: back over the
+ * scheme, forward to the end of the URL. Each character is read a bounded
+ * number of times, however the message is built.
+ */
+function scrubUrls(text: string): string {
+    let out = '';
+    let copied = 0;
+    const separator = /:\/\//g;
+    for (let found = separator.exec(text); found !== null; found = separator.exec(text)) {
+        let start = found.index;
+        while (start > copied && SCHEME_CHAR.test(text[start - 1] ?? '')) start -= 1;
+        // A scheme starts with a letter; digits before the first one belong to the sentence.
+        while (start < found.index && !/[a-z]/i.test(text[start] ?? '')) start += 1;
+        if (start === found.index) continue;
+        let end = found.index + 3;
+        while (end < text.length && !URL_END.test(text[end] ?? '')) end += 1;
+        let cut = end;
+        while (cut > found.index + 3 && URL_TRAILING.has(text[cut - 1] ?? '')) cut -= 1;
+        // A scheme with nothing after it names no address.
+        if (cut === found.index + 3) continue;
+        out += text.slice(copied, start) + hostOnly(text.slice(start, cut));
+        copied = cut;
+        separator.lastIndex = cut;
+    }
+    return out + text.slice(copied);
+}
+
+/** One URL as its scheme and host, with any label that looks like a passkey masked. */
+function hostOnly(raw: string): string {
+    if (!URL.canParse(raw)) return '(a URL, left out)';
+    const url = new URL(raw);
+    // A parser keeps a backtick in a host, so each side of one is judged on its own.
+    const host = url.hostname.split('`').map(maskedHost).join('`');
+    const origin = `${url.protocol}//${host}${url.port === '' ? '' : `:${url.port}`}`;
+    return raw === origin || raw === `${origin}/` ? raw : `${origin}/...`;
 }
 
 /** A plain endpoint-vocabulary word, or a REST version segment such as `v3`. */

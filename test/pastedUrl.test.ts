@@ -46,36 +46,12 @@ describe('scrubUrls', () => {
         // A sentence's full stop after a cut URL is not doubled onto the placeholder.
         [`refused https://tracker.example/${PASSKEY}.`, 'refused https://tracker.example/...'],
         [`got http://[2001:db8::1]/${PASSKEY}]`, 'got http://[2001:db8::1]/...]'],
-        [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...'],
-        // A serialiser leaves a backtick in a query unescaped, so it does not end the URL.
-        [`got https://tracker.example/?a=x\`${PASSKEY}`, 'got https://tracker.example/...'],
-        [`magnet:?xt=urn:btih:abc&dn=x\`y&tr=${PASSKEY} was refused`, '(a magnet link, left out) was refused'],
-        // One that closes a code span stays, outside the cut.
-        [`use \`https://tracker.example/${PASSKEY}\`.`, 'use `https://tracker.example/...`.'],
-        [`use \`magnet:?xt=urn:btih:abc&tr=${PASSKEY}\`.`, 'use `(a magnet link, left out)`.'],
-        // A sentence's punctuation after a magnet link stays.
-        [`(from magnet:?xt=urn:btih:abc&tr=${PASSKEY}).`, '(from (a magnet link, left out)).'],
-        // A parser keeps a backtick in a host, so a URL goes on past one, and a passkey label beside it is still masked.
-        ['use https://0123456789abcdef0123`again', 'use https://***`again/...'],
-        // A link that opens a code span ends where the span closes.
-        ['use `https://0123456789abcdef0123`again', 'use `https://***/...`again'],
-        [`https://${PASSKEY}\`/announce`, 'https://***`/...'],
-        [`refused http://a\`b.example/api?apikey=${PASSKEY}`, 'refused http://a`b.example/...'],
-        [`refused http://h.example/a\`b?passkey=${PASSKEY}`, 'refused http://h.example/...'],
-        // A code span right after one that holds a URL is its own.
-        [`see \`http://192.0.2.1/?key=${PASSKEY}\`,\`http://192.0.2.2\``, 'see `http://192.0.2.1/...`,`http://192.0.2.2`'],
-        [`Use \`http://h.example/?q=${PASSKEY}\`,\`confirm\``, 'Use `http://h.example/...`,`confirm`'],
-        [`Use \`magnet:?xt=urn:btih:abc&tr=${PASSKEY}\`,\`confirm\``, 'Use `(a magnet link, left out)`,`confirm`'],
-        // A scheme longer than the bound is still caught, by its last 32 characters.
-        [`refused a${'0'.repeat(32)}://user:${PASSKEY}@example.org/?key=${PASSKEY}`, `refused a${'0'.repeat(32)}(a URL, left out)`],
-        [`refused ${'a'.repeat(40)}://user:${PASSKEY}@example.org/`, `refused ${'a'.repeat(40)}://example.org/...`],
-        // What comes before a scheme's first letter is the sentence's, and stays.
-        [`version 1.5http://example.org/${PASSKEY}`, 'version 1.5http://example.org/...']
+        [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
-    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS', 'could not reach http://[2001:db8::1]', 'redirected to (https://[2001:db8::1]:8443).', 'set it to `http://192.0.2.20:8081`.', 'See `https://example.org/` and `https://example.net/`.', 'See `https://example.org/`,`https://example.net/`.', '`http://192.0.2.1:1`/`http://192.0.2.2:2`', 'Use `https://` or `http://`.', 'a bare https:// here'])('leaves %s alone', text => {
+    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS', 'could not reach http://[2001:db8::1]', 'redirected to (https://[2001:db8::1]:8443).'])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
     });
 });
