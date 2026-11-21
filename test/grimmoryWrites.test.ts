@@ -416,7 +416,7 @@ describe('remove_queue_item on the Bookdrop', () => {
     it('refuses remove_from_client false on the Bookdrop', async () => {
         const { call, discards } = discardTool();
         const error = await call({ ...DISCARD, remove_from_client: false }).catch((e: unknown) => e);
-        expect(error).toMatchObject({ kind: 'NotFound' });
+        expect(error).toMatchObject({ kind: 'InvalidRequest', message: expect.stringMatching(/^grimmory invalid request: /) });
         expect((error as { remedy: string }).remedy).toContain('Leave out remove_from_client');
         expect(discards()).toEqual([]);
     });

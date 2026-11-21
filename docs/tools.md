@@ -3491,15 +3491,26 @@ in no preview, target, error or audit row: the token binds its SHA-256.
 ## `set_torrent_location`
 
 Points a torrent at a new save path. qBittorrent has no call that changes a path
-without moving what it finds there, so without `move_files` this is refused unless
-the torrent is at `missing files`, still fetching metadata, or has its unfinished
-data in the incomplete-downloads folder, where that data stays. Any file of a
-`missing files` torrent still at the old path moves too, and the preview says so;
-if that old folder is outside `allowed_paths`, the repoint needs `move_files: true`.
-Any other move out of a folder outside `allowed_paths` is refused.
-Follow it with `recheck_torrents`. `move_files: true` needs `destructive`. The
-move runs in the background after the call returns. A torrent being checked is
-refused until the check ends.
+without moving what it finds there, so without `move_files` this is refused
+unless the torrent is at `missing files`, still fetching metadata, or has its
+unfinished data in the incomplete-downloads folder, where that data stays until
+the download finishes. Any file of a `missing files` torrent still at the old
+path moves too, and the preview says so; if that old folder is outside
+`allowed_paths`, the repoint needs `move_files: true`. The exception is an
+unfinished torrent with an incomplete-downloads folder: its new save path only
+takes effect once the download finishes, so the save-path change itself moves
+nothing now and does not check its old folder. For an automatically managed
+torrent, at `missing files` too, turning off automatic management first gathers
+its files into the folder it is set to keep them in (its incomplete-downloads
+folder while it is unfinished and that folder is set, otherwise its save path)
+when they are not there yet. That gather can move files before the download
+finishes, needs `move_files: true`, and checks the folder they leave against
+`allowed_paths` when it is known. Any other move out of a folder outside
+`allowed_paths` is refused. After a `missing files` repoint of a torrent that
+has metadata, follow it with `recheck_torrents` once `get_queue` no longer shows
+the torrent at `moving`. `move_files: true` needs `destructive`. The move runs
+in the background after the call returns. A torrent being checked is refused
+until the check ends.
 
 **Unverified live** (qBittorrent): pointing a torrent at a new path, with and without moving its data.
 

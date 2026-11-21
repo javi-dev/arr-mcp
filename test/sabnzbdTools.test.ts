@@ -170,15 +170,16 @@ describe('add_nzb', () => {
     });
 
     it.each([
-        ['both sources', { url: 'https://a.example/x.nzb', nzb_base64: b64(NZB) }, /exactly one/],
-        ['no source', {}, /exactly one/],
-        ['a file that is not an NZB', { nzb_base64: b64('<html></html>') }, /not an NZB/],
-        ['a gzip that is not an NZB', { nzb_base64: b64(gzipSync('<html></html>')) }, /not an NZB/],
-        ['a file name with a path', { nzb_base64: b64(NZB), filename: '../../etc/x.nzb' }, /plain file name/],
-        ['text that is not base64', { nzb_base64: 'not base64!' }, /not valid base64/],
-        ['another scheme', { url: 'file:///etc/passwd' }, /http and https/],
-        ['a category that does not exist', { url: 'https://a.example/x.nzb', category: 'nope' }, /has no such category/]
-    ])('refuses %s', async (_why, args, message) => {
+        ['both sources', { url: 'https://a.example/x.nzb', nzb_base64: b64(NZB) }, /^sabnzbd invalid request: pass exactly one/],
+        ['no source', {}, /^sabnzbd invalid request: pass exactly one/],
+        ['a file that is not an NZB', { nzb_base64: b64('<html></html>') }, /^sabnzbd invalid request: that file is not an NZB/],
+        ['a gzip that is not an NZB', { nzb_base64: b64(gzipSync('<html></html>')) }, /^sabnzbd invalid request: that file is not an NZB/],
+        ['a file name with a path', { nzb_base64: b64(NZB), filename: '../../etc/x.nzb' }, /^sabnzbd invalid request: `filename` must be a plain file name/],
+        ['text that is not base64', { nzb_base64: 'not base64!' }, /^sabnzbd invalid request: `nzb_base64` is not valid base64/],
+        ['another scheme', { url: 'file:///etc/passwd' }, /^sabnzbd invalid request: only http and https/],
+        // The one refusal here whose target really is missing.
+        ['a category that does not exist', { url: 'https://a.example/x.nzb', category: 'nope' }, /^sabnzbd not found: sabnzbd has no such category/]
+    ])('refuses %s, with a prefix that says why', async (_why, args, message) => {
         await expect(harness().call('add_nzb', args)).rejects.toThrow(message);
     });
 
@@ -340,10 +341,16 @@ describe('update_client_settings', () => {
         expect(h.sent('set_config')).toEqual([]);
     });
 
-    it('refuses a setting this SABnzbd does not have', async () => {
+    it.each([
+        ['does not have', undefined],
+        ['answers with a value it cannot read', 5]
+    ])('refuses a setting this SABnzbd %s, without claiming which', async (_why, value) => {
         const h = harness();
-        delete h.settings.cleanup_list;
-        await expect(h.call('update_client_settings', { cleanup_list: ['nfo'] })).rejects.toThrow(/no setting named cleanup_list/);
+        if (value === undefined) delete h.settings.cleanup_list;
+        else h.settings.cleanup_list = value;
+        await expect(h.call('update_client_settings', { cleanup_list: ['nfo'] })).rejects.toThrow(
+            /^sabnzbd version unsupported: this SABnzbd gave no readable value for cleanup_list\. These settings need SABnzbd 4\.4 or later\. If it is newer, check them in SABnzbd itself\.$/
+        );
     });
 
     it('does not let a token apply once the stored retention count has changed', async () => {
@@ -416,7 +423,7 @@ describe('update_client_settings', () => {
     it('refuses a retention option that needs a count when none is stored', async () => {
         const h = harness();
         h.settings.history_retention_number = '';
-        await expect(h.call('update_client_settings', { history_retention_option: 'days-delete' })).rejects.toThrow(/needs `history_retention_number`/);
+        await expect(h.call('update_client_settings', { history_retention_option: 'days-delete' })).rejects.toThrow(/^sabnzbd invalid request: history retention "days-delete" needs `history_retention_number`/);
     });
 
     it.each([

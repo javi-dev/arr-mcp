@@ -1,4 +1,4 @@
-import { ServiceError } from './errors.ts';
+import { ServiceError, type ServiceErrorKind } from './errors.ts';
 import { maskedHost, shownValue } from './pastedUrl.ts';
 
 /**
@@ -10,8 +10,9 @@ import { maskedHost, shownValue } from './pastedUrl.ts';
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
-const refuse = (service: string, detail: string, remedy: string): ServiceError =>
-    new ServiceError('NotFound', service, detail, { remedy });
+/** `InvalidRequest` unless the refusal is about a missing file or the configured roots. */
+const refuse = (service: string, detail: string, remedy: string, kind: ServiceErrorKind = 'InvalidRequest'): ServiceError =>
+    new ServiceError(kind, service, detail, { remedy });
 
 /** Whether an already normal path sits at or under one of the roots. */
 export const isInsideRoots = (path: string, roots: readonly string[]): boolean => roots.some(root => path === root || path.startsWith(`${root}/`));
@@ -33,7 +34,7 @@ export function allowedPath(service: string, path: string, roots: readonly strin
     if (parts.some(part => part === '.' || part === '..')) throw refuse(service, 'that path contains . or .. segments', allowed);
     const normal = `/${parts.join('/')}`;
     if (!isInsideRoots(normal, roots)) {
-        throw refuse(service, `${normal} is outside the locations this instance allows`, `${allowed} Change allowed_paths in config.yaml to widen them.`);
+        throw refuse(service, `${normal} is outside the locations this instance allows`, `${allowed} Change allowed_paths in config.yaml to widen them.`, 'PermissionDenied');
     }
     return normal;
 }
@@ -45,7 +46,7 @@ export function allowedPath(service: string, path: string, roots: readonly strin
  */
 export function renamedPath(service: string, oldPath: string, newPath: string, existing: readonly string[]): string {
     const remedy = 'Take `old_path` from get_queue at `detail: "full"`, and give `new_path` relative to the torrent, keeping its folder.';
-    if (!existing.includes(oldPath)) throw refuse(service, 'that torrent has no such file', remedy);
+    if (!existing.includes(oldPath)) throw refuse(service, 'that torrent has no such file', remedy, 'NotFound');
     // Before the preview repeats it: a URL or magnet pasted as a name can carry a tracker passkey.
     if (shownValue(newPath) !== newPath) throw refuse(service, '`new_path` is a URL', remedy);
     const parts = newPath.split('/');
