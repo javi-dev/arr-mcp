@@ -179,10 +179,14 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
                 // lane, so one can be answered while that read runs, and it counts as well (#33).
                 leftStopped = overtaken();
                 if (leftStopped) return;
-                // The last point to stand down: once sent, the start runs to the end, as an apply does,
-                // including the older API's verb when qBittorrent does not know the new one.
+                // The last point to stand down: once qBittorrent accepts the start, it runs to the end,
+                // as an apply does. A qBittorrent older than 5 refuses the new verb without starting
+                // anything, so both are asked once more before the older one is sent.
                 if (cancelled()) throw new Error('the request was cancelled before they were started');
-                await client.startTorrents(toStart);
+                const started = await client.startTorrents(toStart, () => !overtaken() && !cancelled());
+                if (started) return;
+                leftStopped = overtaken();
+                if (!leftStopped) throw new Error('the request was cancelled before they were started');
             });
         } catch (err) {
             logger.warn({ service: client.id, err }, 'a recheck finished but the torrents could not be started');

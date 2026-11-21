@@ -596,15 +596,20 @@ export class QbittorrentAdapter
      * new verb first, the old one only if that 404s, because this adapter has
      * no version gate and guessing wrong would silently do nothing. `hashes`
      * is never `all`: that would start torrents no pause stopped.
+     * `beforeLegacy`, when given, is asked between the two: a refused new verb
+     * changed nothing, so the caller can still stand down there. Answers
+     * whether a verb was sent that qBittorrent accepted.
      */
-    async #verb(paused: boolean, hashes: string): Promise<void> {
+    async #verb(paused: boolean, hashes: string, beforeLegacy?: () => boolean): Promise<boolean> {
         const [modern, legacy] = paused ? ['stop', 'pause'] : ['start', 'resume'];
         try {
             await this.#http.postForm(`${API}/torrents/${modern}`, { hashes }, true);
         } catch (err) {
             if (!(err instanceof ServiceError) || err.kind !== 'NotFound') throw err;
+            if (beforeLegacy?.() === false) return false;
             await this.#http.postForm(`${API}/torrents/${legacy}`, { hashes }, true);
         }
+        return true;
     }
 
     /** `addTags` creates the tag if it does not exist yet. */
@@ -813,8 +818,8 @@ export class QbittorrentAdapter
         await this.#http.postForm(`${API}/torrents/recheck`, { hashes: ids.map(id => this.#hash(id)).join('|') }, true);
     }
 
-    async startTorrents(ids: readonly string[]): Promise<void> {
-        await this.#verb(false, ids.map(id => this.#hash(id)).join('|'));
+    async startTorrents(ids: readonly string[], stillWanted?: () => boolean): Promise<boolean> {
+        return this.#verb(false, ids.map(id => this.#hash(id)).join('|'), stillWanted);
     }
 
     async torrentCategories(): Promise<Map<string, TorrentCategory>> {

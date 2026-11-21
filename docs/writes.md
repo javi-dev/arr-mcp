@@ -256,8 +256,10 @@ no confirmation), they are left stopped and listed as `left_stopped`, because
 a pause sent then would look the same and starting them would undo it. If the
 instance is still busy 30 seconds later, the request has been cancelled, or
 qBittorrent refuses the start, they are left stopped too, listed as
-`resume_failed` with the reason in `resume_error`. Once the start has been sent
-it runs to the end, as any apply does.
+`resume_failed` with the reason in `resume_error`. Once qBittorrent has accepted
+the start it runs to the end, as any apply does. A qBittorrent older than 5
+refuses the new start verb without starting anything, so both questions are
+asked once more before the older verb is sent.
 
 The reply reports what a read taken when it was time to start found: the one in
 the lane, just before the start. When no read was taken there (the recheck was

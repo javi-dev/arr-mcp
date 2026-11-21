@@ -245,6 +245,54 @@ describe('recheck_torrents', () => {
         }
     });
 
+    /**
+     * #33 on a qBittorrent older than 5: the new start verb is refused and
+     * starts nothing, and only the older verb sent after it starts the torrent.
+     * A no-op pause answered between the two still stops it.
+     */
+    it.each([
+        ['a no-op pause answered between the refused verb and the older one', true, { left_stopped: [HASH] }, []],
+        ['no pause', false, { resumed: [HASH] }, ['/torrents/resume']]
+    ])('on the older start verb, after %s', async (_label, pauseBetween, outcome, legacy) => {
+        const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
+        let refuse = (): void => undefined;
+        const refused = new Promise<void>(resolve => {
+            refuse = resolve;
+        });
+        let startAsked = false;
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.endsWith('/torrents/start')) {
+                startAsked = true;
+                if (pauseBetween) await refused;
+                return new Response('Not Found', { status: 404 });
+            }
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        const context = writeContext(instancesOf({ qbittorrent: cfg }));
+        const adapter = new QbittorrentAdapter(cfg, impl);
+        registerTorrentTools(server, context, [adapter], { sleep: () => Promise.resolve() });
+        registerPauseDownloads(server, context, [adapter]);
+        try {
+            const recheck = await call('recheck_torrents', { ids: [HASH], resume_if_complete: true });
+            const rechecking = call('recheck_torrents', { ids: [HASH], resume_if_complete: true, confirm: recheck.structuredContent.confirm_token });
+            if (pauseBetween) {
+                await vi.waitFor(() => expect(startAsked).toBe(true));
+                const pause = await call('pause_downloads', { service: 'qbittorrent', action: 'pause', id: HASH });
+                expect(pause.structuredContent.noop).toBe(true);
+                refuse();
+            }
+            const done = await rechecking;
+            expect(done.structuredContent.result).toMatchObject(outcome);
+            expect(startAsked).toBe(true);
+            expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck', ...legacy]);
+        } finally {
+            refuse();
+        }
+    });
+
     it('stands down without holding the client for the read it reports from', async () => {
         const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
         let resume = (): void => undefined;
