@@ -84,8 +84,10 @@ way in every reply, first previews included, so a receipt names what its
 preview named. A release guid that is a URL is named by the first 16 hex digits
 of its SHA-256 instead, much as a torrent or NZB URL is, so two releases stay
 apart, and an audit target that is still a URL is cut down like an argument.
-The scrub knows a URL by its `scheme://` and a magnet link by `magnet:?`; other
-spellings a URL parser also accepts are not caught yet (#17, #18 and #19).
+A read tool's error for a request that never got an answer (a refused URL, a
+failed connection) has its URLs cut the same way. The scrub knows a URL by its
+`scheme://` and a magnet link by `magnet:?`; other spellings a URL parser also
+accepts are not caught yet (#17, #18 and #19).
 
 ## The repair page renders the config file verbatim
 

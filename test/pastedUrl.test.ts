@@ -52,7 +52,12 @@ describe('scrubUrls', () => {
         [`magnet:?xt=urn:btih:abc&dn=x\`y&tr=${PASSKEY} was refused`, '(a magnet link, left out) was refused'],
         // One that closes a code span stays, outside the cut.
         [`use \`https://tracker.example/${PASSKEY}\`.`, 'use `https://tracker.example/...`.'],
-        [`use \`magnet:?xt=urn:btih:abc&tr=${PASSKEY}\`.`, 'use `(a magnet link, left out)`.']
+        [`use \`magnet:?xt=urn:btih:abc&tr=${PASSKEY}\`.`, 'use `(a magnet link, left out)`.'],
+        // A sentence's punctuation after a magnet link stays.
+        [`(from magnet:?xt=urn:btih:abc&tr=${PASSKEY}).`, '(from (a magnet link, left out)).'],
+        // The trade-off of a backtick not ending a URL: two code spans with nothing
+        // between them read as one URL that does not parse, so both are left out.
+        ['`http://192.0.2.1:1`/`http://192.0.2.2:2`', '`(a URL, left out)`']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
