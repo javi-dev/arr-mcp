@@ -108,21 +108,87 @@ function safeHost(url: string): string {
     }
 }
 
-const URL_IN_TEXT = /[a-z][a-z0-9+.-]*:\/\/[^\s'"<>]+/gi;
+const SCHEME_CHAR = /[a-z0-9+.-]/i;
+/** What ends a URL in a message: whitespace, `<` and `>`, which a parser takes
+ *  nowhere raw. Not a quote or a backtick: a URL serialiser leaves those raw in a
+ *  host or a query, and stopping there would keep the rest. */
+const URL_END = /[\s<>]/;
+/** Punctuation that can close a sentence or a quotation around a URL. */
+const URL_TRAILING = new Set(['.', ',', ';', ':', ')', ']', "'", '"', '`']);
+/** A scheme and an authority with nothing after them but one slash, judged as
+ *  written, in printable characters a parser keeps as they are. */
+const BARE_URL = /^[a-z][a-z0-9+.-]*:\/\/([!$&-.0-9:;=[\]_a-z~]*)\/?$/i;
+/** A run of hex, or of letters and digits, long enough to be a passkey rather than a name. */
+const PASSKEY_RUN = /^(?:[0-9a-f]{16,}|[0-9a-z]{28,})$/i;
+/** Far past any address a service is configured with. A parser's time grows faster than its input. */
+const MAX_URL_LENGTH = 2048;
 
 /**
- * Reduces every URL in a message to scheme, host and path. Node quotes the full
- * URL when it refuses one with userinfo, and a query string can carry an api key.
+ * Cuts every URL in a transport error's message down to its scheme and host.
+ * Node quotes the full URL when it refuses one, and a key can sit in its
+ * userinfo, its path or its query. One pass from each `://`: back over the
+ * scheme, forward to the end of the URL. Each character is read a bounded
+ * number of times, however the message is built.
  */
-export function scrubUrls(text: string): string {
-    return text.replace(URL_IN_TEXT, match => {
-        try {
-            const u = new URL(match);
-            return `${u.protocol}//${u.host}${u.pathname}`;
-        } catch {
-            return match.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1').replace(/[?#].*$/, '');
+function scrubUrls(text: string): string {
+    let out = '';
+    let copied = 0;
+    const separator = /:\/\//g;
+    for (let found = separator.exec(text); found !== null; found = separator.exec(text)) {
+        let start = found.index;
+        while (start > copied && SCHEME_CHAR.test(text[start - 1] ?? '')) start -= 1;
+        // A scheme starts with a letter; digits before the first one belong to the sentence.
+        while (start < found.index && !/[a-z]/i.test(text[start] ?? '')) start += 1;
+        if (start === found.index) continue;
+        let end = found.index + 3;
+        let opens = 0;
+        let closes = 0;
+        for (; end < text.length && !URL_END.test(text[end] ?? ''); end += 1) {
+            if (text[end] === '[') opens += 1;
+            else if (text[end] === ']') closes += 1;
         }
-    });
+        // Walked back off the end. A `]` that closes an IPv6 host is the URL's own,
+        // so one is taken off only while there are more of them than `[`.
+        let cut = end;
+        while (cut > found.index + 3 && URL_TRAILING.has(text[cut - 1] ?? '')) {
+            if (text[cut - 1] === ']') {
+                if (closes <= opens) break;
+                closes -= 1;
+            }
+            cut -= 1;
+        }
+        // A scheme with nothing after it names no address, unless what follows is too long to be one.
+        if (cut === found.index + 3 && end - start <= MAX_URL_LENGTH) continue;
+        // Punctuation after a URL may be the end of its path or query, and nothing in
+        // the text says where the URL stops, so it goes with it, whether the URL is
+        // cut or not. A quotation's closing mark or a full stop can go too.
+        const raw = text.slice(start, cut);
+        out += text.slice(copied, start) + (end - start > MAX_URL_LENGTH ? '(a URL, left out)' : (hostOnly(raw) ?? raw));
+        copied = end;
+        separator.lastIndex = end;
+    }
+    return out + text.slice(copied);
+}
+
+/**
+ * One URL as its scheme and host, with any run in the host that looks like a
+ * passkey masked, or `undefined` when it is already no more than that.
+ */
+function hostOnly(raw: string): string | undefined {
+    const url = URL.parse(raw);
+    if (url === null) return '(a URL, left out)';
+    const host = masked(url.hostname.toLowerCase());
+    // Left as written only when nothing in it, as written or as parsed, needs masking:
+    // a parser rewrites a host (`0000000000000000000000000001` is `0.0.0.1`), and
+    // folds a path such as `/key/%2e%2e` down to `/`.
+    const authority = BARE_URL.exec(raw)?.[1];
+    if (authority !== undefined && masked(authority) === authority && host === url.hostname.toLowerCase()) return undefined;
+    return `${url.protocol}//${host}${url.port === '' ? '' : `:${url.port}`}/...`;
+}
+
+/** Runs, not labels: a parser keeps a quote, a bracket or a backtick in a host, so a passkey can sit beside one. */
+function masked(text: string): string {
+    return text.replace(/[0-9a-z]+/gi, run => (PASSKEY_RUN.test(run) ? '***' : run));
 }
 
 /** A plain endpoint-vocabulary word, or a REST version segment such as `v3`. */
@@ -261,7 +327,9 @@ export function classifyFetchError(err: unknown, service: string, url: string): 
     }
 
     // undici's own message is always the useless "fetch failed"; the cause
-    // carries the one that says what actually happened.
+    // carries the one that says what actually happened. Node quotes the full URL
+    // when it refuses one with userinfo, and a key can sit in its userinfo, path
+    // or query, so every URL is cut to scheme and host, as write tools cut theirs.
     const detail = scrubUrls(e.cause?.message ?? e.message ?? 'unknown error');
     return new ServiceError('Unreachable', service, `${detail} at ${host}`, { cause: err });
 }

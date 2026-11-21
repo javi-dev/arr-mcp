@@ -64,8 +64,11 @@ describe('refusing to guess', () => {
             expect.unreachable('should have refused');
         } catch (err) {
             expect(err).toBeInstanceOf(ServiceError);
+            // #11: every instance exists, so this must not read as "not found".
+            expect((err as ServiceError).kind).toBe('InvalidRequest');
             const message = (err as ServiceError).message;
-            expect(message).toMatch(/2 instances/);
+            expect(message).toMatch(/^radarr invalid request: radarr has 2 instances/);
+            expect(message).not.toMatch(/not found/);
             expect(message).toContain('"4k"');
             expect(message).toContain('"hd"');
         }
@@ -76,8 +79,9 @@ describe('refusing to guess', () => {
             resolveInstance(twoRadarrs(), 'radarr', 'uhd');
             expect.unreachable('should have refused');
         } catch (err) {
+            expect((err as ServiceError).kind).toBe('NotFound');
             const message = (err as ServiceError).message;
-            expect(message).toMatch(/no instance named "uhd"/);
+            expect(message).toMatch(/^radarr not found: radarr has no instance named "uhd"/);
             expect(message).toContain('"4k"');
             expect(message).toContain('"hd"');
         }
@@ -88,8 +92,9 @@ describe('refusing to guess', () => {
             resolveInstance(adaptersFor({ radarr: one }), 'sonarr');
             expect.unreachable('should have refused');
         } catch (err) {
+            expect((err as ServiceError).kind).toBe('NotFound');
             const message = (err as ServiceError).message;
-            expect(message).toMatch(/sonarr is not configured/);
+            expect(message).toMatch(/^sonarr not found: sonarr is not configured/);
             expect(message).toMatch(/services\.sonarr/);
         }
     });

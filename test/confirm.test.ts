@@ -109,8 +109,8 @@ describe('confirmation tokens', () => {
 
     it('rejects a forged token rather than trusting its timestamp', () => {
         const tokens = new ConfirmTokens();
-        const [version, keyId] = tokens.issue(intent()).split('.');
-        const forged = `${version}.${keyId}.${Date.now().toString(36)}.not-a-real-signature`;
+        const [version, keyId, , nonce] = tokens.issue(intent()).split('.');
+        const forged = `${version}.${keyId}.${Date.now().toString(36)}.${nonce}.not-a-real-signature`;
 
         const result = tokens.verifyAndConsume(forged, intent());
         expect(result.ok).toBe(false);
@@ -135,11 +135,8 @@ describe('confirmation tokens', () => {
             token => `'${token}',`
         ];
 
+        // The clock never moves: each preview's nonce keeps its token apart from the last one spent.
         for (const wrap of wrappings) {
-            // A fresh millisecond each time: same intent in the same
-            // millisecond signs identically, and the previous loop already
-            // spent that signature.
-            clock.advance(1);
             const presented = wrap(tokens.issue(intent()));
             expect(tokens.verifyAndConsume(presented, intent()).ok, presented).toBe(true);
         }
@@ -165,12 +162,62 @@ describe('confirmation tokens', () => {
         expect(second.failure).toBe('used');
     });
 
+    // #21: the token was the intent and the millisecond alone, so two previews
+    // of one intent in the same millisecond shared it and confirming one spent both.
+    it('gives two previews of one intent in the same millisecond tokens of their own', () => {
+        const clock = stoppedClock();
+        const tokens = new ConfirmTokens({ clock: clock.now });
+        const first = tokens.issue(intent());
+        const second = tokens.issue(intent());
+        expect(second).not.toBe(first);
+
+        expect(tokens.verifyAndConsume(first, intent()).ok).toBe(true);
+        expect(tokens.verifyAndConsume(second, intent()).ok).toBe(true);
+        const replay = tokens.verifyAndConsume(first, intent());
+        if (replay.ok) throw new Error('expected a rejection');
+        expect(replay.failure).toBe('used');
+    });
+
+    it('binds the nonce, so a token cannot be refreshed by swapping it', () => {
+        const tokens = new ConfirmTokens();
+        const [version, keyId, issuedAt, , signature] = tokens.issue(intent()).split('.');
+        const [, , , otherNonce] = tokens.issue(intent()).split('.');
+        const result = tokens.verifyAndConsume(`${version}.${keyId}.${issuedAt}.${otherNonce}.${signature}`, intent());
+        if (result.ok) throw new Error('expected a rejection');
+        expect(result.failure).toBe('mismatch');
+    });
+
+    it('refuses a token whose nonce is not one this server issues', () => {
+        const tokens = new ConfirmTokens();
+        const [version, keyId, issuedAt, , signature] = tokens.issue(intent()).split('.');
+        for (const nonce of ['', 'short', 'x'.repeat(17), 'not+base64url/16']) {
+            const result = tokens.verifyAndConsume(`${version}.${keyId}.${issuedAt}.${nonce}.${signature}`, intent());
+            if (result.ok) throw new Error('expected a rejection');
+            expect(result.failure, nonce).toBe('malformed');
+        }
+    });
+
+    it('calls a token in the format before the nonce foreign, not malformed', () => {
+        const tokens = new ConfirmTokens();
+        const [, keyId, issuedAt, , signature] = tokens.issue(intent()).split('.');
+        const result = tokens.verifyAndConsume(`v2.${keyId}.${issuedAt}.${signature}`, intent());
+        if (result.ok) throw new Error('expected a rejection');
+        expect(result.failure).toBe('foreign');
+    });
+
     it('rejects malformed tokens', () => {
         const tokens = new ConfirmTokens();
-        for (const bad of ['', 'nonsense', 'v2.abc.def', 'v1.abc']) {
+        for (const bad of ['', 'nonsense', 'v2.abc.def', 'v1.abc', 'v3.abc.def.ghi', 'v3.abc.def.ghi.jkl.mno']) {
             const result = tokens.verifyAndConsume(bad, intent());
-            expect(result.ok, bad).toBe(false);
+            if (result.ok) throw new Error(`expected a rejection for ${bad}`);
+            expect(result.failure, bad).toBe('malformed');
         }
+    });
+
+    it('calls a well-formed token with another key id foreign', () => {
+        const result = new ConfirmTokens().verifyAndConsume('v3.abcdefgh.def.ghijklmnopqrstuv.jkl', intent());
+        if (result.ok) throw new Error('expected a rejection');
+        expect(result.failure).toBe('foreign');
     });
 
     // Two servers, or one server restarted, must not honour each other's tokens.

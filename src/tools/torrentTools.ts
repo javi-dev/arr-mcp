@@ -839,21 +839,34 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
 
         async plan({ instance, id }): Promise<WritePlan> {
             const client = clientOf(adapters, instance);
-            const details = await client.getTorrentDetails(id);
-            const target = `${client.id}:${details.id}`;
-            if (details.status === 'stopped') return { target, summary: `${details.title} is stopped, so it has nothing to announce.`, effects: [], noop: true };
-            if (details.trackerDigest === null) {
+            // The state alone first: a stopped torrent has nothing to announce, so its answer
+            // does not wait on the tracker list, whose request can fail on its own.
+            const [state] = await client.torrentCheckStates([id]).catch((err: unknown) => {
+                // Only the HTTP answer: a 404 here may come from a proxy or a wrong base path, and
+                // is not proof the torrent is gone. A refused hash is NotFound too, saying what to pass instead.
+                if (err instanceof ServiceError && err.kind === 'NotFound' && err.status === 404) {
+                    throw new ServiceError('UpstreamError', client.id, 'qBittorrent could not be asked about this torrent', { cause: err });
+                }
+                throw err;
+            });
+            if (state === undefined) {
+                throw new ServiceError('NotFound', client.id, `no torrent with hash "${id}"`, { remedy: 'qBittorrent torrent ids are info hashes. Take one from get_queue.' });
+            }
+            const target = `${client.id}:${state.id}`;
+            if (state.stopped) return { target, summary: `${state.title} is stopped, so it has nothing to announce.`, effects: [], noop: true };
+            const list = await client.torrentTrackers(state.id);
+            if (list.trackerDigest === null) {
                 throw new ServiceError('UpstreamError', client.id, 'the tracker list qBittorrent gave for this torrent could not be read, so nobody can say where a reannounce would go', {
                     remedy: 'Check that qBittorrent answers normally and that none of this torrent\'s tracker URLs is malformed (fix or remove one that is, in qBittorrent), then preview the reannounce again.'
                 });
             }
-            const hosts = details.trackers.map(t => `${t.host} (${t.status})`).join(', ');
+            const hosts = list.trackers.map(t => `${t.host} (${t.status})`).join(', ');
             return {
                 target,
-                summary: `Reannounce ${details.title} on ${client.id}.`,
+                summary: `Reannounce ${state.title} on ${client.id}.`,
                 effects: [hosts === '' ? 'It has no tracker to announce to, so only DHT hears about it.' : `Contacts: ${hosts}.`],
                 // A digest of the trackers the preview named, so a token cannot announce to a list the caller never saw.
-                args: { id: details.id, trackers_sha256: details.trackerDigest }
+                args: { id: state.id, trackers_sha256: list.trackerDigest }
             };
         },
 

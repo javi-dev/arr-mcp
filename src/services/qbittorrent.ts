@@ -762,6 +762,19 @@ export class QbittorrentAdapter
         };
     }
 
+    /** A torrent's trackers alone, for a caller that has its state already and needs nothing else. */
+    async torrentTrackers(id: string): Promise<Pick<TorrentDetails, 'trackers' | 'trackerDigest'>> {
+        const hash = this.#hash(id);
+        const rows = await this.#http.get<RawTracker[]>(`${API}/torrents/trackers?hash=${hash}`).catch((err: unknown) => {
+            // As getTorrentDetails reads it: a 404 here is not proof the torrent is gone.
+            if (err instanceof ServiceError && err.kind === 'NotFound') {
+                throw new ServiceError('UpstreamError', this.id, 'qBittorrent could not be asked about this torrent', { cause: err });
+            }
+            throw err;
+        });
+        return { trackers: trackerRows(Array.isArray(rows) ? rows : []), trackerDigest: trackerDigest(rows) };
+    }
+
     async torrentCheckStates(ids: readonly string[]): Promise<TorrentCheckState[]> {
         const wanted = ids.map(id => this.#hash(id));
         // `getArray`, and every row one of those asked for: a recheck reads a

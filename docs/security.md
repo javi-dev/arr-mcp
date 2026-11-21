@@ -85,7 +85,12 @@ preview named. A release guid that is a URL is named by the first 16 hex digits
 of its SHA-256 instead, much as a torrent or NZB URL is, so two releases stay
 apart, and an audit target that is still a URL is cut down like an argument.
 The scrub knows a URL by its `scheme://` and a magnet link by `magnet:?`; other
-spellings a URL parser also accepts are not caught yet (#17, #18 and #19).
+spellings a URL parser also accepts are not caught yet (#17, #18 and #19). A
+read tool's error for a request that never got an answer (a refused URL, a
+failed connection) has every URL in it, from its `scheme://` to the next
+whitespace, `<` or `>`, cut down to its scheme and host too. One whose address
+a URL parser refuses, or one far longer than any address, is left out whole; a
+short `scheme://` with no address after it stays as written.
 
 ## The repair page renders the config file verbatim
 
@@ -273,6 +278,8 @@ plus a token, and only a second call carrying that token mutates anything.
 - It binds to the **resolved id, not the phrase the user typed**, so a token
   cannot survive re-resolving a title to a different film.
 - **Single-use**, so "add movie" cannot be confirmed twice into a duplicate.
+  Each token also signs a random nonce, so two previews of one write never share
+  a token, and confirming one does not spend the other.
 - **Five-minute TTL**, so a token found in an old transcript is dead.
 - The signing key is fresh per process and never written down, so a restart
   invalidates outstanding tokens.

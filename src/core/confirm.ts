@@ -30,6 +30,11 @@ export const CONFIRM_TTL_MS = 300_000;
 /** Defensive bound on the consumed-token set, which is otherwise TTL-swept. */
 const MAX_CONSUMED = 10_000;
 
+/** 96 random bits per token, so two previews never share one. */
+const NONCE_BYTES = 12;
+/** What `NONCE_BYTES` encode to in base64url. */
+const NONCE = /^[A-Za-z0-9_-]{16}$/;
+
 /**
  * Everything a token commits to. Any field that changes the effect of the
  * write belongs here; that is what makes "the token matches this call" mean
@@ -105,7 +110,7 @@ const intentPayload = (intent: WriteIntent): string =>
  *
  * The preview names the token inside backticks and ends the sentence with a
  * period, so what returns is frequently the token with one or both still
- * attached. None of it can belong to a token (`v2.<keyId>.<base36>.<base64url>` holds
+ * attached. None of it can belong to a token (`v3.<keyId>.<base36>.<base64url>.<base64url>` holds
  * no whitespace, quotes or punctuation) so removing it concedes nothing: the
  * HMAC still decides, and a wrong token fails exactly as it did before.
  * Refusing these is the expensive option, because the refusal reissues a token
@@ -139,13 +144,16 @@ export class ConfirmTokens {
         this.#keyId = createHmac('sha256', this.#key).update('key-id').digest('base64url').slice(0, 8);
     }
 
-    /** `v2.<keyId>.<issuedAt>.<signature>`. The timestamp is in the clear because
-     *  it is covered by the signature, so it cannot be edited to extend a token's
-     *  life. The key id names the issuing process, so a token from another one
-     *  can be told apart from one for different arguments. */
+    /** `v3.<keyId>.<issuedAt>.<nonce>.<signature>`. The timestamp is in the clear
+     *  because it is covered by the signature, so it cannot be edited to extend a
+     *  token's life. The key id names the issuing process, so a token from another
+     *  one can be told apart from one for different arguments. The nonce, signed
+     *  too, gives each preview a token of its own: without it two previews of one
+     *  intent in the same millisecond signed alike, and confirming one spent both. */
     issue(intent: WriteIntent): string {
         const issuedAt = this.#now();
-        return `v2.${this.#keyId}.${issuedAt.toString(36)}.${this.#sign(intent, issuedAt)}`;
+        const nonce = randomBytes(NONCE_BYTES).toString('base64url');
+        return `v3.${this.#keyId}.${issuedAt.toString(36)}.${nonce}.${this.#sign(intent, issuedAt, nonce)}`;
     }
 
     /**
@@ -160,14 +168,17 @@ export class ConfirmTokens {
         this.#sweep();
 
         const parts = unwrap(presented).split('.');
-        // A v1 token can only come from an older process.
-        if (parts.length === 3 && parts[0] === 'v1') return { ok: false, failure: 'foreign', remedy: REMEDY.foreign };
-        if (parts.length !== 4 || parts[0] !== 'v2') return { ok: false, failure: 'malformed', remedy: REMEDY.malformed };
+        // A v1 or v2 token can only come from an older process.
+        if ((parts.length === 3 && parts[0] === 'v1') || (parts.length === 4 && parts[0] === 'v2')) {
+            return { ok: false, failure: 'foreign', remedy: REMEDY.foreign };
+        }
+        if (parts.length !== 5 || parts[0] !== 'v3') return { ok: false, failure: 'malformed', remedy: REMEDY.malformed };
         if (parts[1] !== this.#keyId) return { ok: false, failure: 'foreign', remedy: REMEDY.foreign };
 
         const issuedAt = Number.parseInt(parts[2] ?? '', 36);
-        const signature = parts[3] ?? '';
-        if (!Number.isFinite(issuedAt) || signature === '') {
+        const nonce = parts[3] ?? '';
+        const signature = parts[4] ?? '';
+        if (!Number.isFinite(issuedAt) || !NONCE.test(nonce) || signature === '') {
             return { ok: false, failure: 'malformed', remedy: REMEDY.malformed };
         }
 
@@ -178,7 +189,7 @@ export class ConfirmTokens {
         const age = this.#now() - issuedAt;
         if (age < 0 || age > this.#ttlMs) return { ok: false, failure: 'expired', remedy: REMEDY.expired };
 
-        if (!constantTimeEquals(signature, this.#sign(intent, issuedAt))) {
+        if (!constantTimeEquals(signature, this.#sign(intent, issuedAt, nonce))) {
             return { ok: false, failure: 'mismatch', remedy: REMEDY.mismatch };
         }
 
@@ -190,9 +201,9 @@ export class ConfirmTokens {
         return { ok: true };
     }
 
-    #sign(intent: WriteIntent, issuedAt: number): string {
+    #sign(intent: WriteIntent, issuedAt: number, nonce: string): string {
         return createHmac('sha256', this.#key)
-            .update(`${issuedAt}\n${intentPayload(intent)}`)
+            .update(`${issuedAt}\n${nonce}\n${intentPayload(intent)}`)
             .digest('base64url');
     }
 
