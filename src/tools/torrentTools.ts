@@ -849,6 +849,9 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             try {
                 details = await client.getTorrentDetails(id);
             } catch (err) {
+                // Only for how a tracker read fails. A refused login or an unreachable client
+                // would fail the same way again, and a second failed login brings a ban closer.
+                if (!(err instanceof ServiceError) || (err.kind !== 'UpstreamError' && err.kind !== 'Timeout')) throw err;
                 const [state] = await client.torrentCheckStates([id]).catch(() => []);
                 if (state?.stopped === true) return stopped(`${client.id}:${state.id}`, state.title);
                 throw err;

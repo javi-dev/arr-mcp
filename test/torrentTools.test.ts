@@ -2129,6 +2129,32 @@ describe('reannounce_torrent', () => {
         expect(qb.posts).toEqual([]);
     });
 
+    it.each([
+        ['a refused login', (path: string) => (path === '/auth/login' ? new Response('Fails.') : new Response('Forbidden', { status: 403 }))],
+        ['an unreachable client', () => {
+            throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+        }]
+    ])('does not read the state again after %s', async (_why, answer) => {
+        const paths: string[] = [];
+        const impl = (async (input: string | URL | Request) => {
+            const path = new URL(input instanceof Request ? input.url : String(input)).pathname.replace('/api/v2', '');
+            paths.push(path);
+            return answer(path);
+        }) as typeof fetch;
+        const cfg = config({ username: 'admin', password: 'wrong' });
+        const { server, call } = toolServer();
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)]);
+        await expect(call('reannounce_torrent', { id: HASH })).rejects.toThrow();
+        expect(paths.filter(p => p === '/torrents/info')).toHaveLength(1);
+        expect(paths.filter(p => p === '/auth/login').length).toBeLessThanOrEqual(1);
+    });
+
+    it('names a stopped torrent found by the fallback state read by its hash in lower case', async () => {
+        const preview = await harness({ torrents: [torrent({ state: 'stoppedUP' })], failing: ['/torrents/trackers'] }).call('reannounce_torrent', { id: HASH.toUpperCase() });
+        expect(preview.structuredContent.noop).toBe(true);
+        expect(preview.structuredContent.target).toBe(`qbittorrent:${HASH}`);
+    });
+
     it('reports a failure the state read cannot explain as it was', async () => {
         const qb = fakeQbittorrent();
         const cfg = config();
