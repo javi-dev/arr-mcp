@@ -664,9 +664,10 @@ export function registerWriteTool<
             if (presented !== undefined && !dryRun) counted = countConfirmation(service);
         };
         // A no-op needs no token, so without one it is the request as made and
-        // counts too. Not a dry run, which asked only what would happen.
+        // counts too. Not a dry run, which asked only what would happen, and
+        // not a request its caller cancelled while it was being planned.
         const acceptedNoop = (): void => {
-            if (!dryRun) counted = countConfirmation(service);
+            if (!dryRun && signal?.aborted !== true) counted = countConfirmation(service);
         };
 
         // A later change an `afterWrite` makes, back in the lane the apply held.

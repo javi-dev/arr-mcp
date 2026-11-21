@@ -1336,6 +1336,33 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         expect((await first).structuredContent.result).toEqual({ overtaken });
     });
 
+    it('does not count a no-op whose request was cancelled while it was planned', async () => {
+        const later = gate();
+        const planned = gate();
+        const h = buildHarness({
+            plan: async ({ id }) => {
+                if (id !== '9') return { ...PLAN, target: id };
+                await planned.opened;
+                return { ...PLAN, target: id, noop: true };
+            },
+            afterWrite: async (_sent, then) => {
+                await later.opened;
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken: overtaken() }));
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        const first = h.call('delete_media', { id: '5', confirm: token });
+        await settled();
+        const abort = new AbortController();
+        const noop = h.call('delete_media', { id: '9' }, abort.signal);
+        await settled();
+        abort.abort();
+        planned.open();
+        await noop.catch(() => undefined);
+        later.open();
+        expect((await first).structuredContent.result).toEqual({ overtaken: false });
+    });
+
     it('does not count a preview that has something to do, since only its confirmation is the request', async () => {
         const later = gate();
         const h = buildHarness({
