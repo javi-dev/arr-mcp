@@ -633,7 +633,7 @@ describe('recheck_torrents', () => {
     it.each([
         ['error', 'errored'],
         ['moving', 'still_moving'],
-        ['allocating', 'already_running'],
+        ...['uploading', 'stalledUP', 'queuedUP', 'forcedUP', 'downloading', 'stalledDL', 'queuedDL', 'forcedDL', 'metaDL', 'forcedMetaDL', 'allocating'].map(state => [state, 'already_running']),
         // A state it does not know is not taken for started.
         ['someNewState', 'unconfirmed']
     ])('reports a torrent the read before the start finds at %s as %s', async (state, key) => {
@@ -677,7 +677,9 @@ describe('recheck_torrents', () => {
         ['started by something else', 'running', { already_running: [HASH] }],
         ['unreadable', 'failing', { resume_failed: [HASH], state_unread: expect.stringMatching(/500|broken/) as unknown }],
         ['not a list', 'malformed', { resume_failed: [HASH], state_unread: expect.any(String) as unknown }],
-        ['listed without a hash', 'hashless', { resume_failed: [HASH], state_unread: expect.stringMatching(/no hash/) as unknown }]
+        ['listed without a hash', 'hashless', { resume_failed: [HASH], state_unread: expect.stringMatching(/no hash/) as unknown }],
+        ['listed with an empty hash', 'empty hash', { resume_failed: [HASH], state_unread: expect.stringMatching(/not asked for/) as unknown }],
+        ['listed under another hash', 'other hash', { resume_failed: [HASH], state_unread: expect.stringMatching(/not asked for/) as unknown }]
     ])('starts nothing for a request cancelled during the watch, and reports the torrent %s', async (_label, mode, expected) => {
         const t = torrent({ state: 'stoppedUP' });
         const qb = fakeQbittorrent({ torrents: [t], recheckStates: ['checkingUP', 'stoppedUP'] });
@@ -692,6 +694,8 @@ describe('recheck_torrents', () => {
                 if (mode === 'failing') return textResponse('broken', 500);
                 if (mode === 'malformed') return jsonResponse({ error: 'not a list' });
                 if (mode === 'hashless') return jsonResponse([{ error: 'unavailable' }]);
+                if (mode === 'empty hash') return jsonResponse([{ ...t, hash: '' }]);
+                if (mode === 'other hash') return jsonResponse([{ ...t, hash: OTHER }]);
             }
             return qb.impl(input, init);
         }) as typeof fetch;

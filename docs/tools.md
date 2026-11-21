@@ -3476,11 +3476,11 @@ still checking or still moving to its save path when the watch ends, showing an
 error, or never seen checking because it is queued behind another, is reported
 as such and left alone, as is one found checking again, at missing files or no
 longer complete when it was time to start it (`unconfirmed`). A torrent still
-fetching metadata or being moved is skipped. A check can write where the files are, and can
-send a torrent to its incomplete folder or its save path, so all of those have to be
-inside `allowed_paths`. A
-protected torrent whose share limits could remove it once the check finds it whole
-needs `allow_removal: true`, which needs `destructive`.
+fetching metadata or being moved is skipped. A check can write where the files
+are, and can send a torrent to its incomplete folder or its save path, so all of
+those have to be inside `allowed_paths`. A protected torrent whose share limits
+could remove it once the check finds it whole needs `allow_removal: true`, which
+needs `destructive`.
 
 **Unverified live** (qBittorrent): the recheck and the watch after it.
 

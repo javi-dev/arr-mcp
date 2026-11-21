@@ -66,7 +66,7 @@ const WATCH_POLL_MS = 2_000;
 /** How long a complete torrent may show no checking state before the watch stops waiting for one. */
 const GRACE_MS = 4_000;
 
-/** qBittorrent's states for a torrent that is seeding, downloading or queued to: started, whoever started it. */
+/** qBittorrent's states for a torrent that is seeding, downloading, queued to, or allocating space to download: started, whoever started it. */
 const STARTED_STATES = new Set(['uploading', 'stalledUP', 'queuedUP', 'forcedUP', 'downloading', 'stalledDL', 'queuedDL', 'forcedDL', 'metaDL', 'forcedMetaDL', 'allocating']);
 
 /** While these run, the amount left says nothing about where the data is, and a finished torrent can read as unfinished. */
