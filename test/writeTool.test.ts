@@ -1350,13 +1350,36 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
     });
 
     it('drops the cache before a change an afterWrite makes hands the lane on', async () => {
-        const r = sending('none', {
-            afterWrite: (_sent, then) => then.write(() => Promise.resolve({}))
+        const changing = gate();
+        let startedChange = false;
+        let dropsWhenNinePlanned: number | undefined;
+        const h = buildHarness({
+            plan: ({ id }) => {
+                if (id === '9' && startedChange) dropsWhenNinePlanned = h.invalidate.mock.calls.length;
+                return Promise.resolve({ ...PLAN, target: id });
+            },
+            afterWrite: (sent, then) =>
+                (sent as { id?: string }).id === '9'
+                    ? Promise.resolve(sent)
+                    : then.write(async () => {
+                          startedChange = true;
+                          await changing.opened;
+                          return sent;
+                      })
         });
-        const [first] = await r.confirmAll(['5']);
-        await first;
-        // Once as the apply returned, once as the change ended, once as the afterWrite ended.
-        expect(r.h.invalidate).toHaveBeenCalledTimes(3);
+        h.apply.mockImplementation((_plan, { id }) => Promise.resolve({ id }));
+        const tokens: (string | undefined)[] = [];
+        for (const id of ['5', '9']) tokens.push((await h.call('delete_media', { id })).structuredContent.confirm_token);
+        const first = h.call('delete_media', { id: '5', confirm: tokens[0] });
+        await vi.waitFor(() => expect(startedChange).toBe(true));
+        // `9` queues behind the change `5` is making in the lane.
+        const second = h.call('delete_media', { id: '9', confirm: tokens[1] });
+        await settled();
+        expect(dropsWhenNinePlanned).toBeUndefined();
+        changing.open();
+        await Promise.all([first, second]);
+        // Once as `5`'s apply returned, and once as its change ended, before `9` planned.
+        expect(dropsWhenNinePlanned).toBe(2);
     });
 
     it('lets a change an afterWrite makes read the request\'s cancellation as it is when it asks', async () => {
@@ -1395,7 +1418,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         const [first] = await r.confirmAll(['5']);
         await first;
         expect(resumed).toBe(false);
-        expect(r.log).toContain('the request was cancelled while this write waited for its instance');
+        expect(r.log).toContain('the request was cancelled before this change was sent');
     });
 
     it('refuses a change an afterWrite makes once its request is cancelled while it waits, without running it', async () => {

@@ -239,17 +239,21 @@ The lane is the instance the tool is routed to, within one arr-mcp process. A
 write that also changes a second service, as `delete_media` does when it adds
 the title to Seerr's blocklist, is not serialised against writes to that one.
 
-A write holds the lane until its last change has been made. The watch
+A write holds the lane until its last change has been made. The watch that
 `recheck_torrents` keeps on a recheck with `resume_if_complete` (up to 45
 seconds) comes after that and only reads, so it runs with the instance already
-free for the next confirmation. The torrents it finds whole are started back in
-the lane, behind any confirmation that arrived during the watch, with any
-library snapshot dropped before and after. If another confirmation to that
-qBittorrent was accepted during the watch, even one that found nothing to do,
-they are left stopped and listed as `left_stopped`, because a pause sent then
-would look the same and starting them would undo it. If the instance is still
-busy 30 seconds later, or the request is cancelled, they are listed as
-`resume_failed`, with the reason in `resume_error`.
+free for the next confirmation; qBittorrent goes on checking in the background
+either way. The torrents it finds whole are started back in the lane, behind
+any confirmation that arrived during the watch, after reading them once more
+and with any library snapshot dropped before and after. Whether to start them
+is decided when that start gets the lane: if another confirmation to that
+qBittorrent was accepted since the recheck, even one that found nothing to do
+and even another `recheck_torrents`, they are left stopped and listed as
+`left_stopped`, because a pause sent then would look the same and starting them
+would undo it. If the instance is still busy 30 seconds later, or the request
+has been cancelled, they are left stopped too, listed as `resume_failed` with
+the reason in `resume_error`. Once the start has been sent it runs to the end,
+as any apply does.
 
 Other waits still hold the lane, because the change has not been made, or could
 still be started over, while they run:

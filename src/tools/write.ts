@@ -660,7 +660,7 @@ export function registerWriteTool<
         // A later change an `afterWrite` makes, back in the lane the apply held.
         const then: AfterWrite = {
             write: async <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>): Promise<T> => {
-                if (signal?.aborted === true) throw new Error('the request was cancelled while this write waited for its instance');
+                if (signal?.aborted === true) throw new Error('the request was cancelled before this change was sent');
                 const turn = await inLane(service, signal, async () => {
                     try {
                         return await call({ overtaken: confirmations.get(service) !== counted, cancelled: () => signal?.aborted === true });

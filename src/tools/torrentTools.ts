@@ -102,8 +102,9 @@ type RecheckOutcome = { rechecking: string[]; resumed?: string[]; left_stopped?:
  * reads, and the start at the end goes through `write`, back in the lane. It
  * stands down when another confirmed write reached the client during the
  * watch: a pause sent then leaves a checked torrent as stopped as the recheck
- * did, and starting it would undo the later request. A torrent that read finds
- * removed is reported as gone, and one already running is not reported as
+ * did, and starting it would undo the later request. What the read in the lane
+ * finds is what is reported: a torrent removed by then is gone, one at an error
+ * errored, one moving still moving, and one already running is not called
  * unconfirmed, since the watch did see its check.
  */
 async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: number) => Promise<void>, write: AfterWrite['write']): Promise<RecheckOutcome> {
@@ -141,8 +142,8 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
     const finished = [...settled.entries()];
     const wholeAndStopped = finished.flatMap(([id, s]) => (s?.complete === true && s.stopped ? [id] : []));
     let toStart = wholeAndStopped.filter(id => seenChecking.has(id));
-    // Torrents the last read no longer found, or found started by something else.
-    const dropped = { gone: [] as string[], running: [] as string[] };
+    // What the last read found of a torrent it will not start; one checking again or at missing files stays unconfirmed.
+    const dropped = { gone: [] as string[], errored: [] as string[], moving: [] as string[], running: [] as string[] };
     let resumeError: string | undefined;
     let leftStopped = false;
     if (toStart.length > 0) {
@@ -156,10 +157,14 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
                 for (const id of candidates.filter(id => !toStart.includes(id))) {
                     const now = fresh.find(s => s.id === id);
                     if (now === undefined) dropped.gone.push(id);
-                    else if (!now.stopped && !now.checking) dropped.running.push(id);
+                    else if (now.state === 'error') dropped.errored.push(id);
+                    else if (now.state === 'moving') dropped.moving.push(id);
+                    else if (!now.stopped && !now.checking && now.state !== 'missingFiles') dropped.running.push(id);
                 }
                 leftStopped = overtaken;
                 if (toStart.length === 0 || overtaken) return;
+                // The last point to stand down: once sent, the start runs to the end, as an apply does,
+                // including the older API's verb when qBittorrent does not know the new one.
                 if (cancelled()) throw new Error('the request was cancelled before they were started');
                 await client.startTorrents(toStart);
             });
@@ -174,9 +179,9 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         rechecking: [...ids],
         ...list(resumeFailed ? 'resume_failed' : leftStopped ? 'left_stopped' : 'resumed', toStart),
         ...list('incomplete', finished.flatMap(([id, s]) => (s !== undefined && !s.complete && s.state !== 'error' ? [id] : []))),
-        ...list('errored', [...finished.flatMap(([id, s]) => (s?.state === 'error' ? [id] : [])), ...ids.filter(id => !settled.has(id) && failing.has(id))]),
+        ...list('errored', [...finished.flatMap(([id, s]) => (s?.state === 'error' ? [id] : [])), ...ids.filter(id => !settled.has(id) && failing.has(id)), ...dropped.errored]),
         ...list('still_checking', ids.filter(id => !settled.has(id) && seenChecking.has(id) && !moving.has(id) && !failing.has(id))),
-        ...list('still_moving', ids.filter(id => !settled.has(id) && moving.has(id))),
+        ...list('still_moving', [...ids.filter(id => !settled.has(id) && moving.has(id)), ...dropped.moving]),
         ...list('unconfirmed', [...wholeAndStopped.filter(id => !toStart.includes(id) && !Object.values(dropped).some(group => group.includes(id))), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id) && !moving.has(id) && !failing.has(id))]),
         ...list('gone', [...finished.flatMap(([id, s]) => (s === undefined ? [id] : [])), ...dropped.gone]),
         ...(resumeError === undefined || toStart.length === 0 ? {} : { resume_error: resumeError })
@@ -188,13 +193,13 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
     const part = (label: string, ids: string[] | undefined) => (ids === undefined ? [] : [`${label}: ${ids.join(', ')}`]);
     return `Recheck sent. ${[
         ...part('started again', o.resumed),
-        ...part('finished complete but left stopped, because another confirmed write reached qBittorrent during the watch; start them with pause_downloads and `action: "resume"` if that is still wanted', o.left_stopped),
+        ...part('finished complete but left stopped, because another confirmation to this qBittorrent was accepted during the watch (even one that found nothing to do, such as a pause of a stopped torrent); start them with pause_downloads and `action: "resume"` if that is still wanted', o.left_stopped),
         ...part('came back incomplete, and any that was not stopped is downloading what is missing', o.incomplete),
         ...part('showing an error after the recheck was sent; get_queue shows only that state, and the reason is in the qBittorrent log', o.errored),
         ...part('still checking, so start these with pause_downloads and `action: "resume"` once get_queue shows them complete', o.still_checking),
         ...part('still moving to the save path and not started, so once get_queue no longer shows them at moving and shows them complete, start them with pause_downloads and `action: "resume"`', o.still_moving),
         ...part('no check was seen running yet, so these were not started; look at them again in get_queue', o.unconfirmed),
-        ...part('removed while checking', o.gone),
+        ...part('no longer in qBittorrent', o.gone),
         ...part(
             `finished complete but could not be started${o.resume_error === undefined ? '' : ` (${o.resume_error})`}; start them with pause_downloads and \`action: "resume"\` if that is still wanted`,
             o.resume_failed
@@ -352,7 +357,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         name: 'recheck_torrents',
         title: 'Recheck torrents',
         description:
-            'Has qBittorrent verify torrents against the data on disk: the usual next step for a torrent at `missing files` once its data is back. `resume_if_complete` watches for about 45 seconds and starts each stopped torrent that comes back complete; slower ones are reported as still checking. Previews first; confirm to start the recheck. Field reference: arr://docs/recheck_torrents.',
+            'Has qBittorrent verify torrents against the data on disk: the usual next step for a torrent at `missing files` once its data is back. `resume_if_complete` watches about 45 seconds and starts stopped ones found complete, unless a later write got in (`left_stopped`); slower ones show as checking. Previews first; confirm to recheck. Field reference: arr://docs/recheck_torrents.',
         inputSchema: RecheckInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'recheck_torrents',
