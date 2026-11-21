@@ -57,6 +57,7 @@ describe('the Prowlarr anonymisers', () => {
                     { name: 'definitionFile', value: 'somerealsite' },
                     { name: 'apiurl', value: 'api.some-real-site.example' },
                     { name: 'baseUrl', value: 'https://some-real-site.example/' },
+                    { name: 'mirrorUrl', value: 'https://[2001:db8:5::9]:8443/some-site/path?key=x' },
                     { name: 'apiPath', value: '/api' },
                     { name: 'info_uploader', value: 'Some Real Site lists uploaders by name.' },
                     { name: 'sort', value: 2 }
@@ -69,6 +70,7 @@ describe('the Prowlarr anonymisers', () => {
             { name: 'definitionFile', value: 'indexer3' },
             { name: 'apiurl', value: 'indexer.example.test' },
             { name: 'baseUrl', value: 'https://indexer.example.test/' },
+            { name: 'mirrorUrl', value: 'https://indexer.example.test/' },
             { name: 'apiPath', value: '/api' },
             { name: 'info_uploader', value: 'Information this indexer shows in Prowlarr.' },
             { name: 'sort', value: 2 }
@@ -133,9 +135,9 @@ describe('the Prowlarr anonymisers', () => {
     });
 
     it('replace every IPv6 host outside the documentation range whole, zone and embedded IPv4 included', () => {
-        const hosts = ['fe80::1%eth0', '[fe80::1%25eth0]:9696', '::ffff:192.168.1.5', 'fd00::5', '::1', '2001:db8::7', '2001:db8::7%eth0'];
+        const hosts = ['fe80::1%eth0', '[fe80::1%25eth0]:9696', '::ffff:192.168.1.5', 'fd00::5', '::1', '2001:db8::7', '2001:db8::7%eth0', '2001:db8::198.51.100.9'];
         const stats = anonymiseProwlarrIndexerStats({ hosts: hosts.map(host => ({ host })) }) as { hosts: { host: string }[] };
-        expect(stats.hosts.map(h => h.host)).toEqual(['2001:db8::10', '[2001:db8::10]:9696', '2001:db8::10', '2001:db8::10', '2001:db8::10', '2001:db8::7', '2001:db8::10']);
+        expect(stats.hosts.map(h => h.host)).toEqual(['2001:db8::10', '[2001:db8::10]:9696', '2001:db8::10', '2001:db8::10', '2001:db8::10', '2001:db8::7', '2001:db8::10', '2001:db8::10']);
     });
 
     it('replace a history row search link whole, key and all, and the host that asked', () => {
@@ -227,6 +229,16 @@ describe('the other anonymisers', () => {
                 // wording, and is left whole rather than cut down to a placeholder with a label on.
                 { text: 'Login failed for old.news.first-provider.example' }
             ]
+        });
+    });
+
+    it('rename an IP literal in a connection failure for a server server_stats does not list', () => {
+        const body = anonymiseSabnzbdWarnings(
+            { warnings: [{ text: 'Connection refused 22@2001:db8:77::5:563 (2001:db8:77::5)' }, { text: 'Connection refused 23@198.51.100.9:119 (198.51.100.9)' }] },
+            { servers: {} }
+        );
+        expect(body).toEqual({
+            warnings: [{ text: 'Connection refused 22@news1.example.test:563 (news1.example.test)' }, { text: 'Connection refused 23@news1.example.test:119 (news1.example.test)' }]
         });
     });
 

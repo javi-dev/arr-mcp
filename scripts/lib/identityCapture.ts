@@ -52,7 +52,8 @@ export function indexerAliases(names: readonly unknown[] = []): (name: unknown) 
     };
 }
 
-const scrubUrls = (value: string): string => value.replace(/https?:\/\/[^\s"',\]]+/gi, ANONYMOUS_URL);
+/** Every absolute URL in a text, a bracketed IPv6 authority included, becomes the placeholder. */
+const scrubUrls = (value: string): string => value.replace(/https?:\/\/(?:\[[^\]\s]*\])?[^\s"',\]]*/gi, ANONYMOUS_URL);
 
 /** Settings every Cardigann indexer has, whichever site its definition is for. */
 const COMMON_SETTING = /^(?:definitionFile|baseUrl|baseSettings\.|torrentBaseSettings\.)/;
@@ -62,7 +63,11 @@ const settingValue = (f: Row, n: number): Row => {
     const name = typeof f.name === 'string' ? f.name : '';
     if (name === 'definitionFile') return { ...f, value: `indexer${n}` };
     if (/^info/i.test(name)) return { ...f, value: 'Information this indexer shows in Prowlarr.' };
-    if (/url$/i.test(name) && !/^(?:https?:\/\/|\/)/i.test(f.value)) return { ...f, value: new URL(ANONYMOUS_URL).host };
+    if (/url$/i.test(name)) {
+        // A URL setting is the site's address whole: nothing of it is kept, a relative path aside.
+        if (/^https?:\/\//i.test(f.value)) return { ...f, value: ANONYMOUS_URL };
+        if (!f.value.startsWith('/')) return { ...f, value: new URL(ANONYMOUS_URL).host };
+    }
     return { ...f, value: scrubUrls(f.value) };
 };
 
@@ -181,7 +186,8 @@ const hostName = (value: unknown): unknown => {
     const found = address(value);
     if (found === undefined) return ANONYMOUS_HOST;
     const v6 = isIP(found.ip) === 6;
-    if (v6 ? KEPT_V6.test(found.ip) && found.rest(found.ip) === value : KEPT_V4.test(found.ip)) return value;
+    // A dotted tail inside the documentation prefix is an IPv4 address the redaction may not reach.
+    if (v6 ? KEPT_V6.test(found.ip) && !found.ip.includes('.') && found.rest(found.ip) === value : KEPT_V4.test(found.ip)) return value;
     return found.rest(v6 ? '2001:db8::10' : '203.0.113.10');
 };
 
@@ -289,7 +295,8 @@ export function anonymiseSabnzbdWarnings(body: unknown, serverStats?: unknown): 
                 known
                     .reduce((out, [host, placeholder]) => out.replace(whole(host), placeholder), text)
                     .replace(
-                        /(\d+@)([A-Za-z0-9.-]+)(:\d+ \()([A-Za-z0-9.-]+)(\))/g,
+                        // A host is a name or an IP literal, IPv6 included: SABnzbd writes it straight before the port.
+                        /(\d+@)([A-Za-z0-9.:[\]-]+?)(:\d+ \()([A-Za-z0-9.:[\]%-]+)(\))/g,
                         (_all: string, at: string, first: string, port: string, second: string, close: string) =>
                             `${at}${neutral(first)}${port}${neutral(second)}${close}`
                     );
