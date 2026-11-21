@@ -61,9 +61,16 @@ function harness(opts: { stores?: boolean; refuses?: string; breaksOn?: string; 
     const cfg = config(opts.over);
     const { server, call } = toolServer();
     const context = writeContext(instancesOf({ sabnzbd: cfg }));
-    registerSabnzbdTools(server, context, [new SabnzbdAdapter(cfg, impl), ...(opts.extra ?? [])]);
+    const adapters = [new SabnzbdAdapter(cfg, impl), ...(opts.extra ?? [])];
+    registerSabnzbdTools(server, context, adapters);
     const sent = (mode: string) => requests.filter(r => r.searchParams.get('mode') === mode);
-    return { call, context, requests, addresses, uploads, uploadHeaders, sent, settings };
+    /** The tools as another request's server registers them: the same tokens, audit and adapters, a fresh registration. */
+    const anotherRequest = () => {
+        const other = toolServer();
+        registerSabnzbdTools(other.server, { ...context }, adapters);
+        return other.call;
+    };
+    return { call, context, requests, addresses, uploads, uploadHeaders, sent, settings, anotherRequest };
 }
 
 const NZB = '<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"></nzb>';
@@ -427,6 +434,61 @@ describe('update_client_settings', () => {
         ['an unknown retention option', { history_retention_option: 'forever' }]
     ])('refuses %s at the schema', async (_why, args) => {
         await expect(harness().call('update_client_settings', args)).rejects.toThrow();
+    });
+
+    it.each([['foo..nfo'], ['images/..nfo'], ['sub..dir/*'], ['*..tmp']])('refuses the cleanup entry %s, which SABnzbd would store and never apply', async entry => {
+        const h = harness();
+        await expect(h.call('update_client_settings', { cleanup_list: ['nfo', entry] })).rejects.toThrow(/must not contain \.\., which SABnzbd stores but never applies/);
+        expect(h.sent('set_config')).toEqual([]);
+    });
+
+    it('runs two racing confirmations one after the other, so the second reads what the first wrote', async () => {
+        const h = harness();
+        const first = { fail_hopeless_jobs: false };
+        const second = { history_retention_option: 'all-delete' };
+        const a = await h.call('update_client_settings', first);
+        const b = await h.call('update_client_settings', second);
+        const before = h.requests.length;
+        const applied = await Promise.all([
+            h.call('update_client_settings', { ...first, confirm: a.structuredContent.confirm_token }),
+            h.call('update_client_settings', { ...second, confirm: b.structuredContent.confirm_token })
+        ]);
+        expect(applied.map(r => r.structuredContent.applied)).toEqual([true, true]);
+        const during = h.requests.slice(before);
+        const firstWrite = during.findIndex(r => r.searchParams.get('mode') === 'set_config');
+        // The second plan reads every setting, and all of those reads come after the first write.
+        const readAfter = new Set(during.slice(firstWrite).filter(r => r.searchParams.get('mode') === 'get_config').map(r => r.searchParams.get('keyword')));
+        expect([...readAfter].sort()).toEqual(Object.keys(SETTINGS).sort());
+        expect(h.settings).toMatchObject({ fail_hopeless_jobs: '0', history_retention_option: 'all-delete' });
+    });
+
+    it('lets only the first of two racing confirmations from different requests overwrite the same setting', async () => {
+        const h = harness();
+        const other = h.anotherRequest();
+        const a = await h.call('update_client_settings', { cleanup_list: ['srt'] });
+        const b = await other('update_client_settings', { cleanup_list: ['sfv'] });
+        const [first, second] = await Promise.all([
+            h.call('update_client_settings', { cleanup_list: ['srt'], confirm: a.structuredContent.confirm_token }),
+            other('update_client_settings', { cleanup_list: ['sfv'], confirm: b.structuredContent.confirm_token })
+        ]);
+        expect(first.structuredContent.applied).toBe(true);
+        // The second plans after the first wrote, so its token no longer matches what it would replace.
+        expect(second.structuredContent.applied).toBe(false);
+        expect(second.structuredContent.confirm_error).toBeDefined();
+        expect(h.sent('set_config').map(r => r.searchParams.get('value'))).toEqual(['srt']);
+        expect(h.settings.cleanup_list).toEqual(['srt']);
+    });
+
+    it('stops at the format for an entry that fails it, without checking it further', async () => {
+        const call = harness().call('update_client_settings', { cleanup_list: [`a${'.'.repeat(5_000)}b`] });
+        await expect(call).rejects.toThrow(/must be an extension, file name or pattern/);
+        await expect(call).rejects.not.toThrow(/must not contain \.\./);
+    });
+
+    it('accepts outer dots SABnzbd strips from an entry with no folder', async () => {
+        const h = harness();
+        await confirmed(h.call, 'update_client_settings', { cleanup_list: ['..srt', 'sfv..'] });
+        expect(h.settings.cleanup_list).toEqual(['srt', 'sfv']);
     });
 
     it('never puts the API key in a preview', async () => {

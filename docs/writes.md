@@ -220,8 +220,41 @@ as a fresh preview with a new token, and its text carries that preview's summary
 and effects as a first preview does. Some writes also bind what they act on, not
 only the arguments: `delete_episode_files` the file ids, `grab_release` the release, and a
 `fix_metadata` retag the files, their albums and Lidarr's Scrub Existing Tags
-setting. For those, the same call is refused when that has moved since the old
-preview, and the new effects are what the caller reads before confirming again.
+setting, and `reannounce_torrent` a SHA-256 of the torrent's tracker URLs. For
+those, the same call is refused when that has moved since the old preview, and
+the new effects are what the caller reads before confirming again.
+
+Confirmed writes to one instance run one at a time, from the reads that check
+the token to the write itself, so two confirmations sent together cannot
+interleave their writes and leave a mix of both. Previews, dry runs and writes
+to other instances do not wait. A confirmation still waiting after 30 seconds,
+or whose request is cancelled while it waits or while its plan runs, is refused
+without being applied, and that request does not use its token, which stays good
+for another try unless another request sent the same token and used it.
+Cancelling means ending that request: over HTTP, the client dropping it. A
+`notifications/cancelled` sent as a request of its own does not reach a call
+already waiting.
+
+The lane is the instance the tool is routed to, within one arr-mcp process. A
+write that also changes a second service, as `delete_media` does when it adds
+the title to Seerr's blocklist, is not serialised against writes to that one.
+An apply that waits on the service after writing holds the lane while it waits:
+each *arr command a rename or import waits on (up to three minutes), a recheck
+that `recheck_torrents` watches (up to 45 seconds), each step of a Jellyfin or
+Plex metadata repair (up to two minutes). Some applies wait more than once: an
+import that remaps episodes and renames them once can hold the lane for about
+six minutes, one that has to rotate file names for about nine, and a Plex match
+followed by a refresh for about four. A plan holds the lane too: a
+`grab_release` confirm runs the indexer search again before it grabs (often 15
+seconds or more, up to two minutes), so several grabs confirmed at once on one
+instance can be refused. A confirmation sent to that instance meanwhile is
+refused after 30 seconds without being applied, and can be sent again with the
+same token until that token expires, five minutes after its preview. The retry
+plans again against the state then: if the write ahead of it has made the
+change, it can find nothing to do or nothing left to act on; if a duplicate of
+the request spent the token and the plan still matches it, the retry is refused
+as already used; otherwise it applies, or comes back as a fresh preview with a
+new token if the old one has expired or no longer matches what the plan finds.
 
 A destructive preview says what it costs in the units that matter:
 

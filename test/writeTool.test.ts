@@ -1,5 +1,5 @@
 import { instancesOf } from './helpers/instances.ts';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod/v4';
 import type { AnyServiceConfig, ServiceId } from '../src/config/schema.ts';
 import { BEARER_CALLER, WriteAudit } from '../src/core/audit.ts';
@@ -17,7 +17,7 @@ import { rawTarget, registerWriteTool, type WritePlan, type WriteToolResult } fr
  * before the handler sees them. A fake that skipped the parse would hide the
  * fact that `dry_run` gets its `false` from the schema.
  */
-type Handler = (args: Record<string, unknown>) => Promise<{
+type Handler = (args: Record<string, unknown>, ctx?: unknown) => Promise<{
     content: { type: 'text'; text: string }[];
     structuredContent: WriteToolResult;
 }>;
@@ -30,10 +30,10 @@ function fakeServer() {
         }
     };
 
-    const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const call = async (name: string, args: Record<string, unknown> = {}, signal?: AbortSignal) => {
         const tool = tools.get(name);
         if (tool === undefined) throw new Error(`no such tool: ${name}`);
-        return tool.handler(tool.schema.parse(args) as Record<string, unknown>);
+        return tool.handler(tool.schema.parse(args) as Record<string, unknown>, signal === undefined ? undefined : { mcpReq: { signal } });
     };
 
     return { server: server as never, call, tools };
@@ -59,9 +59,10 @@ type Harness = ReturnType<typeof buildHarness>;
 function buildHarness(
     opts: {
         permissions?: Partial<Record<ServiceId, AnyServiceConfig>>;
-        plan?: WritePlan | (() => Promise<WritePlan>);
+        plan?: WritePlan | ((args: { id: string }) => Promise<WritePlan>);
         route?: (args: { id: string }) => string;
-        apply?: () => Promise<unknown>;
+        apply?: (plan: WritePlan, args: { id: string }) => Promise<unknown>;
+        applied?: (outcome: unknown, plan: WritePlan) => string | undefined;
         tier?: 'safe' | 'destructive';
         caller?: string;
         crossChecks?: CrossChecker;
@@ -103,6 +104,7 @@ function buildHarness(
             tier: opts.tier ?? 'destructive',
             plan,
             apply,
+            ...(opts.applied === undefined ? {} : { applied: opts.applied }),
             ...(opts.crossCheck === undefined ? {} : { crossCheck: opts.crossCheck })
         }
     );
@@ -732,6 +734,395 @@ describe('write tool harness — cross-checks', () => {
         const h = buildHarness({ plan: SUBJECT_PLAN, crossChecks: advised(), crossCheck: 'delete' });
         await h.call('delete_media', { id: '5' });
         expect(outcomes(h)).toEqual(['unconfirmed']);
+    });
+});
+
+describe('write tool harness: URLs in what it throws (#6)', () => {
+    const KEY = '0123456789abcdef0123456789abcdef';
+    const PASTED = `https://tracker.example.org/${KEY}/announce?passkey=${KEY}`;
+
+    it('cuts a URL in a plan refusal down to scheme and host, in the message, detail and remedy', async () => {
+        const refusing = buildHarness({
+            plan: () => Promise.reject(new ServiceError('NotFound', 'radarr', `no such category ${PASTED}`, { remedy: `Not ${PASTED}.`, status: 404 }))
+        });
+        const err = (await refusing.call('delete_media', { id: '5' }).catch((e: unknown) => e)) as ServiceError;
+        expect(err).toBeInstanceOf(ServiceError);
+        expect(err).toMatchObject({ kind: 'NotFound', service: 'radarr', status: 404 });
+        expect(err.message).toContain('no such category https://tracker.example.org/...');
+        for (const text of [err.message, err.detail, err.remedy, err.stack]) expect(text).not.toContain(KEY);
+        // Still the stack of where it was thrown, not of the scrub.
+        expect(err.stack?.split('\n')[1]).toContain('writeTool.test.ts');
+    });
+
+    it('scrubs an error whose message has no setter, keeping its class and name', async () => {
+        const harness = buildHarness({ apply: () => Promise.reject(new DOMException(`could not reach ${PASTED}`, 'AbortError')) });
+        const preview = await harness.call('delete_media', { id: '5' });
+        const err = (await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token }).catch((e: unknown) => e)) as DOMException;
+        expect(err).toBeInstanceOf(DOMException);
+        expect(err.name).toBe('AbortError');
+        expect(err.message).toBe('could not reach https://tracker.example.org/...');
+    });
+
+    it('replaces a frozen error with a scrubbed copy, keeping the original as its cause', async () => {
+        const frozen = Object.freeze(new Error(`could not reach ${PASTED}`));
+        const err = (await buildHarness({ plan: () => Promise.reject(frozen) }).call('delete_media', { id: '5' }).catch((e: unknown) => e)) as Error;
+        expect(err.message).toBe('could not reach https://tracker.example.org/...');
+        expect(err.cause).toBe(frozen);
+    });
+
+    it('scrubs a stack that no longer repeats the message, still keeping its frames', async () => {
+        const thrown = new Error(`could not reach ${PASTED}`);
+        thrown.stack = `Error: was ${PASTED}\n    at plan (file:///app/src/tools/example.ts:12:34)`;
+        const err = (await buildHarness({ plan: () => Promise.reject(thrown) }).call('delete_media', { id: '5' }).catch((e: unknown) => e)) as Error;
+        expect(err.stack).toBe('Error: was https://tracker.example.org/...\n    at plan (file:///app/src/tools/example.ts:12:34)');
+    });
+
+    it('scrubs the fresh preview a rejected token gets back, and its token still applies', async () => {
+        const quoting: WritePlan = { ...PLAN, summary: `Add it to category ${PASTED}.`, effects: [`Files under ${PASTED}.`] };
+        const h = buildHarness({ plan: quoting });
+        const rejected = await h.call('delete_media', { id: '5', confirm: 'not-a-token' });
+        const { content, structuredContent } = rejected;
+        const { confirm_token: _token, ...shown } = structuredContent;
+        expect(JSON.stringify([content, shown])).not.toContain(KEY);
+        // The target is what the token binds, shown as the plan resolved it in every reply.
+        expect(structuredContent.target).toBe(PLAN.target);
+        expect(structuredContent.summary).toBe('Add it to category https://tracker.example.org/...');
+        const applied = await h.call('delete_media', { id: '5', confirm: structuredContent.confirm_token });
+        expect(applied.structuredContent.applied).toBe(true);
+    });
+
+    it('scrubs only the first line of a stack, so frames given as file URLs keep their location', async () => {
+        const thrown = new ServiceError('NotFound', 'radarr', `no such category ${PASTED}`);
+        thrown.stack = `ServiceError: ${thrown.message}\n    at plan (file:///app/src/tools/example.ts:12:34)`;
+        const err = (await buildHarness({ plan: () => Promise.reject(thrown) }).call('delete_media', { id: '5' }).catch((e: unknown) => e)) as Error;
+        expect(err.stack).toBe('ServiceError: radarr not found: no such category https://tracker.example.org/...\n    at plan (file:///app/src/tools/example.ts:12:34)');
+    });
+
+    it('cuts a URL in a failed apply, and leaves out a magnet link', async () => {
+        const harness = buildHarness({ apply: () => Promise.reject(new Error(`upstream refused ${PASTED} and magnet:?xt=urn:btih:${KEY}`)) });
+        const preview = await harness.call('delete_media', { id: '5' });
+        const err = (await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token }).catch((e: unknown) => e)) as Error;
+        expect(err.message).toBe('upstream refused https://tracker.example.org/... and (a magnet link, left out)');
+    });
+
+    it.each([
+        { as: 'failed', field: 'failed', outcome: { done: ['unlock title'], failed: `write the metadata: rejected ${PASTED}` } },
+        { as: 'seerrBlocklistFailed', field: 'seerrBlocklistFailed', outcome: { deleted: true, seerrBlocklistFailed: `refused ${PASTED}` } },
+        { as: 'syncFailed', field: 'syncFailed', outcome: { indexer: 'x', syncFailed: `refused ${PASTED}` } },
+        { as: 'a list under failed', field: 'failed', outcome: { done: 1, failed: [`one ${PASTED}`, 2] } },
+        // Whatever the tool calls it: fix_metadata and pause_downloads use `note`.
+        { as: 'note', field: 'note', outcome: { resumed: 2, note: `could not remove the label: ${PASTED}` } },
+        { as: 'a nested field', field: 'steps', outcome: { steps: [{ step: 'sync', error: `refused ${PASTED}` }] } }
+    ])('scrubs the error a write that stopped part way reports as $as, in the result and the sentence built from it', async ({ field, outcome }) => {
+        const harness = buildHarness({
+            apply: () => Promise.resolve(outcome),
+            // Built from the field, as update_book, delete_media and the indexer tools build theirs.
+            applied: done => `Partly applied, but: ${JSON.stringify((done as Record<string, unknown>)[field])}`
+        });
+        const preview = await harness.call('delete_media', { id: '5' });
+        const { content, structuredContent } = await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token });
+        expect(JSON.stringify([content, structuredContent])).not.toContain(KEY);
+        expect(content[0]?.text).toContain('https://tracker.example.org/...');
+        expect(structuredContent.result).toMatchObject(Object.fromEntries(Object.keys(outcome).filter(key => key !== field).map(key => [key, (outcome as Record<string, unknown>)[key]])));
+    });
+
+    it('names a URL target the same cut-down way in the preview, a rejection, the receipt and its result', async () => {
+        const target = `radarr:${PASTED}`;
+        const harness = buildHarness({
+            plan: { ...PLAN, target },
+            apply: () => Promise.resolve({ grabbed: target, endpoint: 'http://192.0.2.10:7878', note: `the client said ${PASTED}` })
+        });
+        const preview = await harness.call('delete_media', { id: '5' });
+        const rejected = await harness.call('delete_media', { id: '5', confirm: 'not-a-token' });
+        const { structuredContent } = await harness.call('delete_media', { id: '5', confirm: preview.structuredContent.confirm_token });
+        expect(preview.structuredContent.target).toBe('radarr:https://tracker.example.org/...');
+        expect(rejected.structuredContent.target).toBe(preview.structuredContent.target);
+        expect(structuredContent.target).toBe(preview.structuredContent.target);
+        // A bare address is kept: nothing in it can be a key.
+        expect(structuredContent.result).toEqual({ grabbed: preview.structuredContent.target, endpoint: 'http://192.0.2.10:7878', note: 'the client said https://tracker.example.org/...' });
+    });
+
+    it('scrubs a no-op, whose sentence can repeat a URL the plan quoted', async () => {
+        const harness = buildHarness({ plan: { ...PLAN, target: `radarr:${PASTED}`, summary: `${PASTED} is already imported.`, noop: true } });
+        const { content, structuredContent } = await harness.call('delete_media', { id: '5' });
+        expect(JSON.stringify([content, structuredContent])).not.toContain(KEY);
+        expect(structuredContent.noop).toBe(true);
+    });
+
+    it('rethrows a refusal with no URL in it untouched', async () => {
+        const refusal = new ServiceError('NotFound', 'radarr', 'no movie 5 at http://192.0.2.10:7878');
+        const refusing = buildHarness({ plan: () => Promise.reject(refusal) });
+        await expect(refusing.call('delete_media', { id: '5' })).rejects.toBe(refusal);
+    });
+});
+
+describe('write tool harness: one confirmed write per instance at a time (#7)', () => {
+    // The lanes outlive a test, so a test that fails while holding one must still free it.
+    const toRelease: (() => void)[] = [];
+    afterEach(() => {
+        for (const release of toRelease.splice(0)) release();
+    });
+
+    /** A plan and apply that log each step, with apply for `held` waiting until `release` is called. */
+    function racing(held: string, opts: { route?: (args: { id: string }) => string; failFirst?: boolean } = {}) {
+        const log: string[] = [];
+        let release = (): void => undefined;
+        const gate = new Promise<void>(resolve => {
+            release = resolve;
+        });
+        toRelease.push(release);
+        const h = buildHarness({
+            permissions: { radarr: service(false, true), sonarr: service(false, true) },
+            ...(opts.route === undefined ? {} : { route: opts.route }),
+            plan: ({ id }) => {
+                log.push(`plan ${id}`);
+                return Promise.resolve({ ...PLAN, target: id });
+            },
+            apply: async (_plan, { id }) => {
+                log.push(`apply ${id}`);
+                if (id === held) await gate;
+                if (opts.failFirst === true && id === held) throw new Error('upstream broke');
+                log.push(`applied ${id}`);
+                return { ok: true };
+            }
+        });
+        const tokens: (string | undefined)[] = [];
+        const confirmAll = async (ids: string[], signal?: AbortSignal) => {
+            tokens.length = 0;
+            for (const id of ids) tokens.push((await h.call('delete_media', { id })).structuredContent.confirm_token);
+            log.length = 0;
+            return ids.map((id, i) => h.call('delete_media', { id, confirm: tokens[i] }, i === 0 ? undefined : signal).catch((e: unknown) => e));
+        };
+        return { h, log, release, confirmAll, tokens };
+    }
+
+    const settled = () => new Promise(resolve => setTimeout(resolve, 20));
+
+    it('runs the second confirmation from its plan on only once the first has applied', async () => {
+        const r = racing('5');
+        const calls = await r.confirmAll(['5', '9']);
+        await settled();
+        const seen = [...r.log];
+        r.release();
+        await Promise.all(calls);
+        expect(seen).toEqual(['plan 5', 'apply 5']);
+        expect(r.log).toEqual(['plan 5', 'apply 5', 'applied 5', 'plan 9', 'apply 9', 'applied 9']);
+    });
+
+    it('lets a preview through while a confirmation holds the instance', async () => {
+        const r = racing('5');
+        const calls = await r.confirmAll(['5']);
+        await settled();
+        const preview = await r.h.call('delete_media', { id: '9' });
+        expect(preview.structuredContent.applied).toBe(false);
+        r.release();
+        await Promise.all(calls);
+    });
+
+    it('does not hold a confirmation on another instance', async () => {
+        const r = racing('5', { route: ({ id }) => (id === '5' ? 'radarr' : 'sonarr') });
+        const calls = await r.confirmAll(['5', '9']);
+        await settled();
+        const seen = [...r.log];
+        r.release();
+        await Promise.all(calls);
+        expect(seen).toContain('applied 9');
+        expect(seen).not.toContain('applied 5');
+    });
+
+    it('refuses a confirmation that waited 30 seconds, unapplied and with its token unspent', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const r = racing('5');
+            const [first, second] = await r.confirmAll(['5', '9']);
+            await vi.advanceTimersByTimeAsync(30_000);
+            const refusal = (await second) as Error;
+            expect(refusal.message).toMatch(/^Not applied: another confirmed write to radarr was still running after 30 seconds\. This request did not use its confirmation token/);
+            r.release();
+            await first;
+            expect(r.log).not.toContain('plan 9');
+            expect(outcomes(r.h)).toContain('denied');
+            const retried = await r.h.call('delete_media', { id: '9', confirm: r.tokens[1] });
+            expect(retried.structuredContent.applied).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('refuses a retry as already used when a duplicate of the refused request spent the token', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const r = racing('5');
+            const token = (await r.h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+            const first = r.h.call('delete_media', { id: '5', confirm: token });
+            // The same request sent twice: the first spends the token and holds the lane.
+            const second = r.h.call('delete_media', { id: '5', confirm: token }).catch((e: unknown) => e);
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(await second).toMatchObject({ message: expect.stringMatching(/This request did not use its confirmation token/) });
+            r.release();
+            await first;
+            await expect(r.h.call('delete_media', { id: '5', confirm: token })).rejects.toThrow(/already used/);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('refuses a queued confirmation whose request was cancelled, and never plans or applies it', async () => {
+        const r = racing('5');
+        const abort = new AbortController();
+        const [first, second] = await r.confirmAll(['5', '9'], abort.signal);
+        await settled();
+        abort.abort();
+        await expect(second).resolves.toMatchObject({ message: expect.stringMatching(/cancelled while it waited for another confirmed write to radarr/) });
+        r.release();
+        await first;
+        await settled();
+        expect(r.log).toEqual(['plan 5', 'apply 5', 'applied 5']);
+        expect(outcomes(r.h)).toContain('denied');
+        const retried = await r.h.call('delete_media', { id: '9', confirm: r.tokens[1] });
+        expect(retried.structuredContent.applied).toBe(true);
+    });
+
+    it('refuses a confirmation whose request was cancelled before it reached the lane', async () => {
+        const r = racing('none');
+        const abort = new AbortController();
+        abort.abort();
+        const preview = await r.h.call('delete_media', { id: '9' });
+        await expect(r.h.call('delete_media', { id: '9', confirm: preview.structuredContent.confirm_token }, abort.signal)).rejects.toThrow(
+            /^Not applied: the request was cancelled before this write started\. This request did not use its confirmation token/
+        );
+        expect(outcomes(r.h)).toContain('denied');
+        expect(r.h.apply).not.toHaveBeenCalled();
+    });
+
+    it('refuses a waiter handed the lane after its deadline, even when its timer never ran', async () => {
+        const r = racing('5');
+        const start = performance.now();
+        const [first, second] = await r.confirmAll(['5', '9']);
+        await settled();
+        const clock = vi.spyOn(performance, 'now').mockReturnValue(start + 31_000);
+        try {
+            r.release();
+            await first;
+            expect(await second).toMatchObject({ message: expect.stringMatching(/still running after 30 seconds/) });
+        } finally {
+            clock.mockRestore();
+        }
+        expect(r.log).not.toContain('plan 9');
+        const retried = await r.h.call('delete_media', { id: '9', confirm: r.tokens[1] });
+        expect(retried.structuredContent.applied).toBe(true);
+    });
+
+    it('hands the lane on past a waiter cancelled at the hand-off, and its token still applies later', async () => {
+        const r = racing('5');
+        // Aborted with no event, as a signal can be between the hand-off and the write starting.
+        const quiet = { aborted: false, addEventListener: () => undefined, removeEventListener: () => undefined };
+        const tokens: (string | undefined)[] = [];
+        for (const id of ['5', '9', '7']) tokens.push((await r.h.call('delete_media', { id })).structuredContent.confirm_token);
+        r.log.length = 0;
+        const first = r.h.call('delete_media', { id: '5', confirm: tokens[0] });
+        await settled();
+        const second = r.h.call('delete_media', { id: '9', confirm: tokens[1] }, quiet as unknown as AbortSignal).catch((e: unknown) => e);
+        const third = r.h.call('delete_media', { id: '7', confirm: tokens[2] });
+        await settled();
+        quiet.aborted = true;
+        r.release();
+        await first;
+        expect(await second).toMatchObject({ message: expect.stringMatching(/cancelled while it waited/) });
+        expect((await third).structuredContent.applied).toBe(true);
+        expect(r.log).toEqual(['plan 5', 'apply 5', 'applied 5', 'plan 7', 'apply 7', 'applied 7']);
+        const retried = await r.h.call('delete_media', { id: '9', confirm: tokens[1] });
+        expect(retried.structuredContent.applied).toBe(true);
+        const after = await r.h.call('delete_media', { id: '5' });
+        expect((await r.h.call('delete_media', { id: '5', confirm: after.structuredContent.confirm_token })).structuredContent.applied).toBe(true);
+    });
+
+    it('keeps a URL target out of the row a confirm cancelled mid-plan writes', async () => {
+        const passkey = '0123456789abcdef0123456789abcdef';
+        const abort = new AbortController();
+        let confirming = false;
+        const h = buildHarness({
+            plan: () => {
+                if (confirming) abort.abort();
+                return Promise.resolve({ ...PLAN, target: `radarr:https://indexer.example/get?apikey=${passkey}` });
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        confirming = true;
+        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/being planned/);
+        const [row] = h.audit.recent() as { outcome: string; target: string }[];
+        expect(row?.outcome).toBe('denied');
+        expect(row?.target).not.toContain(passkey);
+        // Cut down rather than left out, so the row still names the host.
+        expect(row?.target).toBe('radarr:https://indexer.example/...');
+    });
+
+    it('records a confirm cancelled mid-plan as refused, even when the plan finds nothing left to do', async () => {
+        const abort = new AbortController();
+        let confirming = false;
+        const h = buildHarness({
+            plan: () => {
+                if (!confirming) return Promise.resolve(PLAN);
+                abort.abort();
+                return Promise.resolve({ ...PLAN, noop: true });
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        confirming = true;
+        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled while this write was being planned/);
+        expect(outcomes(h)).toEqual(['unconfirmed', 'denied']);
+        expect(h.audit.recent()[0]).toMatchObject({ outcome: 'denied', target: PLAN.target });
+        expect(h.apply).not.toHaveBeenCalled();
+    });
+
+    it('leaves the token unspent when the request is cancelled while the confirm is being planned', async () => {
+        const abort = new AbortController();
+        let confirming = false;
+        const h = buildHarness({
+            plan: () => {
+                // The caller goes while the plan reads the service.
+                if (confirming) abort.abort();
+                return Promise.resolve(PLAN);
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        confirming = true;
+        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled while this write was being planned\. This request did not use its confirmation token/);
+        expect(h.apply).not.toHaveBeenCalled();
+        expect(outcomes(h)).toContain('denied');
+        confirming = false;
+        expect((await h.call('delete_media', { id: '5', confirm: token })).structuredContent.applied).toBe(true);
+    });
+
+    it('builds the fresh preview for a rejected token outside the lane, so its cross-checks hold up no write', async () => {
+        let block = false;
+        let unblock = (): void => undefined;
+        const slow = new Promise<void>(resolve => {
+            unblock = resolve;
+        });
+        toRelease.push(unblock);
+        const crossChecks = vi.fn<CrossChecker>(async () => {
+            if (block) await slow;
+            return { warnings: [], unchecked: [] };
+        });
+        const h = buildHarness({ plan: { ...PLAN, subject: { kind: 'movie', label: 'Alien (1979)', ids: { tmdb: 348 } } }, crossChecks, crossCheck: 'delete' });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        block = true;
+        const rejected = h.call('delete_media', { id: '5', confirm: 'not-a-token' });
+        await settled();
+        const applied = await Promise.race([h.call('delete_media', { id: '5', confirm: token }), settled().then(() => 'still waiting')]);
+        expect(applied).toMatchObject({ structuredContent: { applied: true } });
+        unblock();
+        expect((await rejected).structuredContent.confirm_error).toBeDefined();
+    });
+
+    it('frees the instance after a write that failed', async () => {
+        const r = racing('5', { failFirst: true });
+        const calls = await r.confirmAll(['5', '9']);
+        r.release();
+        const [first, second] = await Promise.all(calls);
+        expect(first).toBeInstanceOf(Error);
+        expect((second as { structuredContent: WriteToolResult }).structuredContent.applied).toBe(true);
     });
 });
 

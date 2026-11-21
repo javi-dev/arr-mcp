@@ -105,9 +105,12 @@ const cleanupList = z
     .array(
         z
             .string()
-            .regex(/^[A-Za-z0-9._*?/-]{1,128}$/, 'must be an extension, file name or pattern such as nfo or *.tmp')
-            .refine(entry => !entry.split('/').includes('..'), { message: 'must not contain ..' })
+            // `abort`: an entry that fails the format, however long, is not normalised by the checks after it.
+            .regex(/^[A-Za-z0-9._*?/-]{1,128}$/, { message: 'must be an extension, file name or pattern such as nfo or *.tmp', abort: true })
             .refine(entry => storedCleanupEntry(entry) !== '', { message: 'must name an extension, file name or pattern' })
+            // Checked on the stored form: SABnzbd keeps an entry holding `..` but never cleans up with it,
+            // so accepting one would report a change that does nothing. Outer dots it strips anyway are fine.
+            .refine(entry => !storedCleanupEntry(entry).includes('..'), { message: 'must not contain .., which SABnzbd stores but never applies' })
     )
     .max(200)
     .transform(list => [...new Set(list.map(storedCleanupEntry))]);

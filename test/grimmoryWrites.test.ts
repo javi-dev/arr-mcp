@@ -78,6 +78,24 @@ describe('trigger_scan on grimmory', () => {
         expect(done.structuredContent.result).toMatch(/rescanning 1 library\. 1 could not be started: 3 \(/);
     });
 
+    it('scrubs a URL out of the error a later library failed with', async () => {
+        const passkey = '0123456789abcdef0123456789abcdef';
+        const { call } = scanTool({
+            'GET /api/v1/libraries': json([
+                { id: 1, name: 'Fiction', watch: false },
+                { id: 3, name: 'Poetry', watch: false }
+            ]),
+            ...REFRESH_1,
+            // A validation refusal, whose messages the HTTP layer passes on.
+            'PUT /api/v1/libraries/3/refresh': json([{ propertyName: 'path', errorMessage: `invalid path https://tracker.example.org/${passkey}/announce` }], 400)
+        });
+        const preview = await call({ service: 'grimmory' });
+        const done = await call({ service: 'grimmory', confirm: preview.structuredContent.confirm_token });
+        expect(done.structuredContent.applied).toBe(true);
+        expect(JSON.stringify(done)).not.toContain(passkey);
+        expect(done.structuredContent.result).toContain('invalid path https://tracker.example.org/...');
+    });
+
     it('scans one library by name, case-insensitively, or by id', async () => {
         const { call } = scanTool();
         for (const library of ['fiction', '1']) {

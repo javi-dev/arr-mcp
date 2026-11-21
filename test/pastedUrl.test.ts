@@ -39,17 +39,35 @@ describe('scrubUrls', () => {
         [`magnet:?xt=urn:btih:abc&tr=${PASSKEY} was refused`, '(a magnet link, left out) was refused'],
         [`title https://tracker.example.org/owner's/${PASSKEY}/announce here`, 'title https://tracker.example.org/... here'],
         [`got https://${PASSKEY}.tracker.example`, 'got https://***.tracker.example/...'],
-        [`quoted 'https://tracker.example/${PASSKEY}'`, "quoted 'https://tracker.example/...'"]
+        [`quoted 'https://tracker.example/${PASSKEY}'`, "quoted 'https://tracker.example/...'"],
+        // Paths the parser folds to `/`: judged as written, they still hold the key.
+        [`got https://tracker.example/${PASSKEY}/%2e%2e`, 'got https://tracker.example/...'],
+        [`got https://tracker.example/${PASSKEY}/..`, 'got https://tracker.example/...'],
+        // A sentence's full stop after a cut URL is not doubled onto the placeholder.
+        [`refused https://tracker.example/${PASSKEY}.`, 'refused https://tracker.example/...'],
+        [`got http://[2001:db8::1]/${PASSKEY}]`, 'got http://[2001:db8::1]/...]'],
+        [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
-    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.168.1.20:8081', 'plain words: nothing to cut'])('leaves %s alone', text => {
+    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS', 'could not reach http://[2001:db8::1]', 'redirected to (https://[2001:db8::1]:8443).'])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
     });
 });
 
 describe('a very long value', () => {
+    it.each([
+        // A regex for the tail would retry from every dot before the `x`.
+        ['before more of the URL', `https://tracker.example/${'.'.repeat(200_000)}x`],
+        // The walk back covers the whole run.
+        ['at its end', `https://tracker.example/${'.'.repeat(200_000)}`]
+    ])('finds the end of a URL with a long run of punctuation %s in linear time', (_why, text) => {
+        const started = Date.now();
+        scrubUrls(text);
+        expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
     it('is handled in linear time', () => {
         const long = 'a'.repeat(400_000);
         const started = Date.now();

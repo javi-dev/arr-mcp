@@ -150,6 +150,36 @@ describe('argument redaction', () => {
 
         expect(trail.recent()[0]?.args).toContain('HD-1080p');
     });
+
+    it('cuts a URL down wherever an argument holds one, under any key name (#16)', () => {
+        const key = '0123456789abcdef0123456789abcdef';
+        const trail = open();
+        trail.begin(
+            record({
+                args: {
+                    guid: `https://indexer.example/get?apikey=${key}`,
+                    sources: [`https://indexer.example/${key}/a.nzb`],
+                    nested: { link: `https://indexer.example/${key}` },
+                    origin: 'http://192.0.2.10:7878',
+                    api_key: 'supersecret'
+                }
+            })
+        );
+
+        const args = trail.recent()[0]?.args ?? '';
+        expect(args).not.toContain(key);
+        expect(args).toContain('https://indexer.example/...');
+        expect(args).toContain('http://192.0.2.10:7878');
+        expect(args).toContain('__REDACTED__');
+    });
+
+    it('cuts a URL target down, as a backstop for a tool that did not name it by a digest', () => {
+        const key = '0123456789abcdef0123456789abcdef';
+        const trail = open();
+        trail.begin(record({ target: `radarr:https://indexer.example/get?apikey=${key}` }));
+
+        expect(trail.recent()[0]?.target).toBe('radarr:https://indexer.example/...');
+    });
 });
 
 describe('WriteAudit.counts', () => {

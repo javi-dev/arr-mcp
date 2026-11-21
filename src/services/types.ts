@@ -2057,6 +2057,10 @@ export type TorrentDetails = {
     fileNames: string[];
     files: TorrentFileRow[];
     trackers: TorrentTrackerRow[];
+    /** SHA-256 of the full tracker URLs, for a confirm token to bind. Never the URLs, which can carry a passkey.
+     *  `null` unless the answer was a list whose every row is a DHT, PeX or LSD pseudo-tracker or a tracker URL:
+     *  `trackers` leaves out a row it cannot read, so only this says whether that list is the whole of it. */
+    trackerDigest: string | null;
 };
 
 /** Share limits as qBittorrent stores them: -2 and `Default` inherit, -1 means no limit. */

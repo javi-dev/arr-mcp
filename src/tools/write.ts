@@ -7,7 +7,7 @@ import { nextStepLine, type NextStep } from '../core/nextStep.ts';
 import { checkPermission, type PermissionSource, type WriteTier } from '../core/permissions.ts';
 import { toolInput } from '../core/shape.ts';
 import { logger } from '../core/logger.ts';
-import { shownValue } from '../core/pastedUrl.ts';
+import { scrubUrls, shownValue } from '../core/pastedUrl.ts';
 import type { CrossCheckProfile, CrossCheckSubject, CrossChecker } from './crossChecks.ts';
 import type { LibraryLoader } from './library.ts';
 import { resolveTarget, type ServiceTarget } from './serviceTarget.ts';
@@ -242,6 +242,42 @@ export type WriteToolResult = {
     next_steps?: NextStep[];
 };
 
+/** What a write tool call answers with. */
+type ToolReply = { content: { type: 'text'; text: string }[]; structuredContent: WriteToolResult };
+
+/** Every string in a value scrubbed, through plain objects and arrays. */
+function scrubbedDeep(value: unknown): unknown {
+    if (typeof value === 'string') return scrubUrls(value);
+    if (Array.isArray(value)) return value.map(scrubbedDeep);
+    if (typeof value !== 'object' || value === null) return value;
+    const proto: unknown = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value;
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, scrubbedDeep(inner)]));
+}
+
+/**
+ * A reply with every URL the caller reads cut down (#6), for a rejected token,
+ * a no-op and a confirmed write that ran. A rejected token's fresh preview can
+ * repeat what the plan quoted. A write that ran can report an upstream error
+ * beside what it did, under whatever name its tool gives it, so every string in
+ * `result` is scrubbed. The target is cut down the same way in every reply,
+ * first previews included, so a receipt still names what its preview named; a
+ * tool whose target is a credential-bearing URL names it by a digest instead,
+ * as add_torrent, add_nzb and grab_release do, so two of them stay apart.
+ * Next steps are not passed through here, being calls to make.
+ */
+const scrubbedReply = ({ content, structuredContent: result }: ToolReply): ToolReply => ({
+    content: content.map(part => ({ ...part, text: scrubUrls(part.text) })),
+    structuredContent: {
+        ...result,
+        target: scrubUrls(result.target),
+        summary: scrubUrls(result.summary),
+        effects: result.effects.map(scrubUrls),
+        ...(result.warnings === undefined ? {} : { warnings: result.warnings.map(scrubUrls) }),
+        ...('result' in result ? { result: scrubbedDeep(result.result) } : {})
+    }
+});
+
 const TARGET_KEYS = [
     'id',
     'item_id',
@@ -280,6 +316,142 @@ function writeInput(schema: z.ZodObject): z.ZodObject {
         writeInputs.set(schema, full);
     }
     return full;
+}
+
+/**
+ * How long a confirmed write waits for its instance. Some applies wait on the
+ * service for minutes (a rename's command, a watched recheck), and a client
+ * stops waiting long before that, so a write queued behind one is refused
+ * rather than landing after its caller was told it failed.
+ */
+const LANE_WAIT_MS = 30_000;
+
+/** The confirmed writes waiting for an instance, oldest first. Present only while one runs. */
+type Lane = { waiting: Set<() => void> };
+
+/**
+ * One lane per instance id, shared by every request's server: a confirmed
+ * write runs its plan, its token check and its apply in that lane, so two
+ * confirmations racing on one instance cannot interleave their writes and
+ * leave a mix of both (#7). Previews and dry runs only read, so they never wait.
+ */
+const writeLanes = new Map<string, Lane>();
+
+/** Hands the instance to the oldest write still waiting, or frees it. */
+function release(service: string, lane: Lane): void {
+    // A Set keeps insertion order, so the first entry is the oldest waiter, and
+    // one that gives up leaves it without a scan of the rest.
+    const next = lane.waiting.values().next().value;
+    if (next === undefined) {
+        writeLanes.delete(service);
+        return;
+    }
+    lane.waiting.delete(next);
+    next();
+}
+
+type Turn<T> = { ran: true; value: T } | { ran: false; why: 'busy' | 'cancelled' };
+
+/**
+ * Runs `task` once every confirmed write queued ahead of it on `service` has
+ * finished. Gives up without running it after `LANE_WAIT_MS`, or as soon as
+ * the request is cancelled, so the token it would have spent stays unused. A
+ * write that gives up leaves the queue at once, holding nothing.
+ */
+async function inLane<T>(service: string, signal: AbortSignal | undefined, task: () => Promise<T>): Promise<Turn<T>> {
+    // A function, so the check after the wait reads the signal as it is then. The
+    // harness refuses a request already cancelled before it calls this.
+    const aborted = (): boolean => signal?.aborted === true;
+    let lane = writeLanes.get(service);
+    if (lane === undefined) {
+        lane = { waiting: new Set() };
+        writeLanes.set(service, lane);
+    } else {
+        const queue = lane.waiting;
+        // Checked again at the hand-off: a timer the event loop ran late must not let an overdue write in.
+        const deadline = performance.now() + LANE_WAIT_MS;
+        const turn = await new Promise<'go' | 'busy' | 'cancelled'>(resolve => {
+            const settle = (outcome: 'go' | 'busy' | 'cancelled'): void => {
+                clearTimeout(timer);
+                signal?.removeEventListener('abort', cancelled);
+                queue.delete(go);
+                resolve(outcome);
+            };
+            const go = (): void => settle('go');
+            const cancelled = (): void => settle('cancelled');
+            const timer = setTimeout(() => settle('busy'), LANE_WAIT_MS);
+            signal?.addEventListener('abort', cancelled, { once: true });
+            queue.add(go);
+        });
+        if (turn !== 'go') return { ran: false, why: turn };
+        if (performance.now() >= deadline) {
+            release(service, lane);
+            return { ran: false, why: 'busy' };
+        }
+    }
+    // The instance is this write's now, until `release` hands it on.
+    if (aborted()) {
+        release(service, lane);
+        return { ran: false, why: 'cancelled' };
+    }
+    try {
+        return { ran: true, value: await task() };
+    } finally {
+        release(service, lane);
+    }
+}
+
+/**
+ * A stack with its first lines, which repeat the message, rewritten. The
+ * frames are kept as they are: `file:///` frames name where it was thrown.
+ */
+function restacked(stack: string | undefined, from: string, to: string): string | undefined {
+    if (stack === undefined) return undefined;
+    if (stack.includes(from)) return stack.replace(from, () => to);
+    const frames = stack.indexOf('\n    at ');
+    return frames === -1 ? scrubUrls(stack) : scrubUrls(stack.slice(0, frames)) + stack.slice(frames);
+}
+
+/**
+ * The error a write tool throws, with every URL in its message cut down the
+ * way the audit detail is (#6). A refusal can quote what the caller passed, and
+ * a URL there can carry a tracker passkey. A `ServiceError` is rebuilt rather
+ * than edited, so its `detail` and `remedy` agree with its message; any other
+ * error keeps its class and fields.
+ */
+function scrubbedError(err: unknown): unknown {
+    if (err instanceof ServiceError) {
+        const detail = scrubUrls(err.detail);
+        const remedy = err.remedy === undefined ? undefined : scrubUrls(err.remedy);
+        if (detail === err.detail && remedy === err.remedy) return err;
+        const rebuilt = new ServiceError(err.kind, err.service, detail, {
+            ...(remedy === undefined ? {} : { remedy }),
+            ...(err.cause === undefined ? {} : { cause: err.cause }),
+            ...(err.reason === undefined ? {} : { reason: err.reason }),
+            ...(err.status === undefined ? {} : { status: err.status })
+        });
+        // The original's frames, so a log still shows where it was thrown.
+        const stack = restacked(err.stack, err.message, rebuilt.message);
+        if (stack !== undefined) rebuilt.stack = stack;
+        return rebuilt;
+    }
+    if (err instanceof Error) {
+        const message = scrubUrls(err.message);
+        if (message === err.message) return err;
+        const stack = restacked(err.stack, err.message, message);
+        // The thrown object itself is changed, on purpose: a copy would lose its class and fields.
+        try {
+            // Defined rather than assigned: a DOMException's `message` is a getter with no setter.
+            Object.defineProperty(err, 'message', { value: message, writable: true, configurable: true });
+            if (stack !== undefined) Object.defineProperty(err, 'stack', { value: stack, writable: true, configurable: true });
+            return err;
+        } catch {
+            // A frozen error: nothing on it can change, so the caller gets a copy
+            // of its text and the original stays the cause, for the logs.
+            return new Error(message, { cause: err });
+        }
+    }
+    return typeof err === 'string' ? scrubUrls(err) : err;
 }
 
 /**
@@ -328,91 +500,124 @@ export function registerWriteTool<
             inputSchema: writeInput(spec.inputSchema),
             outputSchema: WriteOutputSchema
         },
-        async (raw: Record<string, unknown>) => {
-            const { dry_run: dryRun, confirm: presented, ...rest } = raw as {
-                dry_run: boolean;
-                confirm?: string;
-            };
-            const args = rest as z.infer<Schema>;
-
-            // Resolved from the arguments alone, before anything else runs, so
-            // the service whose permissions are checked is the service the
-            // audit names and the token binds to. Deriving it later, from the
-            // plan, say, would let the three disagree.
-            const tier = typeof spec.tier === 'function' ? spec.tier(args) : spec.tier;
-            // A refusal of a live call, and one row for it. A call the caller's
-            // own credential could never make is rate-limited per caller and
-            // tool (`refusedAboveCeiling`): a row each would let a read token
-            // grow the permanent audit table as fast as it can ask.
-            const deny = (named: string, target: string, detail: string): void => {
-                const record = { tool: spec.name, service: named, operation: spec.operation, tier, target, args: {}, caller };
-                if (permissions.permits?.(tier, named) === false) {
-                    audit.refusedAboveCeiling(record, detail);
-                    return;
-                }
-                audit.settle(audit.begin(record), 'denied', detail);
-            };
-            // An argument the plan or router refused, or a title it could not
-            // find. A dry run records nothing for it, whichever refused it.
-            const refused = (named: string, err: unknown): void => {
-                if (dryRun) return;
-                deny(named, rawTarget(args), err instanceof Error ? err.message : String(err));
-            };
-            let service: string;
-            let adapter: Adapter & ServiceAdapter;
-            if (spec.target !== undefined) {
-                const { service: type, instance } = args as { service: ServiceId; instance?: string };
-                try {
-                    adapter = resolveTarget(spec.target.adapters, spec.target.to, type, instance);
-                } catch (err) {
-                    // Refused before anything else ran, and recorded like any other refusal.
-                    refused(type, err);
-                    throw err;
-                }
-                service = adapter.id;
-            } else {
-                try {
-                    service = typeof spec.service === 'function' ? spec.service(args) : spec.service;
-                } catch (err) {
-                    // A router resolves the instance, so its refusal is the
-                    // `target` refusal above by another route.
-                    refused(String((args as { service?: unknown }).service ?? ''), err);
-                    throw err;
-                }
-                adapter = undefined as unknown as Adapter & ServiceAdapter;
+        // Every refusal and failure leaves through here, so one scrub covers all of them.
+        async (raw: Record<string, unknown>, ctx?: unknown) => {
+            try {
+                return await handle(raw, (ctx as { mcpReq?: { signal?: AbortSignal } } | undefined)?.mcpReq?.signal);
+            } catch (err) {
+                throw scrubbedError(err);
             }
+        }
+    );
 
-            // A refusal costs no upstream read, so it names the argument as
-            // given rather than the resolved title. A dry run still resolves
-            // the plan, because that is how "what would I need to enable?"
-            // gets answered.
-            const verdict = checkPermission(permissions, service, tier);
-            const permission: WriteToolResult['permission'] = verdict.allowed
-                ? { allowed: true }
-                : { allowed: false, reason: verdict.reason, remedy: verdict.remedy };
-            // A preview from a credential whose tier refuses this write writes no
-            // audit row. It changes nothing and the token can never apply it, so
-            // a row per call would only let a read token grow the permanent
-            // audit table as fast as it can ask.
-            const quiet = permissions.permits?.(tier, service) === false;
+    async function handle(raw: Record<string, unknown>, signal: AbortSignal | undefined) {
+        const { dry_run: dryRun, confirm: presented, ...rest } = raw as {
+            dry_run: boolean;
+            confirm?: string;
+        };
+        const args = rest as z.infer<Schema>;
 
-            if (!verdict.allowed && !dryRun) {
-                const given = rawTarget(args);
-                deny(service, given, verdict.reason);
-                throw new ServiceError(
-                    'PermissionDenied',
-                    service,
-                    `${verdict.reason} (${tier} write ${spec.operation} on ${given === '' ? service : `${service}:${given}`})`,
-                    { remedy: verdict.remedy }
-                );
+        // Resolved from the arguments alone, before anything else runs, so
+        // the service whose permissions are checked is the service the
+        // audit names and the token binds to. Deriving it later, from the
+        // plan, say, would let the three disagree.
+        const tier = typeof spec.tier === 'function' ? spec.tier(args) : spec.tier;
+        // A refusal of a live call, and one row for it. A call the caller's
+        // own credential could never make is rate-limited per caller and
+        // tool (`refusedAboveCeiling`): a row each would let a read token
+        // grow the permanent audit table as fast as it can ask.
+        const deny = (named: string, target: string, detail: string): void => {
+            const record = { tool: spec.name, service: named, operation: spec.operation, tier, target, args: {}, caller };
+            if (permissions.permits?.(tier, named) === false) {
+                audit.refusedAboveCeiling(record, detail);
+                return;
             }
+            audit.settle(audit.begin(record), 'denied', detail);
+        };
+        // An argument the plan or router refused, or a title it could not
+        // find. A dry run records nothing for it, whichever refused it.
+        const refused = (named: string, err: unknown): void => {
+            if (dryRun) return;
+            deny(named, rawTarget(args), err instanceof Error ? err.message : String(err));
+        };
+        let service: string;
+        let adapter: Adapter & ServiceAdapter;
+        if (spec.target !== undefined) {
+            const { service: type, instance } = args as { service: ServiceId; instance?: string };
+            try {
+                adapter = resolveTarget(spec.target.adapters, spec.target.to, type, instance);
+            } catch (err) {
+                // Refused before anything else ran, and recorded like any other refusal.
+                refused(type, err);
+                throw err;
+            }
+            service = adapter.id;
+        } else {
+            try {
+                service = typeof spec.service === 'function' ? spec.service(args) : spec.service;
+            } catch (err) {
+                // A router resolves the instance, so its refusal is the
+                // `target` refusal above by another route.
+                refused(String((args as { service?: unknown }).service ?? ''), err);
+                throw err;
+            }
+            adapter = undefined as unknown as Adapter & ServiceAdapter;
+        }
 
+        // A refusal costs no upstream read, so it names the argument as
+        // given rather than the resolved title. A dry run still resolves
+        // the plan, because that is how "what would I need to enable?"
+        // gets answered.
+        const verdict = checkPermission(permissions, service, tier);
+        const permission: WriteToolResult['permission'] = verdict.allowed
+            ? { allowed: true }
+            : { allowed: false, reason: verdict.reason, remedy: verdict.remedy };
+        // A preview from a credential whose tier refuses this write writes no
+        // audit row. It changes nothing and the token can never apply it, so
+        // a row per call would only let a read token grow the permanent
+        // audit table as fast as it can ask.
+        const quiet = permissions.permits?.(tier, service) === false;
+
+        if (!verdict.allowed && !dryRun) {
+            const given = rawTarget(args);
+            deny(service, given, verdict.reason);
+            throw new ServiceError(
+                'PermissionDenied',
+                service,
+                `${verdict.reason} (${tier} write ${spec.operation} on ${given === '' ? service : `${service}:${given}`})`,
+                { remedy: verdict.remedy }
+            );
+        }
+
+        // A reply, or one still to finish once the lane is released.
+        /**
+         * A confirm refused before its token was checked, recorded as denied.
+         * Not a ServiceError: no kind fits, since the service was never asked to write.
+         */
+        const unspent = (target: string, detail: string, when = ''): Error => {
+            // The audit cuts every target down too; this one is cut here as well so the
+            // row names the host whichever way it reaches the audit. A refusal before
+            // the plan has only the arguments, so it records `rawTarget` instead.
+            deny(service, scrubUrls(target), detail);
+            return new Error(
+                `Not applied: ${detail}. This request did not use its confirmation token: call ${spec.name} again with the same arguments and token${when}. ` +
+                    'The call plans again against the state then: if another write has made the change, it can find nothing to do or nothing left to act on; if another request used the same token, it is refused as already used; otherwise it applies, or comes back as a fresh preview with a new token if this one has expired or no longer matches what the plan finds.'
+            );
+        };
+
+        const proceed = async (): Promise<ToolReply | (() => Promise<ToolReply>)> => {
             let plan: WritePlan<Bound>;
             try {
                 plan = await spec.plan(args, adapter);
             } catch (err) {
                 refused(service, err);
                 throw err;
+            }
+            // The plan's reads take time, and a confirm whose caller has gone
+            // meanwhile is refused here, before any outcome is recorded, so its
+            // token is not spent on a write nobody will hear about.
+            if (presented !== undefined && !dryRun && signal?.aborted === true) {
+                throw unspent(plan.target, 'the request was cancelled while this write was being planned');
             }
 
             const record = {
@@ -432,7 +637,8 @@ export function registerWriteTool<
                 service,
                 operation: spec.operation,
                 tier,
-                target: plan.target,
+                // Cut down in every reply alike, so a receipt names what its preview named.
+                target: scrubUrls(plan.target),
                 summary: plan.summary,
                 effects: plan.effects,
                 noop: plan.noop === true,
@@ -440,7 +646,7 @@ export function registerWriteTool<
                 ...extra
             });
 
-            const respond = (result: WriteToolResult, text: string) => ({
+            const respond = (result: WriteToolResult, text: string): ToolReply => ({
                 content: [{ type: 'text' as const, text }],
                 structuredContent: result
             });
@@ -479,15 +685,20 @@ export function registerWriteTool<
                 const next = plan.next ?? [];
                 if (id !== undefined) audit.settle(id, 'dry_run', next.length > 0 ? 'no-op: listed only' : 'no-op: already in the requested state');
                 if (next.length > 0) {
+                    // The listing is scrubbed and the calls added after, as on an
+                    // applied write, so the text and the field carry the same calls.
+                    const listed = scrubbedReply(
+                        respond(preview(id === undefined ? {} : { audit_id: id }), `${plan.summary}\n\n${plan.effects.map(e => `- ${e}`).join('\n')}`)
+                    );
                     return respond(
-                        preview({ ...(id === undefined ? {} : { audit_id: id }), next_steps: next }),
-                        `${plan.summary}\n\n${plan.effects.map(e => `- ${e}`).join('\n')}\n\n${next.map(nextStepLine).join('\n')}\n\nNo change was made and no confirmation is needed.`
+                        { ...listed.structuredContent, next_steps: next },
+                        `${listed.content[0]?.text ?? ''}\n\n${next.map(nextStepLine).join('\n')}\n\nNo change was made and no confirmation is needed.`
                     );
                 }
-                return respond(
+                return scrubbedReply(respond(
                     preview(id === undefined ? {} : { audit_id: id }),
                     `Nothing to do: ${plan.summary} No change was made and no confirmation is needed.`
-                );
+                ));
             }
 
             // --- 2. dry_run: terminal preview, never gated ------------------------
@@ -543,29 +754,33 @@ export function registerWriteTool<
                     const id = audit.begin(record);
                     audit.settle(id, 'unconfirmed', `confirmation ${check.failure}`);
                     const fresh = confirm.issue(intent);
-                    const advice = await advise();
-                    return respond(
-                        preview({
-                            audit_id: id,
-                            ...advice.fields,
-                            confirm_error: CONFIRM_REASON[check.failure],
-                            confirm_token: fresh
-                        }),
-                        // `check.remedy` says to call again *without* `confirm`, which is
-                        // right when no token comes back and wrong here, because one does,
-                        // so both fields carry the reason alone (#312). The text gives the
-                        // single next action, worded as the plain preview words it. The
-                        // token goes last in both: a reader clipping the trailing word or
-                        // the final backticked span gets it, and prose after it would not.
-                        // The fresh preview is in the text too, as in a plain preview: a
-                        // client that drops structuredContent (#234) would otherwise apply
-                        // the new token without seeing what changed since the old one.
-                        `Not applied: the confirmation token was rejected. ${CONFIRM_REASON[check.failure]} ${plan.summary}\n\n` +
-                            (advice.block === '' ? '' : `${advice.block}\n\n`) +
-                            (plan.effects.length === 0 ? '' : `${plan.effects.map(e => `- ${e}`).join('\n')}\n\n`) +
-                            `Do not resend the rejected one. To apply this, call ${spec.name} again with ` +
-                            `the same arguments plus \`confirm\` set to \`${fresh}\`.`
-                    );
+                    // Finished outside the lane: the cross-checks read other services,
+                    // and nothing from here on writes, so no confirm should wait for them.
+                    return async () => {
+                        const advice = await advise();
+                        return scrubbedReply(respond(
+                            preview({
+                                audit_id: id,
+                                ...advice.fields,
+                                confirm_error: CONFIRM_REASON[check.failure],
+                                confirm_token: fresh
+                            }),
+                            // `check.remedy` says to call again *without* `confirm`, which is
+                            // right when no token comes back and wrong here, because one does,
+                            // so both fields carry the reason alone (#312). The text gives the
+                            // single next action, worded as the plain preview words it. The
+                            // token goes last in both: a reader clipping the trailing word or
+                            // the final backticked span gets it, and prose after it would not.
+                            // The fresh preview is in the text too, as in a plain preview: a
+                            // client that drops structuredContent (#234) would otherwise apply
+                            // the new token without seeing what changed since the old one.
+                            `Not applied: the confirmation token was rejected. ${CONFIRM_REASON[check.failure]} ${plan.summary}\n\n` +
+                                (advice.block === '' ? '' : `${advice.block}\n\n`) +
+                                (plan.effects.length === 0 ? '' : `${plan.effects.map(e => `- ${e}`).join('\n')}\n\n`) +
+                                `Do not resend the rejected one. To apply this, call ${spec.name} again with ` +
+                                `the same arguments plus \`confirm\` set to \`${fresh}\`.`
+                        ));
+                    };
                 }
             } else {
                 const id = audit.begin(record);
@@ -615,18 +830,40 @@ export function registerWriteTool<
             // `summary` too, not only in the text.
             const said = spec.applied?.(outcome, plan);
             const landed = spec.landed?.(outcome) ?? true;
-            return respond(
-                {
-                    ...preview({ audit_id: id }),
-                    applied: landed,
-                    ...(landed ? {} : { noop: true }),
-                    ...(said === undefined ? {} : { summary: said }),
-                    ...(outcome === undefined ? {} : { result: outcome }),
-                    ...(nextSteps.length === 0 ? {} : { next_steps: nextSteps })
-                },
-                // In the text as well as the field (#234).
-                (said ?? `Applied. ${plan.summary}`) + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
+            const reply = scrubbedReply(
+                respond(
+                    {
+                        ...preview({ audit_id: id }),
+                        applied: landed,
+                        ...(landed ? {} : { noop: true }),
+                        ...(said === undefined ? {} : { summary: said }),
+                        ...(outcome === undefined ? {} : { result: outcome })
+                    },
+                    said ?? `Applied. ${plan.summary}`
+                )
             );
-        }
-    );
+            if (nextSteps.length === 0) return reply;
+            // Added after the scrub, so the text and the field carry the same calls (#234).
+            return respond(
+                { ...reply.structuredContent, next_steps: nextSteps },
+                (reply.content[0]?.text ?? '') + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
+            );
+        };
+
+        const finish = async (reply: ToolReply | (() => Promise<ToolReply>)): Promise<ToolReply> => (typeof reply === 'function' ? reply() : reply);
+        if (presented === undefined || dryRun) return finish(await proceed());
+        if (signal?.aborted === true) throw unspent(rawTarget(args), 'the request was cancelled before this write started');
+        // A confirm call holds its instance's lane from the plan's reads to the
+        // apply, so the state its token is checked against is still the state
+        // it writes over. Everything else runs at once.
+        const turn = await inLane(service, signal, proceed);
+        if (turn.ran) return finish(turn.value);
+        throw unspent(
+            rawTarget(args),
+            turn.why === 'busy'
+                ? `another confirmed write to ${service} was still running after ${LANE_WAIT_MS / 1000} seconds`
+                : `the request was cancelled while it waited for another confirmed write to ${service} to finish`,
+            ' once that write has finished'
+        );
+    }
 }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { instanceId } from '../config/instances.ts';
 import { DEFAULT_TORRENT_PATHS, type ConfigByService, type ServiceId } from '../config/schema.ts';
 import { qbittorrentSession } from '../core/auth.ts';
@@ -273,12 +274,38 @@ const privateOf = (info: RawTorrent, props: RawProperties | undefined): boolean 
     return props.private !== undefined ? props.private : (props.is_private ?? null);
 };
 
-const trackerRows = (rows: readonly RawTracker[]): TorrentTrackerRow[] =>
-    rows.flatMap(row => {
-        const host = trackerHost(row.url ?? '');
+const trackerRows = (rows: readonly unknown[]): TorrentTrackerRow[] =>
+    rows.flatMap(entry => {
+        if (typeof entry !== 'object' || entry === null) return [];
+        const row = entry as RawTracker;
+        if (typeof row.url !== 'string') return [];
+        const host = trackerHost(row.url);
         if (host === undefined) return [];
         return [{ host, status: row.updating === true ? 'updating' : (TRACKER_STATUS[row.status ?? -1] ?? 'unknown') }];
     });
+
+/** The rows qBittorrent lists for DHT, PeX and LSD, which are not trackers. */
+const PSEUDO_TRACKER = /^\*\* \[(?:DHT|PeX|LSD)\] \*\*$/;
+
+/**
+ * SHA-256 of the announce URLs, sorted so a reorder alone does not count as a
+ * change. The whole URL, so a passkey swapped on the same host changes it too;
+ * the URLs themselves never leave this adapter. `null` unless every row is a
+ * pseudo-tracker or a tracker URL: a row this cannot read could be a tracker
+ * the preview never named, so it proves nothing about where an announce goes.
+ */
+function trackerDigest(rows: unknown): string | null {
+    if (!Array.isArray(rows)) return null;
+    const urls: string[] = [];
+    for (const row of rows as unknown[]) {
+        const url = typeof row === 'object' && row !== null ? (row as RawTracker).url : undefined;
+        if (typeof url !== 'string') return null;
+        if (PSEUDO_TRACKER.test(url)) continue;
+        if (trackerHost(url) === undefined) return null;
+        urls.push(url);
+    }
+    return createHash('sha256').update(JSON.stringify(urls.sort())).digest('hex');
+}
 
 /** Only the active tracker: torrents/info carries one. Cleanuparr checks every tracker. */
 function torrentOf(t: RawTorrent & { hash: string }): { torrent: TorrentFacts } {
@@ -730,7 +757,8 @@ export class QbittorrentAdapter
                 sizeBytes: f.size ?? 0,
                 progress: f.progress ?? 0
             })),
-            trackers: trackerRows(Array.isArray(trackers) ? trackers : [])
+            trackers: trackerRows(Array.isArray(trackers) ? trackers : []),
+            trackerDigest: trackerDigest(trackers)
         };
     }
 

@@ -154,6 +154,56 @@ describe('grab_release', () => {
         const applied = await h.call({ ...args, confirm: preview.structuredContent.confirm_token });
         expect(applied.structuredContent.applied).toBe(true);
         expect(h.grabbed).toEqual([{ guid, indexerId: 3 }]);
+        // A URL guid is named by its digest, the same in the preview and the receipt (#6).
+        expect(preview.structuredContent.target).toMatch(/^sonarr:guid-[0-9a-f]{16}$/);
+        expect(applied.structuredContent.target).toBe(preview.structuredContent.target);
+        expect(applied.structuredContent.result).toEqual({ grabbed: preview.structuredContent.target });
+    });
+
+    it('scrubs a rejection reason that quotes the release guid in a first preview', async () => {
+        const key = '0123456789abcdef0123456789abcdef';
+        const guid = `https://indexer.example/get?apikey=${key}`;
+        const row = release({ guid, rejected: true, rejections: [`Release ${guid} is blocklisted`] });
+        const h = harness({ releases: [row] });
+        const preview = await h.call({ service: 'radarr', id: '1', release_title: row.title, indexer_id: 3 });
+        expect(JSON.stringify(preview)).not.toContain(key);
+        expect(preview.structuredContent.effects.join(' ')).toContain('Release https://indexer.example/... is blocklisted');
+    });
+
+    it('names a URL guid the same way in a replacement preview and the receipt for it, and never shows its key', async () => {
+        const key = '0123456789abcdef0123456789abcdef';
+        const rows = [release({ guid: `https://indexer.example/get/1?apikey=${key}` })];
+        const h = harness({ releases: rows });
+        const args = { service: 'radarr', id: '1', release_title: rows[0]?.title, indexer_id: 3 };
+        const first = await h.call(args);
+        // The title now resolves to a different release on the indexer.
+        rows[0] = release({ guid: `https://indexer.example/get/2?apikey=${key}` });
+        const replaced = await h.call({ ...args, confirm: first.structuredContent.confirm_token });
+        expect(replaced.structuredContent.confirm_error).toBeDefined();
+        expect(replaced.structuredContent.target).not.toBe(first.structuredContent.target);
+        const applied = await h.call({ ...args, confirm: replaced.structuredContent.confirm_token });
+        expect(applied.structuredContent.applied).toBe(true);
+        expect(applied.structuredContent.target).toBe(replaced.structuredContent.target);
+        expect(h.grabbed).toEqual([{ guid: `https://indexer.example/get/2?apikey=${key}`, indexerId: 3 }]);
+        const { confirm_token: _a, ...firstShown } = first.structuredContent;
+        const { confirm_token: _b, ...replacedShown } = replaced.structuredContent;
+        expect(JSON.stringify([first.content, firstShown, replaced.content, replacedShown, applied, h.audit.recent()])).not.toContain(key);
+    });
+
+    it.each([
+        ['both URLs', 'https://indexer.example/release/123', 'https://indexer.example/release/456'],
+        ['one a URL', 'https://indexer.example/release/123', 'plain-guid-456']
+    ])('points to get_releases, listing only indexers, when releases sharing a name have guids that are %s', async (_why, a, b) => {
+        const rows = [release({ guid: a }), release({ guid: b })];
+        const h = harness({ releases: rows });
+        const message = await h.call({ service: 'radarr', id: '1', release_title: rows[0]?.title }).then(
+            () => '',
+            (err: unknown) => (err as Error).message
+        );
+        expect(message).toMatch(/take the exact `guid` and `indexer_id` from get_releases with `detail: "full"`/);
+        expect(message).toContain('has indexer_id 3');
+        expect(message).not.toContain('indexer.example');
+        expect(message).not.toContain('plain-guid');
     });
 
     it('narrows the confirming re-search to the episode or season it was given', async () => {

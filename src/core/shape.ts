@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { scrubUrls } from './pastedUrl.ts';
 
 const DETAIL_LEVELS = ['minimal', 'standard', 'full'] as const;
 export type DetailLevel = (typeof DETAIL_LEVELS)[number];
@@ -90,7 +91,8 @@ export function toolInput<T extends z.ZodRawShape>(
     return z.strictObject(shape, {
         error: issue =>
             issue.code === 'unrecognized_keys'
-                ? `Unknown argument(s): ${issue.keys.join(', ')}. They were refused rather than ignored, because a dropped argument is indistinguishable from one that worked. This tool accepts: ${accepted}.`
+                ? // Scrubbed: a tracker URL pasted as a name would otherwise come back with its passkey (#6).
+                  `Unknown argument(s): ${scrubUrls(issue.keys.join(', '))}. They were refused rather than ignored, because a dropped argument is indistinguishable from one that worked. This tool accepts: ${accepted}.`
                 : undefined
     });
 }

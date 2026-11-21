@@ -774,12 +774,18 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const details = await client.getTorrentDetails(id);
             const target = `${client.id}:${details.id}`;
             if (details.status === 'stopped') return { target, summary: `${details.title} is stopped, so it has nothing to announce.`, effects: [], noop: true };
+            if (details.trackerDigest === null) {
+                throw new ServiceError('UpstreamError', client.id, 'the tracker list qBittorrent gave for this torrent could not be read, so nobody can say where a reannounce would go', {
+                    remedy: 'Check that qBittorrent answers normally and that none of this torrent\'s tracker URLs is malformed (fix or remove one that is, in qBittorrent), then preview the reannounce again.'
+                });
+            }
             const hosts = details.trackers.map(t => `${t.host} (${t.status})`).join(', ');
             return {
                 target,
                 summary: `Reannounce ${details.title} on ${client.id}.`,
                 effects: [hosts === '' ? 'It has no tracker to announce to, so only DHT hears about it.' : `Contacts: ${hosts}.`],
-                args: { id: details.id }
+                // A digest of the trackers the preview named, so a token cannot announce to a list the caller never saw.
+                args: { id: details.id, trackers_sha256: details.trackerDigest }
             };
         },
 

@@ -911,6 +911,19 @@ describe('an argument this server does not have is refused, not ignored', () => 
     });
 
     /**
+     * The SDK refuses an unknown argument before any handler runs, so the scrub
+     * the write harness gives its own errors (#6) never sees this text. A
+     * tracker URL pasted as an argument name keeps only its scheme and host.
+     */
+    it('cuts a URL given as an argument name down to scheme and host', async () => {
+        const passkey = '0123456789abcdef0123456789abcdef';
+        const text = (await callTool('set_monitoring', { [`https://tracker.example.org/${passkey}/announce`]: 1 })).content?.[0]?.text ?? '';
+
+        expect(text).toContain('Unknown argument(s): https://tracker.example.org/...');
+        expect(text).not.toContain(passkey);
+    });
+
+    /**
      * The guard for tool number twenty. Strictness that has to be remembered
      * per tool is strictness that will be forgotten, and the failure mode is
      * silent — so this asserts the property across the whole surface rather
@@ -1037,6 +1050,73 @@ describe('every tool declares the shape it answers in', () => {
         expect(result.isError).toBeFalsy();
         expect(result.structuredContent).toMatchObject({ applied: false, tool: 'trigger_scan', tier: 'safe' });
         expect(result.structuredContent?.['confirm_token']).toEqual(expect.any(String));
+    });
+
+    /**
+     * The lane a confirmed write waits in (#7) listens to the request's own
+     * abort signal. Over HTTP, that is the caller dropping the request: this
+     * runs through the real transport to show a confirm aborted while it waits
+     * never writes, and leaves its token for a retry.
+     */
+    it('never applies a queued confirm whose HTTP request was aborted, and keeps its token', async () => {
+        let scans = 0;
+        let release = (): void => undefined;
+        const gate = new Promise<void>(resolve => {
+            release = resolve;
+        });
+        let entered = (): void => undefined;
+        const holding = new Promise<void>(resolve => {
+            entered = resolve;
+        });
+        const held = {
+            ...(radarr() as unknown as Record<string, unknown>),
+            startLibraryScan: async () => {
+                scans += 1;
+                if (scans === 1) {
+                    entered();
+                    await gate;
+                }
+                return { commandId: 42 };
+            }
+        } as unknown as ServiceAdapter;
+        // The audit the writes go through, read below to show the second request reached the queue.
+        const trail = audit();
+        const shared = buildApp({ runtime: Runtime.fromConfig(writable, trail, { adapters: [held] }), audit: trail, logs: LogStore.ephemeral() });
+        const send = (args: Record<string, unknown>, signal?: AbortSignal) =>
+            shared.request('http://localhost:6060/mcp', {
+                ...rpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'trigger_scan', arguments: args } }, { Authorization: `Bearer ${TOKEN}` }),
+                ...(signal === undefined ? {} : { signal })
+            });
+        const result = async (res: Response) => ((await rpcPayload(res)).result ?? {}) as { structuredContent?: Record<string, unknown> };
+        const token = async () => (await result(await send({ service: 'radarr' }))).structuredContent?.['confirm_token'];
+        const settle = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms));
+        const first = await token();
+        // A token is issued per millisecond, so the second preview waits one out to get its own.
+        await settle(2);
+        const second = await token();
+        expect(second).not.toBe(first);
+
+        try {
+            const applying = send({ service: 'radarr', confirm: first });
+            await holding;
+            const abort = new AbortController();
+            const waiting = Promise.resolve(send({ service: 'radarr', confirm: second }, abort.signal)).catch((err: unknown) => err);
+            await settle();
+            abort.abort();
+            await waiting;
+            await settle();
+            // Refused while it waited behind the first: the wording a request cancelled before it queued never gets.
+            const rows = trail.recent() as { outcome: string; detail: string | null }[];
+            expect(rows.some(row => row.outcome === 'denied' && (row.detail ?? '').includes('cancelled while it waited'))).toBe(true);
+            release();
+            expect((await result(await applying)).structuredContent).toMatchObject({ applied: true });
+            await settle();
+            expect(scans).toBe(1);
+        } finally {
+            release();
+        }
+        expect((await result(await send({ service: 'radarr', confirm: second }))).structuredContent).toMatchObject({ applied: true });
+        expect(scans).toBe(2);
     });
 });
 
