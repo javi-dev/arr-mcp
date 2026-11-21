@@ -77,6 +77,7 @@ import {
     type EpisodeReassignment,
     type EpisodeRemapCapable,
     type EpisodeRemapOutcome,
+    type SentWrite,
     type EpisodeRemapPlan,
     type ManualImportCapable,
     type MediaUpdateCapable,
@@ -324,7 +325,7 @@ export class SonarrAdapter
         return planArrEpisodeRemap(this.http, this.id, seriesId, reassignments);
     }
 
-    async runEpisodeRemap(seriesId: string, reassignments: EpisodeReassignment[]): Promise<EpisodeRemapOutcome> {
+    async runEpisodeRemap(seriesId: string, reassignments: EpisodeReassignment[]): Promise<SentWrite<EpisodeRemapOutcome>> {
         return runArrEpisodeRemap(this.http, this.id, seriesId, reassignments);
     }
 

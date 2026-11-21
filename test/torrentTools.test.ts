@@ -103,6 +103,39 @@ describe('recheck_torrents', () => {
         expect(applied.structuredContent.result).toMatchObject({ resumed: [HASH] });
     });
 
+    /** The recheck is the write; the watch after it waits on qBittorrent alone (#12). */
+    it('lets another confirmed write to the client apply while it watches, and starts what came back whole', async () => {
+        const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
+        const cfg = config();
+        const { server, call } = toolServer();
+        let resume = (): void => undefined;
+        const watching = new Promise<void>(resolve => {
+            resume = resolve;
+        });
+        let sleeping = false;
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, qb.impl)], {
+            // The watch's first pause holds until the other write has gone through.
+            sleep: async () => {
+                if (sleeping) return;
+                sleeping = true;
+                await watching;
+            }
+        });
+        try {
+            const recheck = await call('recheck_torrents', { ids: [HASH], resume_if_complete: true });
+            const move = await call('set_torrent_category', { id: HASH, category: 'tv' });
+            const rechecking = call('recheck_torrents', { ids: [HASH], resume_if_complete: true, confirm: recheck.structuredContent.confirm_token });
+            await vi.waitFor(() => expect(sleeping).toBe(true));
+            const moved = await call('set_torrent_category', { id: HASH, category: 'tv', confirm: move.structuredContent.confirm_token });
+            expect(moved.structuredContent.applied).toBe(true);
+            resume();
+            expect((await rechecking).structuredContent.result).toMatchObject({ resumed: [HASH] });
+            expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck', '/torrents/setCategory', '/torrents/start']);
+        } finally {
+            resume();
+        }
+    });
+
     it('sees a check that only shows on the second read, as qBittorrent refreshes its state late', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['stoppedUP', 'checkingUP', 'stoppedUP'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });

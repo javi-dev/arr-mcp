@@ -3,7 +3,7 @@ import { fenceText } from '../core/fence.ts';
 import type { ServiceHttp } from '../core/http.ts';
 import { logger } from '../core/logger.ts';
 import { awaitArrCommand, postArrCommand, renamedCount } from './arrCommands.ts';
-import type { HealthCheck } from './types.ts';
+import type { HealthCheck, SentWrite } from './types.ts';
 
 /**
  * Renaming a set of files whose names are each other's.
@@ -268,22 +268,26 @@ async function restoreFormat(http: ServiceHttp, service: string, key: keyof RawN
     }
 }
 
-/** One `RenameFiles` over the set. A command that ended in anything but
- *  `completed` renamed nothing it can vouch for, so it is a failure here
- *  whatever its message says. */
+/** One `RenameFiles` over the set, sent; `wait` waits on it. A command that
+ *  ended in anything but `completed` renamed nothing it can vouch for, so it
+ *  is a failure there whatever its message says. */
 const renamePass = async (
     http: ServiceHttp,
     service: string,
     seriesId: number,
     fileIds: number[],
     remedy: string
-): Promise<number | undefined> => {
+): Promise<SentWrite<number | undefined>> => {
     const queued = await postArrCommand(http, service, { name: 'RenameFiles', seriesId, files: fileIds });
-    const settled = await awaitArrCommand(http, service, queued.commandId);
-    if (settled.status !== 'completed') {
-        throw new ServiceError('UpstreamError', service, `${service}'s RenameFiles command ended ${settled.status}`, { remedy });
-    }
-    return renamedCount(settled.message);
+    return {
+        wait: async () => {
+            const settled = await awaitArrCommand(http, service, queued.commandId);
+            if (settled.status !== 'completed') {
+                throw new ServiceError('UpstreamError', service, `${service}'s RenameFiles command ended ${settled.status}`, { remedy });
+            }
+            return renamedCount(settled.message);
+        }
+    };
 };
 
 type TwoPassResult = {
@@ -304,6 +308,9 @@ type TwoPassResult = {
  * The format is put back in a `finally`, and *also* recovered by
  * `readFormat` on the next run, because a `finally` does not run when the
  * process is killed.
+ *
+ * Returns once the second pass is sent: that is the last change, and `wait`
+ * waits on it and checks what it renamed.
  */
 export async function renameThroughTemporaryFormat(
     http: ServiceHttp,
@@ -311,7 +318,7 @@ export async function renameThroughTemporaryFormat(
     seriesId: number,
     seriesType: string | undefined,
     fileIds: number[]
-): Promise<TwoPassResult> {
+): Promise<SentWrite<TwoPassResult>> {
     await assertQueueClear(http, service);
 
     const key = namingFormatKey(seriesType);
@@ -320,13 +327,16 @@ export async function renameThroughTemporaryFormat(
 
     try {
         await setFormat(http, key, `${format}${RENAME_MARKER}`);
-        const first = await renamePass(
-            http,
-            service,
-            seriesId,
-            fileIds,
-            `The naming format has been put back. The reassignment is applied and correct; the filenames are not. Check ${service}'s log, then run trigger_scan with action "rename" on this series.`
-        );
+        // Waited on here, with the format still changed: the second pass needs it done.
+        const first = await (
+            await renamePass(
+                http,
+                service,
+                seriesId,
+                fileIds,
+                `The naming format has been put back. The reassignment is applied and correct; the filenames are not. Check ${service}'s log, then run trigger_scan with action "rename" on this series.`
+            )
+        ).wait();
         if (first !== undefined && first < fileIds.length) {
             throw new ServiceError(
                 'UpstreamError',
@@ -343,7 +353,7 @@ export async function renameThroughTemporaryFormat(
 
     // Second pass under the real format: every destination is free now,
     // because the first pass moved every one of these files off it.
-    const second = await renamePass(
+    const secondPass = await renamePass(
         http,
         service,
         seriesId,
@@ -351,18 +361,24 @@ export async function renameThroughTemporaryFormat(
         `The naming format is back to what it was, but these files may still carry "${RENAME_MARKER.trim()}". Check ${service}'s log, then run trigger_scan with action "rename" on this series to finish it.`
     );
 
-    // The command's own count is not trusted alone: a build that stops sending
-    // the message reports undefined, and two undefineds would otherwise read as
-    // every file renamed. Sonarr's own list of what still wants a different
-    // name is the ground truth, and is read whenever it can be.
-    const short = (await stillMisnamed(http, seriesId, fileIds)) ?? (second === undefined ? 0 : fileIds.length - second);
-    const renamed = fileIds.length - short;
+    return {
+        wait: async () => {
+            const second = await secondPass.wait();
 
-    if (short > 0) {
-        throw new ServiceError('UpstreamError', service, `${service} left ${short} file(s) under a temporary name`, {
-            remedy: `The naming format is back to what it was, and every file is still on disk, but ${short} of them is not named as it should be, and may still carry "${RENAME_MARKER.trim()}". Run trigger_scan with action "rename" on this series to finish it.`
-        });
-    }
+            // The command's own count is not trusted alone: a build that stops sending
+            // the message reports undefined, and two undefineds would otherwise read as
+            // every file renamed. Sonarr's own list of what still wants a different
+            // name is the ground truth, and is read whenever it can be.
+            const short = (await stillMisnamed(http, seriesId, fileIds)) ?? (second === undefined ? 0 : fileIds.length - second);
+            const renamed = fileIds.length - short;
 
-    return { renamed, caughtInWindow: await importsDuring(http, service, importedBefore) };
+            if (short > 0) {
+                throw new ServiceError('UpstreamError', service, `${service} left ${short} file(s) under a temporary name`, {
+                    remedy: `The naming format is back to what it was, and every file is still on disk, but ${short} of them is not named as it should be, and may still carry "${RENAME_MARKER.trim()}". Run trigger_scan with action "rename" on this series to finish it.`
+                });
+            }
+
+            return { renamed, caughtInWindow: await importsDuring(http, service, importedBefore) };
+        }
+    };
 }

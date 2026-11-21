@@ -15,6 +15,7 @@ import {
     type ImportMapping,
     type ManualImportCapable,
     type PostProcessCapable,
+    type SentWrite,
     type ServiceAdapter
 } from '../services/types.ts';
 import { libraryList, resolveBookLibrary } from './bookLibraries.ts';
@@ -356,36 +357,43 @@ async function planImportAction(adapters: readonly ServiceAdapter[], args: Impor
     };
 }
 
-async function applyImportAction(adapters: readonly ServiceAdapter[], plan: WritePlan, args: ImportArgs): Promise<string> {
+/** The sentence to report, or for a remap, the rename it sent and still has to wait on. */
+async function applyImportAction(adapters: readonly ServiceAdapter[], plan: WritePlan, args: ImportArgs): Promise<string | SentWrite<string>> {
     const { service, instance, action, id, download_id, reassignments, mapping } = args;
     const resolved = resolveInstance(adapters, service, instance);
     if (hasBookLibraryScan(resolved)) return applyBookdropImport(resolved, plan);
 
     if (action === 'remap' && id !== undefined && reassignments !== undefined) {
         const remapper = findRemapAdapter(adapters, service, instance);
-        const { renamed, blocked, caughtInWindow } = await remapper.runEpisodeRemap(id, reassignments);
+        const sent = await remapper.runEpisodeRemap(id, reassignments);
 
-        // Unlike everything else here, this one has already finished:
-        // the rename needs the ids the reassignment assigns, so it
-        // waits for the first command before sending the second.
-        const done = `${remapper.id} reassigned the files of series ${id} and renamed ${renamed} of them.`;
-        const caught =
-            caughtInWindow === undefined || caughtInWindow.length === 0
-                ? ''
-                : ` ${caughtInWindow.length} file(s) were imported by ${remapper.id} while the temporary naming format was live, so they carry it in their names and need renaming back: ${caughtInWindow.join('; ')}.`;
+        return {
+            wait: async () => {
+                const { renamed, blocked, caughtInWindow } = await sent.wait();
 
-        if (blocked.length === 0) {
-            // The rescan is a `next_steps` entry when there is a server to name it for.
-            const rescan = scannableMediaServers(adapters).length > 0 ? '' : '. Rescan your media server so it picks the new names up';
-            return `${done} The files and the episodes now agree${rescan}.${caught}`;
-        }
+                // Unlike everything else here, this one has already finished:
+                // the rename needs the ids the reassignment assigns, so it
+                // waits for the first command before sending the second.
+                const done = `${remapper.id} reassigned the files of series ${id} and renamed ${renamed} of them.`;
+                const caught =
+                    caughtInWindow === undefined || caughtInWindow.length === 0
+                        ? ''
+                        : ` ${caughtInWindow.length} file(s) were imported by ${remapper.id} while the temporary naming format was live, so they carry it in their names and need renaming back: ${caughtInWindow.join('; ')}.`;
 
-        return (
-            `${done} ${blocked.length} kept the old name, because the name each one wants is still on disk, held by another file: ` +
-            `${blocked.map(b => `${b.path} wants ${b.wants}`).join('; ')}. ` +
-            `The reassignment is correct and complete either way. Only those filenames are behind, and ${remapper.id} plays by the reassignment, not the name. ` +
-            `If the holder is a file this remap also moved, running trigger_scan with action "rename" and id ${id} again finishes it, once per link in the chain.${caught}`
-        );
+                if (blocked.length === 0) {
+                    // The rescan is a `next_steps` entry when there is a server to name it for.
+                    const rescan = scannableMediaServers(adapters).length > 0 ? '' : '. Rescan your media server so it picks the new names up';
+                    return `${done} The files and the episodes now agree${rescan}.${caught}`;
+                }
+
+                return (
+                    `${done} ${blocked.length} kept the old name, because the name each one wants is still on disk, held by another file: ` +
+                    `${blocked.map(b => `${b.path} wants ${b.wants}`).join('; ')}. ` +
+                    `The reassignment is correct and complete either way. Only those filenames are behind, and ${remapper.id} plays by the reassignment, not the name. ` +
+                    `If the holder is a file this remap also moved, running trigger_scan with action "rename" and id ${id} again finishes it, once per link in the chain.${caught}`
+                );
+            }
+        };
     }
 
     if (action === 'postprocess' && download_id !== undefined) {
@@ -514,6 +522,8 @@ export function registerImportDownload(server: McpServer, context: WriteContext,
         plan: args => planImportAction(adapters, args),
         followUps: (_outcome, args) => importFollowUps(adapters, args),
         applied: outcomeText,
-        apply: (plan, args) => applyImportAction(adapters, plan, args)
+        apply: (plan, args) => applyImportAction(adapters, plan, args),
+        // A remap's last rename is waited on once the instance is free again.
+        afterWrite: sent => (typeof sent === 'string' ? Promise.resolve(sent) : (sent as SentWrite<string>).wait())
     });
 }

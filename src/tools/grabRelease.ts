@@ -223,6 +223,11 @@ export function registerGrabRelease(
         operation: 'grab_release',
         tier: 'safe',
         crossCheck: 'acquire',
+        // Not queued behind other writes to the instance, nor holding them up:
+        // the confirm searches the indexers again (often 15 seconds or more),
+        // and a grab only adds one download, of the exact release its token
+        // binds, in a single call (#12).
+        serialised: false,
 
         async plan({ service, instance, id, season, episode, album, guid, indexer_id, release_title, magnet }): Promise<WritePlan> {
             if (magnet !== undefined) {

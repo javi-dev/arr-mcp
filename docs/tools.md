@@ -2690,8 +2690,8 @@ Safe tier: it changes only Profilarr's own store. The arrs pick up whatever
 changed only when Profilarr syncs them on its own schedule, same as any other
 Profilarr-triggered sync.
 
-`apply` waits for Profilarr's job to finish before reporting, so a queued sync
-is never reported as done. Not reversible through arr-mcp; revert in Profilarr
+A confirmed sync waits for Profilarr's job to finish before reporting, so a
+queued sync is never reported as done. Not reversible through arr-mcp; revert in Profilarr
 or git if the pulled change is unwanted.
 
 A finished job that had nothing to pull shows as `outcome: "skipped"`, and the

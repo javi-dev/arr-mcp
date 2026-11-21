@@ -13,7 +13,7 @@ import { INSTANCE_PARAM_DESCRIPTION, resolveInstance } from './resolveInstance.t
 import { NO_OWN_SHARE_RULE, categoryIncompletePath, categorySavePath, removalAtLimit, storageDirectory } from './torrentCategoryRules.ts';
 import { protectionOf } from './torrentDelete.ts';
 import { categoryWatchers } from './watchedCategory.ts';
-import { registerWriteTool, type WriteContext, type WritePlan } from './write.ts';
+import { registerWriteTool, type AfterWrite, type WriteContext, type WritePlan } from './write.ts';
 
 /**
  * The routine qBittorrent chores, so nobody needs a shell on the host for them.
@@ -97,8 +97,11 @@ type RecheckOutcome = { rechecking: string[]; resumed?: string[]; incomplete?: s
  * begins, `complete` is still the answer from the last one. qBittorrent checks
  * one torrent at a time, so a torrent showing no check may simply be queued: an
  * incomplete one is watched to the end rather than reported as checked.
+ *
+ * Run outside the instance's lane, as the write's `afterWrite`: the watch only
+ * reads, and the start at the end goes through `write`, back in the lane.
  */
-async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: number) => Promise<void>): Promise<RecheckOutcome> {
+async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: number) => Promise<void>, write: AfterWrite['write']): Promise<RecheckOutcome> {
     const seenChecking = new Set<string>();
     const moving = new Set<string>();
     const failing = new Set<string>();
@@ -136,10 +139,13 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
     let resumeFailed = false;
     if (toStart.length > 0) {
         try {
-            // Read again at the last moment: a batch can outlast what the watch saw of its first torrent.
-            const fresh = await client.torrentCheckStates(toStart);
-            toStart = fresh.filter(s => s.complete && s.stopped && !s.checking).map(s => s.id);
-            if (toStart.length > 0) await client.startTorrents(toStart);
+            // In the lane, so a confirmed write to this client cannot land between the read and the start.
+            await write(async () => {
+                // Read again at the last moment: a batch can outlast what the watch saw of its first torrent.
+                const fresh = await client.torrentCheckStates(toStart);
+                toStart = fresh.filter(s => s.complete && s.stopped && !s.checking).map(s => s.id);
+                if (toStart.length > 0) await client.startTorrents(toStart);
+            });
         } catch (err) {
             logger.warn({ service: client.id, err }, 'a recheck finished but the torrents could not be started');
             resumeFailed = true;
@@ -409,7 +415,14 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const client = clientOf(adapters, instance);
             const ids = plan.args?.ids as string[];
             await client.recheckTorrents(ids);
-            return resume_if_complete ? watchRecheck(client, ids, sleep) : { rechecking: ids };
+            return { client, ids, watch: resume_if_complete };
+        },
+
+        // The recheck is the write. The watch only reads until it can start
+        // what came back whole, so it runs with the instance free.
+        async afterWrite(sent, then) {
+            const { client, ids, watch } = sent as { client: Client; ids: string[]; watch: boolean };
+            return watch ? watchRecheck(client, ids, sleep, then.write) : { rechecking: ids };
         }
     });
 
