@@ -852,8 +852,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 }
                 throw err;
             });
-            // The hash as given, as the details read names it: a hybrid torrent's own may be its other one.
-            if (state?.stopped === true) return stopped(`${client.id}:${id.trim().toLowerCase()}`, state.title);
+            if (state?.stopped === true) return stopped(`${client.id}:${state.id}`, state.title);
             const details = await client.getTorrentDetails(id);
             const target = `${client.id}:${details.id}`;
             // It may have stopped between the two reads.
