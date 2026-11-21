@@ -3462,14 +3462,25 @@ outside what they can catch. No tool changes seeding limits.
 
 Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
-One still checking or still moving to its save path when the watch ends, showing
-an error, or never seen checking because it is queued behind another, is reported
-as such and left alone. A torrent still fetching
-metadata or being moved is skipped. A check can write where the files are, and can
-send a torrent to its incomplete folder or its save path, so all of those have to be
-inside `allowed_paths`. A
-protected torrent whose share limits could remove it once the check finds it whole
-needs `allow_removal: true`, which needs `destructive`.
+The watch does not hold up other writes to that qBittorrent. When any other
+confirmation to it is accepted meanwhile, such as a pause or another recheck,
+the complete torrents are left stopped and listed as `left_stopped` rather than
+started over it. When the start cannot be sent, because the client stays busy,
+the request was cancelled or qBittorrent refuses it, they are left stopped and
+listed as `resume_failed`, with the reason in `resume_error`. The reply goes by
+the read taken in the lane just before the start or, when none was taken there
+(overtaken, busy, cancelled first, or that read failed), by one more taken
+after. One that something else has started by then is listed as
+`already_running`, and `state_unread` says when that last read failed. One
+still checking or still moving to its save path when the watch ends, showing an
+error, or never seen checking because it is queued behind another, is reported
+as such and left alone, as is one found checking again, at missing files or no
+longer complete when it was time to start it (`unconfirmed`). A torrent still
+fetching metadata or being moved is skipped. A check can write where the files
+are, and can send a torrent to its incomplete folder or its save path, so all of
+those have to be inside `allowed_paths`. A protected torrent whose share limits
+could remove it once the check finds it whole needs `allow_removal: true`, which
+needs `destructive`.
 
 **Unverified live** (qBittorrent): the recheck and the watch after it.
 

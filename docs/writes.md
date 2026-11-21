@@ -238,23 +238,62 @@ already waiting.
 The lane is the instance the tool is routed to, within one arr-mcp process. A
 write that also changes a second service, as `delete_media` does when it adds
 the title to Seerr's blocklist, is not serialised against writes to that one.
-An apply that waits on the service after writing holds the lane while it waits:
-each *arr command a rename or import waits on (up to three minutes), a recheck
-that `recheck_torrents` watches (up to 45 seconds), each step of a Jellyfin or
-Plex metadata repair (up to two minutes). Some applies wait more than once: an
-import that remaps episodes and renames them once can hold the lane for about
-six minutes, one that has to rotate file names for about nine, and a Plex match
-followed by a refresh for about four. A plan holds the lane too: a
-`grab_release` confirm runs the indexer search again before it grabs (often 15
-seconds or more, up to two minutes), so several grabs confirmed at once on one
-instance can be refused. A confirmation sent to that instance meanwhile is
-refused after 30 seconds without being applied, and can be sent again with the
-same token until that token expires, five minutes after its preview. The retry
-plans again against the state then: if the write ahead of it has made the
-change, it can find nothing to do or nothing left to act on; if a duplicate of
-the request spent the token and the plan still matches it, the retry is refused
-as already used; otherwise it applies, or comes back as a fresh preview with a
-new token if the old one has expired or no longer matches what the plan finds.
+
+A write holds the lane until its last change has been made. The watch that
+`recheck_torrents` keeps on a recheck with `resume_if_complete` (up to 45
+seconds) comes after that and only reads, so it runs with the instance already
+free for the next confirmation; qBittorrent goes on checking in the background
+either way. The torrents it finds whole are started back in the lane, behind
+any confirmation that arrived during the watch, after reading them once more,
+and any library snapshot is dropped after it. Whether to start them is decided
+when that start gets the lane: if another confirmation to that qBittorrent was
+accepted since the recheck, even one that found nothing to do and even another
+`recheck_torrents`, they are left stopped and listed as `left_stopped`, because
+a pause sent then would look the same and starting them would undo it. If the
+instance is still busy 30 seconds later, the request has been cancelled, or
+qBittorrent refuses the start, they are left stopped too, listed as
+`resume_failed` with the reason in `resume_error`. Once the start has been sent
+it runs to the end, as any apply does.
+
+The reply reports what a read taken when it was time to start found: the one in
+the lane, just before the start. When no read was taken there (the recheck was
+overtaken, the instance stayed busy, the request was cancelled before the start
+got the lane, or that read failed), it takes one more outside the lane, so it
+holds up nothing. It can move a torrent out of
+`left_stopped` or `resume_failed`, for instance to `already_running` when
+something else has started it. When that read fails, `state_unread` says the
+lists are what was last seen.
+
+Other waits still hold the lane, because the change has not been made, or could
+still be started over, while they run:
+
+- Radarr, Sonarr and Lidarr only queue a command, and a write they take
+  straight through their API, such as deleting a file, would run ahead of it.
+  So each *arr command that a rename, an import or a Lidarr retag waits on holds
+  the lane (up to three minutes each).
+- A Jellyfin identify and a Plex match and refresh are the change itself, and
+  the server holds the request open while it makes it (up to two minutes each).
+  The reads after them that check whether the repair held stay in the lane too:
+  a second repair of the same item planned before the first settled would send
+  it again.
+- A `grab_release` confirm runs the indexer search again before it grabs (often
+  15 seconds or more, up to two minutes), because the *arr grabs from the
+  results of its own last search.
+- `sync_database` follows Profilarr's job (up to about 23 seconds). Profilarr
+  runs one job at a time, so a second sync let in meanwhile would spend its own
+  poll budget queued behind the first.
+
+Some applies wait more than once: an import that remaps episodes and renames
+them once can hold the lane for about six minutes, one that has to rotate file
+names for about nine, and a Plex match followed by a refresh for about four. A
+confirmation sent to that instance meanwhile is refused after 30 seconds without
+being applied, and can be sent again with the same token until that token
+expires, five minutes after its preview. The retry plans again against the state
+then: if the write ahead of it has made the change, it can find nothing to do or
+nothing left to act on; if a duplicate of the request spent the token and the
+plan still matches it, the retry is refused as already used; otherwise it
+applies, or comes back as a fresh preview with a new token if the old one has
+expired or no longer matches what the plan finds.
 
 A destructive preview says what it costs in the units that matter:
 

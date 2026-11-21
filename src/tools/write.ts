@@ -121,7 +121,31 @@ type WriteToolSpec<
     tier: WriteTier | ((args: z.infer<Schema>) => WriteTier);
     /** `adapter` is the one `target` resolved; a tool routed by `service` has none. */
     plan(args: z.infer<Schema>, adapter: Adapter & ServiceAdapter): Promise<WritePlan<Bound>>;
+    /**
+     * The calls that change something. Where it returns is where the write
+     * ends: a confirmed write holds its instance's lane until then and no
+     * longer, so anything that only waits on what was sent belongs in
+     * `afterWrite`, not here.
+     */
     apply(plan: WritePlan<Bound>, args: z.infer<Schema>, adapter: Adapter & ServiceAdapter): Promise<unknown>;
+    /**
+     * What a write does once its last change has been made, such as watching
+     * a recheck. It receives what `apply` returned, and its result is the
+     * outcome that `applied`, `landed`, `followUps` and the reply read.
+     *
+     * Run after the harness has released the instance, so a confirmation sent
+     * to it meanwhile waits for the write, not for minutes of polling (#12).
+     * It must only wait and read: a call that changes something goes through
+     * `then.write`, which runs it in the instance's lane again. Not for a wait
+     * on work the service has only queued where another write could overtake
+     * it (an *arr command a direct API call can run ahead of, a job a second
+     * one queues behind while its poll budget runs), nor for a read-back
+     * another write to the same item could start over: those stay in
+     * `apply`. The library cache is dropped when `apply` returns and
+     * again when this ends; the audit row is settled once it returns, so a
+     * throw here records the write as failed, as a throw from `apply` does.
+     */
+    afterWrite?(sent: unknown, then: AfterWrite): Promise<unknown>;
     /**
      * Optional override for the sentence shown after a successful apply.
      * Most tools need none; `plan.summary` describes the effect and the
@@ -150,6 +174,26 @@ type WriteToolSpec<
      * warnings say now.
      */
     crossCheck?: CrossCheckProfile;
+};
+
+/** What `afterWrite` is handed besides what `apply` returned. */
+export type AfterWrite = {
+    /**
+     * Runs `call`, which changes something, in the instance's lane, as `apply`
+     * ran: once every confirmed write queued ahead of it has finished, and
+     * drops the library cache before handing the lane on. `call` is told
+     * whether another confirmation to the instance was accepted since this
+     * one (`overtaken`), so a change that only made sense against the state
+     * then (starting what a recheck found whole) can stand down rather than
+     * undo a later request. A confirmation that found nothing to do counts,
+     * since a pause confirmed on a torrent already stopped is still a request
+     * to leave it so; one whose token was refused, or whose plan failed, does
+     * not. `cancelled` reads the request's signal as it is when called, for a
+     * check just before the change. Throws without running `call` when the
+     * instance is still busy after the same 30 seconds a confirmation waits,
+     * or when the request is cancelled first.
+     */
+    write: <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>) => Promise<T>;
 };
 
 export type WriteContext = {
@@ -319,10 +363,12 @@ function writeInput(schema: z.ZodObject): z.ZodObject {
 }
 
 /**
- * How long a confirmed write waits for its instance. Some applies wait on the
- * service for minutes (a rename's command, a watched recheck), and a client
- * stops waiting long before that, so a write queued behind one is refused
- * rather than landing after its caller was told it failed.
+ * How long a confirmed write waits for its instance. A write that only reads
+ * after its last change does so outside the lane (`afterWrite`), but some
+ * still take minutes inside it (an *arr command a rename or import waits on,
+ * a Jellyfin identify, a grab's indexer search), and a client stops waiting
+ * long before that, so a write queued behind one is refused rather than
+ * landing after its caller was told it failed.
  */
 const LANE_WAIT_MS = 30_000;
 
@@ -333,9 +379,25 @@ type Lane = { waiting: Set<() => void> };
  * One lane per instance id, shared by every request's server: a confirmed
  * write runs its plan, its token check and its apply in that lane, so two
  * confirmations racing on one instance cannot interleave their writes and
- * leave a mix of both (#7). Previews and dry runs only read, so they never wait.
+ * leave a mix of both (#7). Previews and dry runs only read, so they never
+ * wait, and neither does an `afterWrite` until it has a change to make
+ * through `then.write`, which queues in the same lane.
  */
 const writeLanes = new Map<string, Lane>();
+
+/**
+ * How many confirmations each instance has accepted, counted in its lane: a
+ * valid token about to apply, or one whose plan found nothing to do. An
+ * `afterWrite` compares it to the count its own confirmation took, to learn
+ * whether another came in between. A `then.write` is not counted, being part
+ * of a confirmation already counted. One number per configured instance.
+ */
+const confirmations = new Map<string, number>();
+const countConfirmation = (service: string): number => {
+    const count = (confirmations.get(service) ?? 0) + 1;
+    confirmations.set(service, count);
+    return count;
+};
 
 /** Hands the instance to the oldest write still waiting, or frees it. */
 function release(service: string, lane: Lane): void {
@@ -589,7 +651,33 @@ export function registerWriteTool<
             );
         }
 
-        // A reply, or one still to finish once the lane is released.
+        // This confirmation's place in its instance's count, taken in the lane once it is accepted.
+        let counted = 0;
+        const accepted = (): void => {
+            if (presented !== undefined && !dryRun) counted = countConfirmation(service);
+        };
+
+        // A later change an `afterWrite` makes, back in the lane the apply held.
+        const then: AfterWrite = {
+            write: async <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>): Promise<T> => {
+                if (signal?.aborted === true) throw new Error('the request was cancelled before this change was sent');
+                const turn = await inLane(service, signal, async () => {
+                    try {
+                        return await call({ overtaken: confirmations.get(service) !== counted, cancelled: () => signal?.aborted === true });
+                    } finally {
+                        // Before the lane is handed on, as after `apply`.
+                        library.invalidate();
+                    }
+                });
+                if (turn.ran) return turn.value;
+                throw new Error(
+                    turn.why === 'busy'
+                        ? `another confirmed write to ${service} was still running after ${LANE_WAIT_MS / 1000} seconds`
+                        : 'the request was cancelled while this write waited for its instance'
+                );
+            }
+        };
+
         /**
          * A confirm refused before its token was checked, recorded as denied.
          * Not a ServiceError: no kind fits, since the service was never asked to write.
@@ -681,6 +769,7 @@ export function registerWriteTool<
 
             // --- 1. Nothing to do -------------------------------------------------
             if (plan.noop === true) {
+                accepted();
                 const id = quiet ? undefined : audit.begin(record);
                 const next = plan.next ?? [];
                 if (id !== undefined) audit.settle(id, 'dry_run', next.length > 0 ? 'no-op: listed only' : 'no-op: already in the requested state');
@@ -782,6 +871,7 @@ export function registerWriteTool<
                         ));
                     };
                 }
+                accepted();
             } else {
                 const id = audit.begin(record);
                 audit.settle(id, 'unconfirmed');
@@ -802,60 +892,83 @@ export function registerWriteTool<
 
             // --- 5. Apply ---------------------------------------------------------
             const id = audit.begin(record);
-            let outcome: unknown;
+            const failed = (err: unknown): void => audit.settle(id, 'failed', err instanceof Error ? err.message : String(err));
+            let sent: unknown;
             try {
-                outcome = await spec.apply(plan, args, adapter);
+                sent = await spec.apply(plan, args, adapter);
             } catch (err) {
-                audit.settle(id, 'failed', err instanceof Error ? err.message : String(err));
+                failed(err);
                 throw err;
             }
+            // The change has been made, so a write let in while `afterWrite`
+            // runs must not plan against a snapshot from before it.
+            if (spec.afterWrite !== undefined) library.invalidate();
 
-            // Only after a write that actually landed: a failed write changed
-            // nothing, and dropping the cache for it would cost every cached
-            // library snapshot for no reason.
-            library.invalidate();
-            audit.settle(id, 'applied');
+            const report = async (): Promise<ToolReply> => {
+                let outcome = sent;
+                if (spec.afterWrite !== undefined) {
+                    try {
+                        outcome = await spec.afterWrite(sent, then);
+                    } catch (err) {
+                        failed(err);
+                        throw err;
+                    } finally {
+                        // Again, however it ended: the change was made, so a
+                        // snapshot read while this waited must not outlive it.
+                        library.invalidate();
+                    }
+                } else {
+                    // Only after a write that actually landed: a failed write changed
+                    // nothing, and dropping the cache for it would cost every cached
+                    // library snapshot for no reason.
+                    library.invalidate();
+                }
+                audit.settle(id, 'applied');
 
-            // After the write, and guarded: the write has happened, so a follow-up
-            // that fails to build must not turn a landed change into an error.
-            let nextSteps: NextStep[] = [];
-            try {
-                nextSteps = spec.followUps?.(outcome, args, plan) ?? [];
-            } catch (err) {
-                logger.warn({ tool: spec.name, err }, 'followUps threw; reporting the write without next steps');
-            }
+                // After the write, and guarded: the write has happened, so a follow-up
+                // that fails to build must not turn a landed change into an error.
+                let nextSteps: NextStep[] = [];
+                try {
+                    nextSteps = spec.followUps?.(outcome, args, plan) ?? [];
+                } catch (err) {
+                    logger.warn({ tool: spec.name, err }, 'followUps threw; reporting the write without next steps');
+                }
 
-            // A tool's own sentence is what happened, where the plan's summary
-            // is what was asked: a partial or empty result says so in
-            // `summary` too, not only in the text.
-            const said = spec.applied?.(outcome, plan);
-            const landed = spec.landed?.(outcome) ?? true;
-            const reply = scrubbedReply(
-                respond(
-                    {
-                        ...preview({ audit_id: id }),
-                        applied: landed,
-                        ...(landed ? {} : { noop: true }),
-                        ...(said === undefined ? {} : { summary: said }),
-                        ...(outcome === undefined ? {} : { result: outcome })
-                    },
-                    said ?? `Applied. ${plan.summary}`
-                )
-            );
-            if (nextSteps.length === 0) return reply;
-            // Added after the scrub, so the text and the field carry the same calls (#234).
-            return respond(
-                { ...reply.structuredContent, next_steps: nextSteps },
-                (reply.content[0]?.text ?? '') + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
-            );
+                // A tool's own sentence is what happened, where the plan's summary
+                // is what was asked: a partial or empty result says so in
+                // `summary` too, not only in the text.
+                const said = spec.applied?.(outcome, plan);
+                const landed = spec.landed?.(outcome) ?? true;
+                const reply = scrubbedReply(
+                    respond(
+                        {
+                            ...preview({ audit_id: id }),
+                            applied: landed,
+                            ...(landed ? {} : { noop: true }),
+                            ...(said === undefined ? {} : { summary: said }),
+                            ...(outcome === undefined ? {} : { result: outcome })
+                        },
+                        said ?? `Applied. ${plan.summary}`
+                    )
+                );
+                if (nextSteps.length === 0) return reply;
+                // Added after the scrub, so the text and the field carry the same calls (#234).
+                return respond(
+                    { ...reply.structuredContent, next_steps: nextSteps },
+                    (reply.content[0]?.text ?? '') + nextSteps.map(step => `\n${nextStepLine(step)}`).join('')
+                );
+            };
+            // The write ends where `apply` returned: what is left only waits and
+            // reads, so it runs once the lane has been handed on.
+            return spec.afterWrite === undefined ? report() : report;
         };
 
         const finish = async (reply: ToolReply | (() => Promise<ToolReply>)): Promise<ToolReply> => (typeof reply === 'function' ? reply() : reply);
         if (presented === undefined || dryRun) return finish(await proceed());
         if (signal?.aborted === true) throw unspent(rawTarget(args), 'the request was cancelled before this write started');
         // A confirm call holds its instance's lane from the plan's reads to the
-        // apply, so the state its token is checked against is still the state
-        // it writes over. Everything else runs at once.
+        // end of its apply, so the state its token is checked against is still
+        // the state it writes over. Everything else runs at once.
         const turn = await inLane(service, signal, proceed);
         if (turn.ran) return finish(turn.value);
         throw unspent(
