@@ -17,16 +17,18 @@ export const maskedHost = (hostname: string): string =>
         .map(label => label.split('`').map(piece => (PASSKEY_LABEL.test(piece) ? '***' : piece)).join('`'))
         .join('.');
 
-// An apostrophe is a legal part of a URL path, so it does not end one, and nor
-// does a backtick: a URL serialiser leaves one raw in a host and in a query, so
-// stopping there would keep the rest. One that closes a code span is walked back
-// off the end like a sentence's punctuation. Two code spans with nothing between
-// them are read as one URL and cut together, which loses the second but leaks
-// nothing.
-const MAGNET_IN_TEXT = /magnet:\?[^\s"<>]+/gi;
-// The scheme may start with a digit here, so a scheme longer than the bound is
-// still caught by its last characters; the part before its first letter is kept.
-const URL_IN_TEXT = /[a-z0-9+.-]{1,32}:\/\/[^\s"<>]+/gi;
+/**
+ * Where a link starts: a magnet link, or a scheme and `://`. The scheme may
+ * start with a digit here, so a scheme longer than the bound is still caught by
+ * its last characters; the part before its first letter is kept as text.
+ */
+const LINK_START = /magnet:\?|[a-z0-9+.-]{1,32}:\/\//gi;
+// An apostrophe is a legal part of a URL, so it does not end one, and nor does
+// a backtick: a URL serialiser leaves one raw in a host and in a query, so
+// stopping there would keep the rest. The exception is a link that opens a code
+// span, which ends where the span closes, so the next span is not swallowed.
+const LINK_BODY = /[^\s"<>]*/y;
+const SPAN_BODY = /[^\s"<>`]*/y;
 /** Characters a sentence or a code span can end on that a URL rarely does. */
 const TRAILING = new Set(['.', ',', ';', ':', ')', ']', "'", '`']);
 /** A scheme and an authority with nothing after them but one slash. */
@@ -64,21 +66,41 @@ function splitTail(match: string): { raw: string; tail: string } {
  * tool the URL was pasted into.
  */
 export function scrubUrls(text: string): string {
-    return text
-        .replace(MAGNET_IN_TEXT, match => `(a magnet link, left out)${splitTail(match).tail}`)
-        .replace(URL_IN_TEXT, match => {
-            const { raw: whole, tail } = splitTail(match);
-            // Scheme characters before its first letter: the end of a longer word, or of a scheme past the bound.
-            const lead = /^[0-9+.-]*/.exec(whole)?.[0] ?? '';
-            const raw = whole.slice(lead.length);
-            if (!URL.canParse(raw)) return `${lead}(a URL, left out)${tail}`;
-            const url = new URL(raw);
-            // Judged on the text as written, not the parsed URL: the parser folds a
-            // path such as `/key/%2e%2e` down to `/`, which would pass a key through.
-            const bare = BARE_URL.test(raw) && url.username === '' && url.password === '';
-            // maskedHost lowercases, and a parser keeps the case of a host for a scheme it does not know (`smb://NAS`).
-            if (bare && maskedHost(url.hostname) === url.hostname.toLowerCase()) return match;
-            // The placeholder already ends in dots, so a sentence's own are not added to them.
-            return `${lead}${url.protocol}//${maskedHost(url.hostname)}${url.port === '' ? '' : `:${url.port}`}/...${tail.replace(/^\.+/, '')}`;
-        });
+    let out = '';
+    let copied = 0;
+    LINK_START.lastIndex = 0;
+    // One pass, each character read a bounded number of times: this runs on whatever a caller sends.
+    for (let start = LINK_START.exec(text); start !== null; start = LINK_START.exec(text)) {
+        const inSpan = text[start.index - 1] === '`';
+        const body = inSpan ? SPAN_BODY : LINK_BODY;
+        body.lastIndex = LINK_START.lastIndex;
+        let end = body.lastIndex + (body.exec(text)?.[0].length ?? 0);
+        // A scheme with nothing after it names no address.
+        if (end === LINK_START.lastIndex) continue;
+        // The closing backtick goes with the link, so it is kept as the link's tail.
+        if (inSpan && text[end] === '`') end += 1;
+        const match = text.slice(start.index, end);
+        out += text.slice(copied, start.index) + (/^magnet/i.test(match) ? `(a magnet link, left out)${splitTail(match).tail}` : cutUrl(match));
+        copied = end;
+        LINK_START.lastIndex = end;
+    }
+    return out + text.slice(copied);
+}
+
+/** One URL as found in text, cut down to its scheme and host. */
+function cutUrl(match: string): string {
+    const { raw: whole, tail } = splitTail(match);
+    // Scheme characters before its first letter: the end of a longer word, or of a scheme past the bound.
+    const lead = /^[0-9+.-]*/.exec(whole)?.[0] ?? '';
+    const raw = whole.slice(lead.length);
+    if (raw.endsWith('://')) return match;
+    if (!URL.canParse(raw)) return `${lead}(a URL, left out)${tail}`;
+    const url = new URL(raw);
+    // Judged on the text as written, not the parsed URL: the parser folds a
+    // path such as `/key/%2e%2e` down to `/`, which would pass a key through.
+    const bare = BARE_URL.test(raw) && url.username === '' && url.password === '';
+    // maskedHost lowercases, and a parser keeps the case of a host for a scheme it does not know (`smb://NAS`).
+    if (bare && maskedHost(url.hostname) === url.hostname.toLowerCase()) return match;
+    // The placeholder already ends in dots, so a sentence's own are not added to them.
+    return `${lead}${url.protocol}//${maskedHost(url.hostname)}${url.port === '' ? '' : `:${url.port}`}/...${tail.replace(/^\.+/, '')}`;
 }
