@@ -57,6 +57,7 @@ describe('scrubUrls', () => {
         [`(from magnet:?xt=urn:btih:abc&tr=${PASSKEY}).`, '(from (a magnet link, left out)).'],
         // A backtick in a host ends the URL, so a passkey label before it is still masked.
         ['use `https://0123456789abcdef0123`again', 'use `https://***/...`again'],
+        [`https://${PASSKEY}\`/announce`, 'https://***/...`/announce'],
         // The trade-off of a backtick not ending a query: a code span right after one is cut with it.
         [`see \`http://192.0.2.1/?key=${PASSKEY}\`,\`http://192.0.2.2\``, 'see `http://192.0.2.1/...`'],
         // A scheme longer than the bound is still caught, by its last 32 characters.
