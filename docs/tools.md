@@ -3553,13 +3553,11 @@ Announces one torrent to its trackers now. Trackers rate-limit announces, so do
 not call it in a loop. The confirm token binds a SHA-256 of the tracker URLs,
 so a torrent whose trackers changed since the preview needs a new one. A
 stopped torrent has nothing to announce and is a no-op, even when its tracker
-list is malformed or cannot be read at all: when qBittorrent answers the
-request for the torrent's details with an error, its state is read on its own,
-and a torrent stopped by then is a no-op. For any other, if qBittorrent's tracker list cannot be read, both the
-preview and the confirm are refused. The confirm checks the list as it reads it
-while planning, shortly before the reannounce: qBittorrent takes only the
-torrent's hash, so a tracker edited in qBittorrent between that read and the
-reannounce can still hear it.
+list is malformed or qBittorrent fails to give it at all. For any other, if
+qBittorrent's tracker list cannot be read, both the preview and the confirm are
+refused. The confirm checks the list as it reads it while planning, shortly
+before the reannounce: qBittorrent takes only the torrent's hash, so a tracker
+edited in qBittorrent between that read and the reannounce can still hear it.
 
 **Unverified live** (qBittorrent): the reannounce.
 

@@ -701,7 +701,7 @@ export class QbittorrentAdapter
      * answers first and `torrents/properties` fills what it lacks, which on a
      * torrent at missingFiles can be the save path, the ratio and the seed time.
      */
-    async getTorrentDetails(id: string): Promise<TorrentDetails> {
+    async getTorrentDetails(id: string, opts: { trackersOptional?: boolean } = {}): Promise<TorrentDetails> {
         const hash = this.#hash(id);
         // Only an empty list means no such torrent. The delete guard reads
         // NotFound as permission to go ahead, so a 404 from a proxy must not become one.
@@ -722,9 +722,15 @@ export class QbittorrentAdapter
                   return undefined;
               })
             : undefined;
+        const trackerRead = this.#http.get<RawTracker[]>(`${API}/torrents/trackers?hash=${hash}`);
         const [files, trackers] = await Promise.all([
             this.#http.get<RawFile[]>(`${API}/torrents/files?hash=${hash}`),
-            this.#http.get<RawTracker[]>(`${API}/torrents/trackers?hash=${hash}`)
+            opts.trackersOptional === true
+                ? trackerRead.catch((err: unknown) => {
+                      logger.warn({ service: this.id, err }, 'could not read the torrent trackers');
+                      return undefined;
+                  })
+                : trackerRead
         ]).catch(listed);
 
         const ratio = shownRatio(info.ratio ?? props?.share_ratio);

@@ -843,20 +843,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         async plan({ instance, id }): Promise<WritePlan> {
             const client = clientOf(adapters, instance);
             // A stopped torrent has nothing to announce, so its answer must not depend on the
-            // tracker list, whose read can fail on its own. When the details cannot be read,
-            // the state alone is asked for; any other answer is the original failure.
-            let details: TorrentDetails;
-            try {
-                details = await client.getTorrentDetails(id);
-            } catch (err) {
-                // Only for an error qBittorrent answered with, which is how a tracker read fails.
-                // A refused login, or a client that is unreachable or not answering, would fail
-                // the same way again, and a second failed login brings a ban closer.
-                if (!(err instanceof ServiceError) || err.kind !== 'UpstreamError') throw err;
-                const [state] = await client.torrentCheckStates([id]).catch(() => []);
-                if (state?.stopped === true) return stopped(`${client.id}:${state.id}`, state.title);
-                throw err;
-            }
+            // tracker list, whose read can fail on its own; for any other an unread list is refused below.
+            const details = await client.getTorrentDetails(id, { trackersOptional: true });
             const target = `${client.id}:${details.id}`;
             if (details.status === 'stopped') return stopped(target, details.title);
             if (details.trackerDigest === null) {

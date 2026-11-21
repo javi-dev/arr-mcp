@@ -238,6 +238,7 @@ describe('classifyFetchError', () => {
             // Punctuation after a bare origin can be its path, so it goes too, and counts toward the length.
             ['refused http://host:1/);,:..', 'refused http://host:1/'],
             [`refused http://host:1/${')'.repeat(3000)}`, 'refused (a URL, left out)'],
+            [`refused http://${'.'.repeat(3000)}`, 'refused (a URL, left out)'],
             ["Failed to parse URL from 'http://host:1/key?apikey=abc'.", "Failed to parse URL from 'http://host:1/..."],
             // Folded to `/` by the parser, but the key is in the text as written.
             ['refused http://host:1/abc/%2e%2e', 'refused http://host:1/...'],

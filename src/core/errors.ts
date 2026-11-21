@@ -157,8 +157,8 @@ function scrubUrls(text: string): string {
             }
             cut -= 1;
         }
-        // A scheme with nothing after it names no address.
-        if (cut === found.index + 3) continue;
+        // A scheme with nothing after it names no address, unless what follows is too long to be one.
+        if (cut === found.index + 3 && end - start <= MAX_URL_LENGTH) continue;
         // Punctuation after a URL may be the end of its path or query, and nothing in
         // the text says where the URL stops, so it goes with it, whether the URL is
         // cut or not. A quotation's closing mark or a full stop can go too.
