@@ -725,6 +725,29 @@ describe('recheck_torrents', () => {
         expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 
+    it('reads once more outside the lane when the read before the start fails, and starts nothing', async () => {
+        const t = torrent({ state: 'stoppedUP' });
+        const qb = fakeQbittorrent({ torrents: [t], recheckStates: ['checkingUP', 'stoppedUP'] });
+        // After the recheck: the watch's two reads pass, the one in the lane fails, the one after it finds the torrent seeding.
+        let readsAfterRecheck = 0;
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.includes('/torrents/info') && qb.posts.length > 0) {
+                readsAfterRecheck += 1;
+                if (readsAfterRecheck === 3) return textResponse('broken', 500);
+                if (readsAfterRecheck === 4) return jsonResponse([{ ...t, state: 'uploading' }]);
+            }
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)], { sleep: () => Promise.resolve() });
+        const applied = await confirmed(call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toEqual({ rechecking: [HASH], already_running: [HASH] });
+        expect(readsAfterRecheck).toBe(4);
+        expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
+    });
+
     it('reports a torrent something else started before the start as already running, not unconfirmed', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP', 'uploading'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
