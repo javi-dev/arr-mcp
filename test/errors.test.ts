@@ -250,8 +250,24 @@ describe('classifyFetchError', () => {
             // A long scheme is still a scheme, and digits before its first letter are the sentence's.
             [`refused a${'0'.repeat(40)}://user:pw@host:1/?apikey=abc`, `refused a${'0'.repeat(40)}://host:1/...`],
             ['version 1.5http://host:1/key', 'version 1.5http://host:1/...'],
-            // Nothing a URL parser accepts is left whole.
-            ['refused http://[::1/key?apikey=abc', 'refused (a URL, left out)'],
+            // A parser keeps a quote raw in a host, so a quote does not end the URL either.
+            ['refused http://a"b.example/key?apikey=abc', 'refused http://a"b.example/...'],
+            ['Failed to parse URL from "http://host:1/key?apikey=abc".', 'Failed to parse URL from "http://host:1/...".'],
+            // A passkey-like run is masked whatever sits beside it in the host.
+            ["refused https://0123456789abcdef0123's.example/", "refused https://***'s.example/..."],
+            ['refused https://0123456789abcdef0123)y.example/', 'refused https://***)y.example/...'],
+            ['refused https://0123456789abcdef0123.', 'refused https://***/...'],
+            // Punctuation after a cut URL may end its query, so only a closer for what opened before the URL stays.
+            ['includes credentials: http://user:pw@host:1/?password=);,:..', 'includes credentials: http://host:1/...'],
+            ['see (http://host:1/?password=);,:..).', 'see (http://host:1/...).'],
+            ['[http://host:1/key]', '[http://host:1/...]'],
+            ['refused http://[2001:db8::1]/key', 'refused http://[2001:db8::1]/...'],
+            // Only normalised, so nothing to cut.
+            ['refused HTTP://Host:1/ and http://host:80/', 'refused HTTP://Host:1/ and http://host:80/'],
+            ['refused http://[2001:db8::1]', 'refused http://[2001:db8::1]'],
+            // Nothing a URL parser refuses is left whole, and nor is a URL far longer than any address.
+            ['refused http://[2001:db8::1/key?apikey=abc', 'refused (a URL, left out)'],
+            [`refused http://host:1/${'a'.repeat(3000)}`, 'refused (a URL, left out)'],
             // Not addresses.
             ['a bare https:// here, and ://abc', 'a bare https:// here, and ://abc']
         ];
@@ -260,7 +276,19 @@ describe('classifyFetchError', () => {
         }
     });
 
-    it('reads a long message in linear time', () => {
+    it('cuts the URL Node quotes when it refuses one with credentials', () => {
+        const refusal = (() => {
+            try {
+                return new Request('http://user:pw@host.example/?password=);,:..');
+            } catch (err) {
+                return err;
+            }
+        })();
+        const detail = classifyFetchError(refusal, 'radarr', 'http://h:7878').detail;
+        expect(detail).toBe('Request cannot be constructed from a URL that includes credentials: http://host.example/... at h:7878');
+    });
+
+    it('reads a long message quickly', () => {
         const started = Date.now();
         for (const message of ['a'.repeat(400_000), `${'a'.repeat(400_000)}://`, 'a://'.repeat(100_000), '0://'.repeat(100_000), 'a:// '.repeat(80_000), `http://h/${"'.".repeat(200_000)}x`]) {
             classifyFetchError(new Error(message), 'radarr', 'http://h:7878');

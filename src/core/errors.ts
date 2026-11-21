@@ -1,4 +1,3 @@
-import { maskedHost } from './pastedUrl.ts';
 
 export type ServiceErrorKind =
     | 'Unreachable'
@@ -110,11 +109,20 @@ function safeHost(url: string): string {
 }
 
 const SCHEME_CHAR = /[a-z0-9+.-]/i;
-/** What ends a URL in a message. Not a quote or a backtick: a URL serialiser
- *  leaves either raw in a host or a query, and stopping there would keep the rest. */
-const URL_END = /[\s"<>]/;
-/** Punctuation a sentence or a quotation can close a URL with, which is not part of it. */
-const URL_TRAILING = new Set(['.', ',', ';', ':', ')', "'", '`']);
+/** What ends a URL in a message: whitespace, `<` and `>`, which a parser takes
+ *  nowhere raw. Not a quote or a backtick: a URL serialiser leaves those raw in a
+ *  host or a query, and stopping there would keep the rest. */
+const URL_END = /[\s<>]/;
+/** Punctuation that can close a sentence or a quotation around a URL. */
+const URL_TRAILING = new Set(['.', ',', ';', ':', ')', ']', "'", '"', '`']);
+/** The closer each character before a URL pairs with, when the URL is quoted or bracketed. */
+const CLOSER: Readonly<Record<string, string>> = { "'": "'", '"': '"', '`': '`', '(': ')', '[': ']' };
+/** A scheme and an authority with nothing after them but one slash, judged as written. */
+const BARE_URL = /^[a-z][a-z0-9+.-]*:\/\/[^/?#\\@]*\/?$/i;
+/** A run of hex, or of letters and digits, long enough to be a passkey rather than a name. */
+const PASSKEY_RUN = /^(?:[0-9a-f]{16,}|[0-9a-z]{28,})$/;
+/** Far past any address a service is configured with. A parser's time grows faster than its input. */
+const MAX_URL_LENGTH = 2048;
 
 /**
  * Cuts every URL in a transport error's message down to its scheme and host.
@@ -134,26 +142,55 @@ function scrubUrls(text: string): string {
         while (start < found.index && !/[a-z]/i.test(text[start] ?? '')) start += 1;
         if (start === found.index) continue;
         let end = found.index + 3;
-        while (end < text.length && !URL_END.test(text[end] ?? '')) end += 1;
+        let opens = 0;
+        let closes = 0;
+        for (; end < text.length && !URL_END.test(text[end] ?? ''); end += 1) {
+            if (text[end] === '[') opens += 1;
+            else if (text[end] === ']') closes += 1;
+        }
+        // Walked back off the end. A `]` that closes an IPv6 host is the URL's own,
+        // so one is taken off only while there are more of them than `[`.
         let cut = end;
-        while (cut > found.index + 3 && URL_TRAILING.has(text[cut - 1] ?? '')) cut -= 1;
+        while (cut > found.index + 3 && URL_TRAILING.has(text[cut - 1] ?? '')) {
+            if (text[cut - 1] === ']') {
+                if (closes <= opens) break;
+                closes -= 1;
+            }
+            cut -= 1;
+        }
         // A scheme with nothing after it names no address.
         if (cut === found.index + 3) continue;
-        out += text.slice(copied, start) + hostOnly(text.slice(start, cut));
-        copied = cut;
-        separator.lastIndex = cut;
+        const kept = hostOnly(text.slice(start, cut));
+        out += text.slice(copied, start);
+        if (kept === undefined) {
+            out += text.slice(start, end);
+        } else {
+            // Punctuation after a cut URL may be the end of its query. Only the closer
+            // of a quotation or bracket opened before the URL, and what follows it,
+            // is the sentence's; the placeholder's dots stand in for a full stop.
+            const closer = CLOSER[text[start - 1] ?? ''];
+            const tail = text.slice(cut, end);
+            const at = closer === undefined ? -1 : tail.lastIndexOf(closer);
+            out += kept + (at === -1 ? '' : tail.slice(at));
+        }
+        copied = end;
+        separator.lastIndex = end;
     }
     return out + text.slice(copied);
 }
 
-/** One URL as its scheme and host, with any label that looks like a passkey masked. */
-function hostOnly(raw: string): string {
-    if (!URL.canParse(raw)) return '(a URL, left out)';
-    const url = new URL(raw);
-    // A parser keeps a backtick in a host, so each side of one is judged on its own.
-    const host = url.hostname.split('`').map(maskedHost).join('`');
-    const origin = `${url.protocol}//${host}${url.port === '' ? '' : `:${url.port}`}`;
-    return raw === origin || raw === `${origin}/` ? raw : `${origin}/...`;
+/**
+ * One URL as its scheme and host, with any run in the host that looks like a
+ * passkey masked, or `undefined` when it is already no more than that.
+ */
+function hostOnly(raw: string): string | undefined {
+    const url = raw.length > MAX_URL_LENGTH ? null : URL.parse(raw);
+    if (url === null) return '(a URL, left out)';
+    // Runs, not labels: a parser keeps a quote, a bracket or a backtick in a host, so a passkey can sit beside one.
+    const host = url.hostname.toLowerCase().replace(/[0-9a-z]+/g, run => (PASSKEY_RUN.test(run) ? '***' : run));
+    // Judged on the text as written: the parser folds a path such as `/key/%2e%2e` down to `/`.
+    if (BARE_URL.test(raw) && host === url.hostname.toLowerCase()) return undefined;
+    return `${url.protocol}//${host}${url.port === '' ? '' : `:${url.port}`}/...`;
 }
 
 /** A plain endpoint-vocabulary word, or a REST version segment such as `v3`. */

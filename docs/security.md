@@ -87,7 +87,8 @@ apart, and an audit target that is still a URL is cut down like an argument.
 The scrub knows a URL by its `scheme://` and a magnet link by `magnet:?`; other
 spellings a URL parser also accepts are not caught yet (#17, #18 and #19). A
 read tool's error for a request that never got an answer (a refused URL, a
-failed connection) has every URL in it cut down to its scheme and host too.
+failed connection) has every URL in it cut down to its scheme and host too,
+from its `scheme://` to the next space, `<` or `>`.
 
 ## The repair page renders the config file verbatim
 
