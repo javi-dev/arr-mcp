@@ -2063,4 +2063,39 @@ describe('reannounce_torrent', () => {
         const preview = await harness({ torrents: [torrent({ state: 'stoppedUP' })] }).call('reannounce_torrent', { id: HASH });
         expect(preview.structuredContent.noop).toBe(true);
     });
+
+    it.each(['stoppedUP', 'pausedDL'])('has nothing to do for a torrent at %s even when its tracker list cannot be read', async state => {
+        const h = harness({ torrents: [torrent({ state })], failing: ['/torrents/trackers'] });
+        const preview = await h.call('reannounce_torrent', { id: HASH });
+        expect(preview.structuredContent.noop).toBe(true);
+        expect(preview.structuredContent.summary).toContain('is stopped, so it has nothing to announce');
+        expect(preview.structuredContent.confirm_token).toBeUndefined();
+        expect(h.posts).toEqual([]);
+    });
+
+    it('still refuses a running torrent whose tracker list cannot be read', async () => {
+        const h = harness({ failing: ['/torrents/trackers'] });
+        await expect(h.call('reannounce_torrent', { id: HASH })).rejects.toThrow(/^qbittorrent upstream error/);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('has nothing to do for a torrent that stops between the state read and the details read', async () => {
+        const qb = fakeQbittorrent();
+        // The torrent stops as soon as its state has been read once.
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const answer = await qb.impl(input, init);
+            if (String(input instanceof Request ? input.url : input).includes('/torrents/info')) qb.torrents[0]!.state = 'stoppedUP';
+            return answer;
+        }) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)]);
+        const preview = await call('reannounce_torrent', { id: HASH });
+        expect(preview.structuredContent.noop).toBe(true);
+        expect(qb.posts).toEqual([]);
+    });
+
+    it('refuses a hash the client does not have', async () => {
+        await expect(harness().call('reannounce_torrent', { id: OTHER })).rejects.toThrow(/^qbittorrent not found: no torrent with hash/);
+    });
 });

@@ -377,6 +377,9 @@ const CategoryInput = z.object({
 
 const ReannounceInput = z.object({ instance: instanceField, id: hashField });
 
+/** A stopped torrent's reannounce: there is nothing to announce, so nothing to confirm. */
+const stopped = (target: string, title: string): WritePlan => ({ target, summary: `${title} is stopped, so it has nothing to announce.`, effects: [], noop: true });
+
 export function registerTorrentTools(server: McpServer, context: WriteContext, adapters: readonly ServiceAdapter[], options: TorrentToolOptions = {}): void {
     const sleep = options.sleep ?? defaultSleep;
 
@@ -839,9 +842,14 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
 
         async plan({ instance, id }): Promise<WritePlan> {
             const client = clientOf(adapters, instance);
+            // The state comes first and alone: a stopped torrent has nothing to announce, so its
+            // answer must not wait on the tracker list, whose read can fail on its own.
+            const [state] = await client.torrentCheckStates([id]);
+            if (state?.stopped === true) return stopped(`${client.id}:${state.id}`, state.title);
             const details = await client.getTorrentDetails(id);
             const target = `${client.id}:${details.id}`;
-            if (details.status === 'stopped') return { target, summary: `${details.title} is stopped, so it has nothing to announce.`, effects: [], noop: true };
+            // It may have stopped between the two reads.
+            if (details.status === 'stopped') return stopped(target, details.title);
             if (details.trackerDigest === null) {
                 throw new ServiceError('UpstreamError', client.id, 'the tracker list qBittorrent gave for this torrent could not be read, so nobody can say where a reannounce would go', {
                     remedy: 'Check that qBittorrent answers normally and that none of this torrent\'s tracker URLs is malformed (fix or remove one that is, in qBittorrent), then preview the reannounce again.'
