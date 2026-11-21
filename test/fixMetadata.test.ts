@@ -51,10 +51,10 @@ const healthy = (n: number) => ({
 /** A file in Specials shown as season 1, as on a live series. */
 const broken = (n: number) => ({
     Id: episodeId(n + 50),
-    Name: 'Prologue to the First Battle!',
+    Name: 'Some Episode Title',
     IndexNumber: 1,
     ParentIndexNumber: 1,
-    Path: `/storage/tv/Another Show (2009)/Specials/Episode 10${n} The Hero's Urgent Call-out!.mkv`
+    Path: `/storage/tv/Another Show (2001)/Specials/Episode 10${n} Some Special.mkv`
 });
 
 const seriesItem = (over: Partial<MergedItem> = {}): MergedItem =>
@@ -222,7 +222,7 @@ describe('fix_metadata', () => {
         const h = harness();
         const { structuredContent } = await h.call({ query: 'Another Show' });
 
-        expect(structuredContent.effects.join('\n')).toContain('Urgent Call-out');
+        expect(structuredContent.effects.join('\n')).toContain('Some Special');
         expect(structuredContent.summary).toContain('1 of 3 episodes');
     });
 
@@ -1046,7 +1046,7 @@ describe('locks on Jellyfin', () => {
 
     it('treats a locked Name as a locked title', async () => {
         const named = { ...broken(1), LockData: false, LockedFields: ['Name'] };
-        const titleOnly = { ...named, IndexNumber: 1, ParentIndexNumber: 1, Path: '/tv/Some Show/Season 01/Some Show - S01E01 - Hero Call Urgent.mkv' };
+        const titleOnly = { ...named, IndexNumber: 1, ParentIndexNumber: 1, Path: '/tv/Some Show/Season 01/Some Show - S01E01 - Other Words Here.mkv' };
         const h = harness({ episodes: [titleOnly] });
         const { structuredContent } = await h.call({ query: 'Another Show' });
 

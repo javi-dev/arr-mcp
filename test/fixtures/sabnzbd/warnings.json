@@ -86,37 +86,37 @@
     },
     {
       "type": "WARNING",
-      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 22@news.example.test:563 (news.example.test)",
+      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 22@news1.example.test:563 (news1.example.test)",
       "time": 1793036187,
       "origin": "newswrapper.py705"
     },
     {
       "type": "WARNING",
-      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 6@news.example.test:563 (news.example.test)",
+      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 6@news1.example.test:563 (news1.example.test)",
       "time": 1793036187,
       "origin": "newswrapper.py705"
     },
     {
       "type": "WARNING",
-      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 24@news.example.test:563 (news.example.test)",
+      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 24@news1.example.test:563 (news1.example.test)",
       "time": 1793036187,
       "origin": "newswrapper.py705"
     },
     {
       "type": "WARNING",
-      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 2@news.example.test:563 (news.example.test)",
+      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 2@news1.example.test:563 (news1.example.test)",
       "time": 1793036277,
       "origin": "newswrapper.py705"
     },
     {
       "type": "WARNING",
-      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 33@news.example.test:563 (news.example.test)",
+      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 33@news1.example.test:563 (news1.example.test)",
       "time": 1793036278,
       "origin": "newswrapper.py705"
     },
     {
       "type": "WARNING",
-      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 7@news.example.test:563 (news.example.test)",
+      "text": "Kon geen verbinding maken: [Errno 111] Connection refused 7@news1.example.test:563 (news1.example.test)",
       "time": 1793036278,
       "origin": "newswrapper.py705"
     }

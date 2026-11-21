@@ -2,7 +2,7 @@
   "indexers": [
     {
       "indexerId": 20,
-      "indexerName": "Indexer 5",
+      "indexerName": "Indexer 1",
       "averageResponseTime": 203,
       "averageGrabResponseTime": 0,
       "numberOfQueries": 91,
@@ -30,7 +30,7 @@
     },
     {
       "indexerId": 8,
-      "indexerName": "Indexer 1",
+      "indexerName": "Indexer 3",
       "averageResponseTime": 241,
       "averageGrabResponseTime": 0,
       "numberOfQueries": 112,
@@ -58,7 +58,7 @@
     },
     {
       "indexerId": 21,
-      "indexerName": "Indexer 3",
+      "indexerName": "Indexer 5",
       "averageResponseTime": 226,
       "averageGrabResponseTime": 0,
       "numberOfQueries": 150,
@@ -95,7 +95,7 @@
   ],
   "hosts": [
     {
-      "host": "example-host",
+      "host": "service.example.test",
       "numberOfQueries": 26703,
       "numberOfGrabs": 158
     },

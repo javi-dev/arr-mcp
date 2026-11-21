@@ -397,7 +397,7 @@
     "implementationName": "Newznab",
     "implementation": "Newznab",
     "configContract": "NewznabSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#newznab",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 8
   },
@@ -949,7 +949,7 @@
     "implementationName": "Newznab",
     "implementation": "Newznab",
     "configContract": "NewznabSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#newznab",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 9
   },
@@ -1566,7 +1566,7 @@
     "implementationName": "Cardigann",
     "implementation": "Cardigann",
     "configContract": "CardigannSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#indexer3",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 21
   },
@@ -2328,7 +2328,7 @@
     "implementationName": "Newznab",
     "implementation": "Newznab",
     "configContract": "NewznabSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#newznab",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 34
   },
@@ -3023,7 +3023,7 @@
         "order": 2,
         "name": "info_top100",
         "label": "About the top100 selection",
-        "value": "This indexer uses <b>top100_recent</b> for its <i>TEST</i> and <i>keyword-less</i> searches. However it will often only include Movies and TV in its top100_recent list which makes setting up Lidarr for Audio or other similar *Arr apps problematic. By changing the top100 selector you will make the indexer use a more focused top100 for the category group your *Arr app uses.",
+        "value": "Information this indexer shows in Prowlarr.",
         "type": "info",
         "advanced": false,
         "privacy": "normal",
@@ -3042,7 +3042,7 @@
         "order": 4,
         "name": "info_uploader",
         "label": "About filtering by Uploader",
-        "value": "You can filter by Uploader by entering a Case Sensitive username, or leave empty to get all results.<br>Note: this is the username of the Uploader and not the Groupname that often show up at the end of its titles, eg -MeGusta.",
+        "value": "Information this indexer shows in Prowlarr.",
         "type": "info",
         "advanced": false,
         "privacy": "normal",
@@ -3052,7 +3052,7 @@
     "implementationName": "Cardigann",
     "implementation": "Cardigann",
     "configContract": "CardigannSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#indexer5",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 20
   }

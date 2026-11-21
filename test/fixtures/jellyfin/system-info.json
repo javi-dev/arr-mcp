@@ -28,7 +28,7 @@
   "EncoderLocation": "System",
   "SystemArchitecture": "X64",
   "LocalAddress": "http://192.0.2.10:8096",
-  "ServerName": "example-host",
+  "ServerName": "service.example.test",
   "Version": "10.11.11",
   "ProductName": "Jellyfin Server",
   "OperatingSystem": "",

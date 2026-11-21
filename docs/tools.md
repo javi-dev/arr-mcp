@@ -2365,7 +2365,7 @@ read differently.
 
 A scan asks whether a file is on disk; this asks whether the metadata attached
 to that file **describes** it, and replaces it when it does not (a file named
-`Specials/Episode 101 The Hero's Call…` displayed as S1E1 *Prologue to the First Battle!*).
+`Specials/Episode 101 Some Special…` displayed as S1E1 *Some Episode Title*).
 
 A Grimmory book is repaired too, by its id and through Grimmory's own metadata
 providers; see [A Grimmory book](#a-grimmory-book) below. A title that matches
