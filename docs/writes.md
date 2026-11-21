@@ -250,7 +250,9 @@ any confirmation that arrived during the watch, after reading them once more,
 and any library snapshot is dropped after it. Whether to start them is decided
 when that start gets the lane: if another confirmation to that qBittorrent was
 accepted since the recheck, even one that found nothing to do and even another
-`recheck_torrents`, they are left stopped and listed as `left_stopped`, because
+`recheck_torrents`, or a call without `confirm` came back as a no-op (a
+`pause_downloads` of a torrent already stopped answers that way, and asks for
+no confirmation), they are left stopped and listed as `left_stopped`, because
 a pause sent then would look the same and starting them would undo it. If the
 instance is still busy 30 seconds later, the request has been cancelled, or
 qBittorrent refuses the start, they are left stopped too, listed as
@@ -589,8 +591,10 @@ add_media { service: "radarr", external_id: "550" }
 > library.
 
 That means **adding a second instance changes how existing prompts behave**:
-requests that used to be unambiguous start asking which instance you meant. It
-only affects writes.
+requests that used to be unambiguous start asking which instance you meant.
+Writes refuse this way, and so do reads that act on one item of one instance,
+such as `get_history` with an `id`. A read that covers a whole service asks
+every instance of it instead.
 
 ## Managing someone else's request
 

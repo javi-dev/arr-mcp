@@ -57,7 +57,9 @@ export function chooseOne<T>(
             });
         }
 
-        throw new ServiceError('NotFound', service, `"${requested}" matches more than one ${what} on ${service}`, {
+        // Every option it names exists, so this is the request being unclear
+        // rather than something missing, as for several instances (#11).
+        throw new ServiceError('InvalidRequest', service, `"${requested}" matches more than one ${what} on ${service}`, {
             remedy: `Be exact. It matches: ${loose.map(describe).join('; ')}. Naming the id is unambiguous.`
         });
     }
@@ -65,7 +67,7 @@ export function chooseOne<T>(
     // Exactly one is not a choice, so making it silently is not a guess.
     if (options.length === 1) return options[0]!;
 
-    throw new ServiceError('NotFound', service, `${service} has several ${what}s and none was named`, {
+    throw new ServiceError('InvalidRequest', service, `${service} has several ${what}s and none was named`, {
         remedy: `Name one. Available: ${options.map(describe).join('; ')}. The wrong one is not obvious until the download finishes.`
     });
 }

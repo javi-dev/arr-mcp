@@ -257,6 +257,10 @@ describe('add_media choosing a profile and folder', () => {
         await expect(
             h.call({ service: 'radarr', external_id: '603', quality_profile: 'Balanced', dry_run: true })
         ).rejects.toThrow(/matches more than one/);
+        // Both profiles exist, so this is not "radarr not found" (#29).
+        await expect(
+            h.call({ service: 'radarr', external_id: '603', quality_profile: 'Balanced', dry_run: true })
+        ).rejects.toMatchObject({ kind: 'InvalidRequest' });
     });
 
     it('lets an exact name win over an option that merely contains it', async () => {
