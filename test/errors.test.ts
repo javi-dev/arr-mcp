@@ -241,6 +241,11 @@ describe('classifyFetchError', () => {
             ['refused http://host:1/?apikey=ab`cdef', 'refused http://host:1/...'],
             // A parser keeps a backtick in a host raw, so the URL goes on past it.
             ['refused http://a`b.example/api?apikey=abc', 'refused http://a`b.example/...'],
+            [
+                'Request cannot be constructed from a URL that includes credentials: http://user:s3cret@a`b.example/api?apikey=abc',
+                'Request cannot be constructed from a URL that includes credentials: http://a`b.example/...'
+            ],
+            ['refused http://user:s3c`ret@example.com/path?apikey=abc', 'refused http://example.com/...'],
             // Past the shared scrub's scheme bound, which the older read scrub had none of.
             [`refused a${'0'.repeat(32)}://user:pw@host:1/?apikey=abc`, `refused a${'0'.repeat(32)}(a URL, left out)`]
         ];
