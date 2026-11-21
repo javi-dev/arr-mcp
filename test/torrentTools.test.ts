@@ -7,6 +7,7 @@ import { MAX_TORRENT_BASE64, registerTorrentTools } from '../src/tools/torrentTo
 import type { ServiceAdapter } from '../src/services/types.ts';
 import { HASH, OTHER, PASSKEY, bencode, confirmed, fakeQbittorrent, toolServer, torrent, writeContext, type FakeOptions } from './helpers/fakeQbittorrent.ts';
 import { instancesOf } from './helpers/instances.ts';
+import { jsonResponse, textResponse } from './helpers/serve.ts';
 
 const config = (over: Record<string, unknown> = {}) =>
     ({
@@ -188,6 +189,54 @@ describe('recheck_torrents', () => {
         } finally {
             resume();
             unblock();
+        }
+    });
+
+    /** Overtaken, it reports from a read taken after standing down: what the torrent is doing then, or that it could not tell. */
+    it.each([
+        ['running', { left_stopped: undefined, already_running: [HASH] }, /already running when they were read for the start/],
+        ['unreadable', { left_stopped: [HASH], state_unread: expect.stringMatching(/500|broken/) as unknown }, /could not be read .*check get_queue before starting any of them/]
+    ])('reports a torrent it stood down on from a read after it: %s', async (mode, expected, said) => {
+        const t = torrent({ state: 'stoppedUP' });
+        const qb = fakeQbittorrent({ torrents: [t], recheckStates: ['checkingUP', 'stoppedUP'] });
+        let resume = (): void => undefined;
+        const watching = new Promise<void>(resolve => {
+            resume = resolve;
+        });
+        let readsAfterResume: number | undefined;
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            // The watch's own read passes; the next is the one it reports from.
+            if (url.includes('/torrents/info') && readsAfterResume !== undefined && ++readsAfterResume === 2) {
+                return mode === 'running' ? jsonResponse([{ ...t, state: 'uploading' }]) : textResponse('broken', 500);
+            }
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        let sleeping = false;
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)], {
+            sleep: async () => {
+                if (sleeping) return;
+                sleeping = true;
+                await watching;
+            }
+        });
+        try {
+            const recheck = await call('recheck_torrents', { ids: [HASH], resume_if_complete: true });
+            const move = await call('set_torrent_category', { id: HASH, category: 'tv' });
+            const rechecking = call('recheck_torrents', { ids: [HASH], resume_if_complete: true, confirm: recheck.structuredContent.confirm_token });
+            await vi.waitFor(() => expect(sleeping).toBe(true));
+            await call('set_torrent_category', { id: HASH, category: 'tv', confirm: move.structuredContent.confirm_token });
+            readsAfterResume = 0;
+            resume();
+            const done = await rechecking;
+            expect(done.structuredContent.result).toMatchObject({ rechecking: [HASH], ...Object.fromEntries(Object.entries(expected).filter(([, v]) => v !== undefined)) });
+            if (mode === 'running') expect(done.structuredContent.result).not.toHaveProperty('left_stopped');
+            expect(done.content[0]?.text).toMatch(said);
+            expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck', '/torrents/setCategory']);
+        } finally {
+            resume();
         }
     });
 
@@ -651,7 +700,7 @@ describe('recheck_torrents', () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP', 'uploading'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
         expect(applied.structuredContent.result).toEqual({ rechecking: [HASH], already_running: [HASH] });
-        expect(applied.content[0]?.text).toMatch(/already running again when it was time to start them/);
+        expect(applied.content[0]?.text).toMatch(/already running when they were read for the start/);
         expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 });

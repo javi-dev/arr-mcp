@@ -89,7 +89,7 @@ type TorrentToolOptions = { sleep?: (ms: number) => Promise<void> };
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
-type RecheckOutcome = { rechecking: string[]; resumed?: string[]; left_stopped?: string[]; incomplete?: string[]; errored?: string[]; still_checking?: string[]; still_moving?: string[]; unconfirmed?: string[]; gone?: string[]; resume_failed?: string[]; resume_error?: string; already_running?: string[] };
+type RecheckOutcome = { rechecking: string[]; resumed?: string[]; left_stopped?: string[]; incomplete?: string[]; errored?: string[]; still_checking?: string[]; still_moving?: string[]; unconfirmed?: string[]; gone?: string[]; resume_failed?: string[]; resume_error?: string; already_running?: string[]; state_unread?: string };
 
 /**
  * Watches a recheck that has been sent, and starts what came back whole and
@@ -159,6 +159,8 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
     };
     let resumeError: string | undefined;
     let leftStopped = false;
+    // Whether the lists below come from a read taken when it was time to start.
+    let readAtStart = false;
     if (toStart.length > 0) {
         try {
             // In the lane, so a confirmed write to this client cannot land between the read and the start.
@@ -167,6 +169,7 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
                 leftStopped = overtaken;
                 if (overtaken) return;
                 await readAgain();
+                readAtStart = true;
                 if (toStart.length === 0) return;
                 // The last point to stand down: once sent, the start runs to the end, as an apply does,
                 // including the older API's verb when qBittorrent does not know the new one.
@@ -178,12 +181,15 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
             resumeError = err instanceof Error ? err.message : String(err);
         }
     }
-    if (leftStopped) {
-        // For the report only, so outside the lane: nothing will be started.
+    // Not started, and not read when it was time to: read them for the report
+    // only, outside the lane, since nothing will be started now.
+    let stateUnread: string | undefined;
+    if (toStart.length > 0 && !readAtStart && (leftStopped || resumeError !== undefined)) {
         try {
             await readAgain();
         } catch (err) {
-            logger.warn({ service: client.id, err }, 'could not read the torrents again after standing down; reporting what the watch saw');
+            logger.warn({ service: client.id, err }, 'could not read the torrents again; reporting what the watch saw');
+            stateUnread = err instanceof Error ? err.message : String(err);
         }
     }
     const resumeFailed = resumeError !== undefined;
@@ -198,7 +204,8 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         ...list('unconfirmed', [...wholeAndStopped.filter(id => !toStart.includes(id) && !Object.values(dropped).some(group => group.includes(id))), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id) && !moving.has(id) && !failing.has(id))]),
         ...list('gone', [...finished.flatMap(([id, s]) => (s === undefined ? [id] : [])), ...dropped.gone]),
         ...(resumeError === undefined || toStart.length === 0 ? {} : { resume_error: resumeError }),
-        ...list('already_running', dropped.running)
+        ...list('already_running', dropped.running),
+        ...(stateUnread === undefined || toStart.length === 0 ? {} : { state_unread: stateUnread })
     };
 }
 
@@ -212,13 +219,14 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
         ...part('showing an error after the recheck was sent; get_queue shows only that state, and the reason is in the qBittorrent log', o.errored),
         ...part('still checking, so start these with pause_downloads and `action: "resume"` once get_queue shows them complete', o.still_checking),
         ...part('still moving to the save path and not started, so once get_queue no longer shows them at moving and shows them complete, start them with pause_downloads and `action: "resume"`', o.still_moving),
-        ...part('not seen to finish complete, so not started: no check was seen running, or one was checking again or at missing files when it was time to start them; look at them again in get_queue', o.unconfirmed),
+        ...part('not started: no check was seen running, or when it was time to start them they were checking again, at missing files or no longer complete; look at them again in get_queue', o.unconfirmed),
         ...part('no longer in qBittorrent', o.gone),
-        ...part('already running again when it was time to start them, so not started here', o.already_running),
+        ...part('already running when they were read for the start, so not started here', o.already_running),
         ...part(
             `finished complete but could not be started${o.resume_error === undefined ? '' : ` (${o.resume_error})`}; start them with pause_downloads and \`action: "resume"\` if that is still wanted`,
             o.resume_failed
-        )
+        ),
+        ...(o.state_unread === undefined ? [] : [`what those not started are doing now could not be read (${o.state_unread}), so check get_queue before starting any of them`])
     ].join('; ')}.`;
 };
 
@@ -372,7 +380,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         name: 'recheck_torrents',
         title: 'Recheck torrents',
         description:
-            'Has qBittorrent verify torrents against the data on disk: the usual next step for a torrent at `missing files` once its data is back. `resume_if_complete` watches about 45 seconds and starts stopped ones found complete, unless a later write got in (`left_stopped`); slower ones show as checking. Previews first; confirm to recheck. Field reference: arr://docs/recheck_torrents.',
+            'Has qBittorrent verify torrents against the data on disk: the usual next step for a torrent at `missing files` once its data is back. `resume_if_complete` watches about 45 seconds and starts stopped ones found complete, unless a later confirmation was accepted, even a no-op (`left_stopped`); slower: still checking. Previews first. Field reference: arr://docs/recheck_torrents.',
         inputSchema: RecheckInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'recheck_torrents',
