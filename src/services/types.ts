@@ -2091,11 +2091,10 @@ export interface TorrentManageCapable {
     readonly allowedPaths: readonly string[];
     /** From `protect_private_torrents` and `protect_all_torrents`. */
     readonly deleteProtection: { readonly private: boolean; readonly all: boolean };
-    /** `trackersOptional`: a failed tracker request reads as an unreadable list (no rows,
-     *  `trackerDigest: null`) instead of failing the whole read, for a caller that can do
-     *  without the trackers. */
-    getTorrentDetails(id: string, opts?: { trackersOptional?: boolean }): Promise<TorrentDetails>;
+    getTorrentDetails(id: string): Promise<TorrentDetails>;
     torrentCheckStates(ids: readonly string[]): Promise<TorrentCheckState[]>;
+    /** A torrent's trackers alone, as `getTorrentDetails` reports them. */
+    torrentTrackers(id: string): Promise<Pick<TorrentDetails, 'trackers' | 'trackerDigest'>>;
     /** The file paths of one torrent, relative to where it is stored. */
     torrentFileNames(id: string): Promise<string[]>;
     recheckTorrents(ids: readonly string[]): Promise<void>;

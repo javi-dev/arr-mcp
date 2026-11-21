@@ -2079,16 +2079,16 @@ describe('reannounce_torrent', () => {
         return { call, posts: qb.posts, reads: (wanted: string) => paths.filter(p => p === wanted).length };
     }
 
-    const TRACKER_FAILURES: [string, () => Response][] = [
-        ['an error', () => new Response('broken', { status: 500 })],
-        ['a rate limit', () => new Response('slow down', { status: 429 })],
-        ['a 404', () => new Response('not found', { status: 404 })],
+    const TRACKER_FAILURES: [string, () => Response, RegExp][] = [
+        ['an error', () => new Response('broken', { status: 500 }), /^qbittorrent upstream error: HTTP 500/],
+        ['a rate limit', () => new Response('slow down', { status: 429 }), /^qbittorrent rate limited/],
+        ['a 404', () => new Response('not found', { status: 404 }), /^qbittorrent upstream error: qBittorrent could not be asked about this torrent/],
         ['a dropped connection', () => {
             throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET', message: 'socket hang up' } });
-        }],
+        }, /^qbittorrent unreachable: socket hang up/],
         ['no answer', () => {
             throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
-        }]
+        }, /^qbittorrent timed out/]
     ];
 
     it.each(TRACKER_FAILURES.flatMap(([why, fail]) => ['stoppedUP', 'pausedDL'].map(state => [why, state, fail] as const)))(
@@ -2101,23 +2101,29 @@ describe('reannounce_torrent', () => {
             expect(preview.structuredContent.target).toBe(`qbittorrent:${HASH}`);
             expect(preview.structuredContent.confirm_token).toBeUndefined();
             expect(h.reads('/torrents/info')).toBe(1);
+            // A stopped torrent's trackers are not asked for at all.
+            expect(h.reads('/torrents/trackers')).toBe(0);
             expect(h.posts).toEqual([]);
         }
     );
 
-    it.each(TRACKER_FAILURES)('still refuses a running torrent when the tracker request meets %s', async (_why, fail) => {
+    it.each(TRACKER_FAILURES)('still refuses a running torrent when the tracker request meets %s, with that failure', async (_why, fail, message) => {
         const h = answering({}, path => (path === '/torrents/trackers' ? fail() : undefined));
-        await expect(h.call('reannounce_torrent', { id: HASH })).rejects.toThrow(/tracker list qBittorrent gave for this torrent could not be read/);
+        await expect(h.call('reannounce_torrent', { id: HASH })).rejects.toThrow(message);
         expect(h.reads('/torrents/info')).toBe(1);
+        // Nothing else about the torrent is read for a reannounce.
+        expect(h.reads('/torrents/files')).toBe(0);
         expect(h.posts).toEqual([]);
     });
 
-    it('still fails every other read of a torrent whose tracker request fails', async () => {
-        const adapter = new QbittorrentAdapter(config(), fakeQbittorrent({ failing: ['/torrents/trackers'] }).impl);
-        await expect(adapter.getTorrentDetails(HASH)).rejects.toThrow(/upstream error/);
-        const details = await adapter.getTorrentDetails(HASH, { trackersOptional: true });
-        expect(details.trackers).toEqual([]);
-        expect(details.trackerDigest).toBeNull();
+    it('refuses at confirm, without announcing, when the tracker request fails after the preview', async () => {
+        let failing = false;
+        const h = answering({}, path => (failing && path === '/torrents/trackers' ? new Response('broken', { status: 500 }) : undefined));
+        const preview = await h.call('reannounce_torrent', { id: HASH });
+        expect(preview.structuredContent.confirm_token).toBeDefined();
+        failing = true;
+        await expect(h.call('reannounce_torrent', { id: HASH, confirm: preview.structuredContent.confirm_token })).rejects.toThrow(/^qbittorrent upstream error: HTTP 500/);
+        expect(h.posts).toEqual([]);
     });
 
     it('refuses a hash the client does not have', async () => {
