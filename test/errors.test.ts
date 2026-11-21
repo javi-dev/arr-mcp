@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ServiceError, classifyFetchError, classifyHttpStatus } from '../src/core/errors.ts';
+import { scrubUrls as scrubPastedUrls } from '../src/core/pastedUrl.ts';
 
 describe('ServiceError.message', () => {
     it('produces actionable text naming the service, cause, and target', () => {
@@ -216,7 +217,35 @@ describe('classifyFetchError', () => {
         const text = classifyFetchError(e, 'sabnzbd', 'http://host:1').message;
         expect(text).not.toContain('s3cret');
         expect(text).not.toContain('abc');
-        expect(text).toContain('includes credentials: http://host:1/api');
+        expect(text).toContain('includes credentials: http://host:1/...');
+    });
+
+    // #20: this scrub kept the path, so a key in it reached a read tool's error.
+    it('keeps a key in the path out of the detail', () => {
+        const key = 'd41d8cd98f00b204e9800998ecf8427e';
+        const e = Object.assign(new TypeError('fetch failed'), {
+            cause: { code: 'ESOMETHINGNEW', message: `bad response from http://host:1/${key}/api?x=1#frag` }
+        });
+        const out = classifyFetchError(e, 'sabnzbd', 'http://host:1');
+        expect(out.message).not.toContain(key);
+        expect(out.detail).toBe('bad response from http://host:1/... at host:1');
+    });
+
+    it('cuts a URL down exactly as a write tool cuts its errors', () => {
+        const messages = [
+            'refused http://user:pw@host:1/key/path?apikey=abc',
+            'refused https://0123456789abcdef0123.example.org/announce',
+            'refused magnet:?xt=urn:btih:abc&tr=http://tracker.example.org/key/announce',
+            'refused http://host:1 and http://host:2/.'
+        ];
+        for (const message of messages) {
+            expect(classifyFetchError(new Error(message), 'radarr', 'http://h:7878').detail).toBe(`${scrubPastedUrls(message)} at h:7878`);
+        }
+    });
+
+    it('leaves a URL with nothing but scheme and host as it is', () => {
+        const out = classifyFetchError(new Error('nothing at http://host:1/'), 'radarr', 'http://host:1');
+        expect(out.detail).toBe('nothing at http://host:1/ at host:1');
     });
 
     it('does not throw when the url is unparseable', () => {

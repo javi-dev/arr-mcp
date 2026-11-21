@@ -1,3 +1,4 @@
+import { scrubUrls } from './pastedUrl.ts';
 
 export type ServiceErrorKind =
     | 'Unreachable'
@@ -106,23 +107,6 @@ function safeHost(url: string): string {
     } catch {
         return url;
     }
-}
-
-const URL_IN_TEXT = /[a-z][a-z0-9+.-]*:\/\/[^\s'"<>]+/gi;
-
-/**
- * Reduces every URL in a message to scheme, host and path. Node quotes the full
- * URL when it refuses one with userinfo, and a query string can carry an api key.
- */
-export function scrubUrls(text: string): string {
-    return text.replace(URL_IN_TEXT, match => {
-        try {
-            const u = new URL(match);
-            return `${u.protocol}//${u.host}${u.pathname}`;
-        } catch {
-            return match.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1').replace(/[?#].*$/, '');
-        }
-    });
 }
 
 /** A plain endpoint-vocabulary word, or a REST version segment such as `v3`. */
@@ -261,7 +245,9 @@ export function classifyFetchError(err: unknown, service: string, url: string): 
     }
 
     // undici's own message is always the useless "fetch failed"; the cause
-    // carries the one that says what actually happened.
+    // carries the one that says what actually happened. Node quotes the full URL
+    // when it refuses one with userinfo, and a key can sit in its userinfo, path
+    // or query, so every URL is cut to scheme and host, as write tools cut theirs.
     const detail = scrubUrls(e.cause?.message ?? e.message ?? 'unknown error');
     return new ServiceError('Unreachable', service, `${detail} at ${host}`, { cause: err });
 }
