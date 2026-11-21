@@ -3464,7 +3464,8 @@ Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
 The watch does not hold up other writes to that qBittorrent. When any other
 confirmation to it is accepted meanwhile, such as a pause or another recheck,
-the complete torrents are left stopped and listed as `left_stopped` rather than
+or a call to it comes back as a no-op without one (not a `dry_run`), such as a
+pause of a torrent already stopped, the complete torrents are left stopped and listed as `left_stopped` rather than
 started over it. When the start cannot be sent, because the client stays busy,
 the request was cancelled or qBittorrent refuses it, they are left stopped and
 listed as `resume_failed`, with the reason in `resume_error`. The reply goes by

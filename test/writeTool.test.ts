@@ -1312,6 +1312,46 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         expect((await first).structuredContent.result).toEqual({ overtaken: true });
     });
 
+    // #33: a no-op asks for no token, so a pause of something already stopped
+    // usually arrives without one, and it is still a request to leave it so.
+    it.each([
+        ['a call without confirm that found nothing to do', {}, true],
+        ['a dry run that found nothing to do', { dry_run: true }, false]
+    ])('counts %s as overtaking: %s', async (_label, extra, overtaken) => {
+        const later = gate();
+        const h = buildHarness({
+            plan: ({ id }) => Promise.resolve(id === '9' ? { ...PLAN, target: id, noop: true } : { ...PLAN, target: id }),
+            afterWrite: async (_sent, then) => {
+                await later.opened;
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken }));
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        const first = h.call('delete_media', { id: '5', confirm: token });
+        await settled();
+        const noop = await h.call('delete_media', { id: '9', ...extra });
+        expect(noop.structuredContent.noop).toBe(true);
+        expect(noop.structuredContent.confirm_token).toBeUndefined();
+        later.open();
+        expect((await first).structuredContent.result).toEqual({ overtaken });
+    });
+
+    it('does not count a preview that has something to do, since only its confirmation is the request', async () => {
+        const later = gate();
+        const h = buildHarness({
+            afterWrite: async (_sent, then) => {
+                await later.opened;
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken }));
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        const first = h.call('delete_media', { id: '5', confirm: token });
+        await settled();
+        expect((await h.call('delete_media', { id: '9' })).structuredContent.confirm_token).toBeDefined();
+        later.open();
+        expect((await first).structuredContent.result).toEqual({ overtaken: false });
+    });
+
     it('does not count a change an afterWrite makes, so two overlapping writes do not both stand down', async () => {
         const fiveDone = gate();
         const r = sending('none', {
