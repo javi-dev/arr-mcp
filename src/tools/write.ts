@@ -185,15 +185,19 @@ export type AfterWrite = {
      * whether another confirmation to the instance was accepted since this
      * one (`overtaken`), so a change that only made sense against the state
      * then (starting what a recheck found whole) can stand down rather than
-     * undo a later request. A confirmation that found nothing to do counts,
-     * since a pause confirmed on a torrent already stopped is still a request
-     * to leave it so; one whose token was refused, or whose plan failed, does
-     * not. `cancelled` reads the request's signal as it is when called, for a
-     * check just before the change. Throws without running `call` when the
+     * undo a later request. A call that found nothing to do counts, confirmed
+     * or not (only a dry run does not), since a pause of a torrent already
+     * stopped is still a request to leave it so, and without a confirmation is
+     * how it usually arrives; one whose token was refused, or whose plan
+     * failed, does not. `overtaken` reads the count as it is when called: a
+     * call without a token never waits for the lane, so one can be answered
+     * while `call` is reading, and is seen by asking again just before the
+     * change. `cancelled` reads the request's signal as it is when called, for
+     * a check just before the change. Throws without running `call` when the
      * instance is still busy after the same 30 seconds a confirmation waits,
      * or when the request is cancelled first.
      */
-    write: <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>) => Promise<T>;
+    write: <T>(call: (since: { overtaken: () => boolean; cancelled: () => boolean }) => Promise<T>) => Promise<T>;
 };
 
 export type WriteContext = {
@@ -387,7 +391,10 @@ const writeLanes = new Map<string, Lane>();
 
 /**
  * How many confirmations each instance has accepted, counted in its lane: a
- * valid token about to apply, or one whose plan found nothing to do. An
+ * valid token about to apply, or one whose plan found nothing to do. A call
+ * without a token whose plan found nothing to do counts as well, where its
+ * plan ends, since it never waits for the lane: it answers "no confirmation is
+ * needed", so it is the whole request (#33). A dry run never counts. An
  * `afterWrite` compares it to the count its own confirmation took, to learn
  * whether another came in between. A `then.write` is not counted, being part
  * of a confirmation already counted. One number per configured instance.
@@ -656,14 +663,19 @@ export function registerWriteTool<
         const accepted = (): void => {
             if (presented !== undefined && !dryRun) counted = countConfirmation(service);
         };
+        // A no-op needs no token, so without one it is the request as made and
+        // counts too. Not a dry run, which asked only what would happen.
+        const acceptedNoop = (): void => {
+            if (!dryRun) counted = countConfirmation(service);
+        };
 
         // A later change an `afterWrite` makes, back in the lane the apply held.
         const then: AfterWrite = {
-            write: async <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>): Promise<T> => {
+            write: async <T>(call: (since: { overtaken: () => boolean; cancelled: () => boolean }) => Promise<T>): Promise<T> => {
                 if (signal?.aborted === true) throw new Error('the request was cancelled before this change was sent');
                 const turn = await inLane(service, signal, async () => {
                     try {
-                        return await call({ overtaken: confirmations.get(service) !== counted, cancelled: () => signal?.aborted === true });
+                        return await call({ overtaken: () => confirmations.get(service) !== counted, cancelled: () => signal?.aborted === true });
                     } finally {
                         // Before the lane is handed on, as after `apply`.
                         library.invalidate();
@@ -769,7 +781,7 @@ export function registerWriteTool<
 
             // --- 1. Nothing to do -------------------------------------------------
             if (plan.noop === true) {
-                accepted();
+                acceptedNoop();
                 const id = quiet ? undefined : audit.begin(record);
                 const next = plan.next ?? [];
                 if (id !== undefined) audit.settle(id, 'dry_run', next.length > 0 ? 'no-op: listed only' : 'no-op: already in the requested state');

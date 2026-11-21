@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ConfirmTokens, CONFIRM_TTL_MS, type WriteIntent } from '../src/core/confirm.ts';
+import { ConfirmTokens, CONFIRM_TTL_MS, MAX_CONSUMED, type WriteIntent } from '../src/core/confirm.ts';
 
 const intent = (over: Partial<WriteIntent> = {}): WriteIntent => ({
     tool: 'delete_media',
@@ -81,6 +81,76 @@ describe('confirmation tokens', () => {
         expect(result.ok).toBe(false);
         if (result.ok) return;
         expect(result.failure).toBe('expired');
+    });
+
+    // #27: a token verifies up to an age of exactly the TTL, so it has to be
+    // remembered as spent for that whole millisecond too.
+    it('accepts a token at an age of exactly the TTL and refuses it a millisecond later', () => {
+        const clock = stoppedClock();
+        const tokens = new ConfirmTokens({ clock: clock.now });
+        const atEdge = tokens.issue(intent());
+        const pastEdge = tokens.issue(intent());
+
+        clock.advance(CONFIRM_TTL_MS);
+        expect(tokens.verifyAndConsume(atEdge, intent()).ok).toBe(true);
+        clock.advance(1);
+        const result = tokens.verifyAndConsume(pastEdge, intent());
+        if (result.ok) throw new Error('expected a rejection');
+        expect(result.failure).toBe('expired');
+    });
+
+    it('still counts a token as spent at an age of exactly the TTL', () => {
+        const clock = stoppedClock();
+        const tokens = new ConfirmTokens({ clock: clock.now });
+        const token = tokens.issue(intent());
+
+        clock.advance(CONFIRM_TTL_MS - 1);
+        expect(tokens.verifyAndConsume(token, intent()).ok).toBe(true);
+        clock.advance(1);
+        const replay = tokens.verifyAndConsume(token, intent());
+        if (replay.ok) throw new Error('a spent token was accepted again at the TTL boundary');
+        expect(replay.failure).toBe('used');
+    });
+
+    it('refuses a token spent at exactly the TTL when it is replayed in the same millisecond', () => {
+        const clock = stoppedClock();
+        const tokens = new ConfirmTokens({ clock: clock.now });
+        const token = tokens.issue(intent());
+
+        clock.advance(CONFIRM_TTL_MS);
+        expect(tokens.verifyAndConsume(token, intent()).ok).toBe(true);
+        const replay = tokens.verifyAndConsume(token, intent());
+        if (replay.ok) throw new Error('a spent token was accepted again at the TTL boundary');
+        expect(replay.failure).toBe('used');
+    });
+
+    // The cap on remembered spent tokens is a deliberate trade: past it, the
+    // oldest spent tokens are forgotten before they expire and verify again
+    // for the rest of their window. These pin that choice so it stays one.
+    it('forgets the oldest spent tokens past the cap, reopening them inside their window', () => {
+        const clock = stoppedClock();
+        const tokens = new ConfirmTokens({ clock: clock.now, maxConsumed: 2 });
+        const [first, second, third] = [tokens.issue(intent()), tokens.issue(intent()), tokens.issue(intent())];
+        for (const token of [first, second, third]) {
+            expect(tokens.verifyAndConsume(token, intent()).ok).toBe(true);
+            clock.advance(1);
+        }
+
+        expect(tokens.verifyAndConsume(first, intent()).ok).toBe(true);
+        const kept = tokens.verifyAndConsume(third, intent());
+        if (kept.ok) throw new Error('a spent token inside the cap was accepted again');
+        expect(kept.failure).toBe('used');
+    });
+
+    it('remembers MAX_CONSUMED spent tokens by default and reopens the oldest past that', () => {
+        const tokens = new ConfirmTokens({ clock: stoppedClock().now });
+        const issued = Array.from({ length: MAX_CONSUMED + 1 }, () => tokens.issue(intent()));
+        for (const token of issued) expect(tokens.verifyAndConsume(token, intent()).ok).toBe(true);
+
+        expect(tokens.verifyAndConsume(issued[0] ?? '', intent()).ok).toBe(true);
+        const second = tokens.verifyAndConsume(issued[2] ?? '', intent());
+        if (second.ok) throw new Error('a spent token inside the cap was accepted again');
+        expect(second.failure).toBe('used');
     });
 
     // Reported as expired rather than mismatched, so the remedy tells the caller
@@ -212,6 +282,20 @@ describe('confirmation tokens', () => {
             if (result.ok) throw new Error(`expected a rejection for ${bad}`);
             expect(result.failure, bad).toBe('malformed');
         }
+    });
+
+    // #27: `parseInt` reads the issued-at field up to the first character it
+    // cannot, so a suffix used to leave a token that still verified.
+    it('refuses an issued-at field that is not exactly what the server writes', () => {
+        const tokens = new ConfirmTokens();
+        const token = tokens.issue(intent());
+        const [version, keyId, issuedAt, nonce, signature] = token.split('.');
+        for (const field of [`${issuedAt}_x`, `${issuedAt}~`, `${issuedAt} `, ` ${issuedAt}`, `-${issuedAt}`, `+${issuedAt}`, `0${issuedAt}`, `00${issuedAt}`, (issuedAt ?? '').toUpperCase(), '']) {
+            const result = tokens.verifyAndConsume(`${version}.${keyId}.${field}.${nonce}.${signature}`, intent());
+            if (result.ok) throw new Error(`expected a rejection for issued-at ${JSON.stringify(field)}`);
+            expect(result.failure, field).toBe('malformed');
+        }
+        expect(tokens.verifyAndConsume(token, intent()).ok).toBe(true);
     });
 
     it('calls a well-formed token with another key id foreign', () => {

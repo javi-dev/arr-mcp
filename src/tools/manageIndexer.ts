@@ -270,7 +270,7 @@ async function planEdit(adapter: Adapter, id: number | undefined, args: Settings
 async function planAdd(adapter: Adapter, definition: string | undefined, args: SettingsArgs): Promise<WritePlan> {
     if (definition === undefined || definition.trim() === '') {
         throw new ServiceError('NotFound', adapter.id, 'add needs `definition`', {
-            remedy: 'Name the indexer to add, for example "nyaasi" or "Nyaa.si".'
+            remedy: 'Name the indexer to add, for example "exampleindexer" or "Example Indexer".'
         });
     }
     const [{ definitions, configured }, lookups, apps] = await Promise.all([
@@ -407,7 +407,7 @@ const ManageIndexerInput = z.object({
     definition: z
         .string()
         .optional()
-        .describe('add only: the indexer to add, by its name in Prowlarr\'s Add Indexer list ("Nyaa.si") or its definition name ("nyaasi").'),
+        .describe('add only: the indexer to add, by its name in Prowlarr\'s Add Indexer list ("Example Indexer") or its definition name ("exampleindexer").'),
     priority: z.number().int().min(1).max(50).optional().describe('edit or add: 1 is searched first, 50 last. Prowlarr\'s default is 25.'),
     app_profile: z.string().optional().describe('edit or add: the Prowlarr app profile, by name.'),
     tags: z

@@ -108,6 +108,22 @@ const PLACEHOLDER_USER_NAME = /^(?:user\d+|example-user)$/;
 export const realUserNames = (text: string): string[] =>
     [...text.matchAll(/"\w*user_?name"\s*:\s*"([^"]*)"/gi)].map(m => m[1]!).filter(n => n !== '' && !PLACEHOLDER_USER_NAME.test(n));
 
+/** A credential-named query parameter in a URL, such as an indexer search link's `apikey`. */
+const QUERY_SECRET = /[?&](api_?key|passkey|token|access_token|auth_?token|password|nzb_?key)=([^&"\s]*)/gi;
+
+/** Every credential-named URL query parameter in raw text whose value is not the placeholder. */
+export const querySecrets = (text: string): string[] =>
+    [...text.matchAll(QUERY_SECRET)].filter(m => m[2] !== REDACTED && m[2] !== '').map(m => m[0]);
+
+/** The names the capture script gives indexers: `Indexer 3`, `Indexer 3 (Prowlarr)`, `indexer 3` as a sort name. */
+const PLACEHOLDER_INDEXER = /^(?:(?:Example )?Indexer(?: \d+)?(?: \(Prowlarr\))?|indexer \d+|Direct Download)$/;
+
+/** Every indexer name (`indexer`, `indexerName`) in raw text, and a Prowlarr indexer's `sortName`, that is not a placeholder. */
+export const realIndexerNames = (text: string, prowlarrIndexers = false): string[] =>
+    [...text.matchAll(prowlarrIndexers ? /"(?:indexer|indexerName|sortName)"\s*:\s*"([^"]*)"/g : /"(?:indexer|indexerName)"\s*:\s*"([^"]*)"/g)]
+        .map(m => m[1]!)
+        .filter(n => n !== '' && !PLACEHOLDER_INDEXER.test(n));
+
 type Finding = { file: string; path: string; reason: string };
 
 export function scan(file: string, node: unknown, path = '$', out: Finding[] = []): Finding[] {
@@ -173,6 +189,21 @@ describe('committed fixtures', () => {
         expect(findings).toEqual([]);
     });
 
+    // #31: an indexer search link carried its API key in the query string,
+    // which the key-name scan above cannot see.
+    it('hold no credential in a URL query string', async () => {
+        const findings = (await fixtureContents()).flatMap(({ file, text }) => querySecrets(text).map(found => `${file}: ${found.split('=')[0]}`));
+        expect(findings).toEqual([]);
+    });
+
+    // #31: indexer names say which indexers a deployment subscribes to.
+    it('name indexers only by placeholder', async () => {
+        const findings = (await fixtureContents()).flatMap(({ file, text }) =>
+            realIndexerNames(text, file.endsWith(join('prowlarr', 'indexer.json'))).map(name => `${file}: ${name}`)
+        );
+        expect(findings).toEqual([]);
+    });
+
     it('contain no public IP address anywhere in the file', async () => {
         const findings = (await fixtureContents()).flatMap(({ file, text }) =>
             publicAddresses(text).map(address => `${file}: ${address}`)
@@ -209,6 +240,19 @@ describe('the guard itself', () => {
         expect(realEmails('{\n  "email": "x@gmail.com"\n}')).toEqual(['x@gmail.com']);
         expect(realEmails('{\n  "email": "x@exampleXtest"\n}')).toEqual(['x@exampleXtest']);
         expect(realEmails('{\n  "email": "x@notexample.test.evil.nl"\n}')).toEqual(['x@notexample.test.evil.nl']);
+    });
+
+    it('flags a credential in a URL query string and passes the placeholder', () => {
+        expect(querySecrets('{"url":"https://indexer.example.test/api?t=search&apikey=0123abcd&limit=1"}')).toEqual(['&apikey=0123abcd']);
+        expect(querySecrets('{"url":"https://x.example.test/a?passkey=zz","b":"?API_KEY=y"}')).toEqual(['?passkey=zz', '?API_KEY=y']);
+        expect(querySecrets('{"url":"https://indexer.example.test/api?apikey=__REDACTED__&t=caps&key=a"}')).toEqual([]);
+    });
+
+    it('flags an indexer name that is not a placeholder', () => {
+        expect(realIndexerNames('{"indexer":"Some Real Site (Prowlarr)","b":{"indexerName":"Indexer 2"}}')).toEqual(['Some Real Site (Prowlarr)']);
+        expect(realIndexerNames('{"indexer":"Indexer 12","indexer2":"x","indexerName":"Example Indexer 1"}')).toEqual([]);
+        expect(realIndexerNames('{"sortName":"some real site"}', true)).toEqual(['some real site']);
+        expect(realIndexerNames('{"sortName":"daft punk"}')).toEqual([]);
     });
 
     it('flags a session id, which the capture script also redacts', () => {

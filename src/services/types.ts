@@ -2098,7 +2098,12 @@ export interface TorrentManageCapable {
     /** The file paths of one torrent, relative to where it is stored. */
     torrentFileNames(id: string): Promise<string[]>;
     recheckTorrents(ids: readonly string[]): Promise<void>;
-    startTorrents(ids: readonly string[]): Promise<void>;
+    /**
+     * `stillWanted` is asked once more before a qBittorrent older than 5 is
+     * sent the older verb, since its refusal of the new one started nothing.
+     * Answers false when that stood the start down.
+     */
+    startTorrents(ids: readonly string[], stillWanted?: () => boolean): Promise<boolean>;
     torrentCategories(): Promise<Map<string, TorrentCategory>>;
     torrentClientDefaults(): Promise<TorrentClientDefaults>;
     defaultSavePath(): Promise<string>;

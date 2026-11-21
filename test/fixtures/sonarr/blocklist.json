@@ -66,7 +66,7 @@
       ],
       "date": "2026-08-15T16:05:26Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lioness",
@@ -204,7 +204,7 @@
       ],
       "date": "2026-08-14T11:18:00Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Monsters of God",
@@ -303,7 +303,7 @@
       ],
       "date": "2026-08-12T01:09:06Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lucky (2026)",
@@ -432,7 +432,7 @@
       ],
       "date": "2026-07-24T08:20:58Z",
       "protocol": "usenet",
-      "indexer": "Spotarr (Prowlarr)",
+      "indexer": "Indexer 2 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lucky (2026)",
@@ -577,7 +577,7 @@
       ],
       "date": "2026-07-24T08:20:58Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lucky (2026)",
@@ -722,7 +722,7 @@
       ],
       "date": "2026-07-24T08:16:28Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lucky (2026)",
@@ -867,7 +867,7 @@
       ],
       "date": "2026-07-24T08:15:16Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lucky (2026)",
@@ -1012,7 +1012,7 @@
       ],
       "date": "2026-07-24T08:14:58Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lucky (2026)",
@@ -1157,7 +1157,7 @@
       ],
       "date": "2026-07-24T08:14:58Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lucky (2026)",
@@ -1302,7 +1302,7 @@
       ],
       "date": "2026-07-24T08:14:58Z",
       "protocol": "usenet",
-      "indexer": "altHUB (Prowlarr)",
+      "indexer": "Indexer 1 (Prowlarr)",
       "message": "Afgebroken, kan niet voltooid worden - https://sabnzbd.org/not-complete",
       "series": {
         "title": "Lucky (2026)",

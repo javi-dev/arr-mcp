@@ -2160,7 +2160,7 @@ reaches Sonarr, and the preview says which of the two kept it out.
 ### Adding
 
 `add` takes a `definition`, by the name in Prowlarr's Add Indexer list
-(`Nyaa.si`) or its definition name (`nyaasi`), and only adds **public indexers
+(`Example Indexer`) or its definition name (`exampleindexer`), and only adds **public indexers
 that need no login**: no password, cookie or captcha field. Private and
 semi-private ones are refused with a pointer to Prowlarr's UI, because arr-mcp
 never handles indexer credentials.
@@ -2365,7 +2365,7 @@ read differently.
 
 A scan asks whether a file is on disk; this asks whether the metadata attached
 to that file **describes** it, and replaces it when it does not (a file named
-`Specials/Episode 101 Videl's Crisis…` displayed as S1E1 *Prologue to Battle!*).
+`Specials/Episode 101 Some Special…` displayed as S1E1 *Some Episode Title*).
 
 A Grimmory book is repaired too, by its id and through Grimmory's own metadata
 providers; see [A Grimmory book](#a-grimmory-book) below. A title that matches
@@ -2374,7 +2374,7 @@ through Lidarr; see [Music, through Lidarr](#music-through-lidarr).
 
 Give a film or series title as `query`, resolved through the library index the
 same way `get_media_details` resolves one, or the `id` that
-`get_metadata_issues` printed for it (`plex:119962`, or bare). The id wins when
+`get_metadata_issues` printed for it (`plex:12345`, or bare). The id wins when
 both are given.
 
 With two media servers it repairs on the primary. `service` picks the other, and
@@ -3464,7 +3464,8 @@ Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
 The watch does not hold up other writes to that qBittorrent. When any other
 confirmation to it is accepted meanwhile, such as a pause or another recheck,
-the complete torrents are left stopped and listed as `left_stopped` rather than
+or a call to it comes back as a no-op without one (not a `dry_run`), such as a
+pause of a torrent already stopped, the complete torrents are left stopped and listed as `left_stopped` rather than
 started over it. When the start cannot be sent, because the client stays busy,
 the request was cancelled or qBittorrent refuses it, they are left stopped and
 listed as `resume_failed`, with the reason in `resume_error`. The reply goes by

@@ -104,7 +104,8 @@ type RecheckOutcome = { rechecking: string[]; resumed?: string[]; left_stopped?:
  * Run outside the instance's lane, as the write's `afterWrite`: the watch only
  * reads, and the start at the end goes through `write`, back in the lane. It
  * stands down when another confirmation to the client was accepted before the
- * start got the lane, even one that found nothing to do: a pause sent then
+ * start got the lane, even one that found nothing to do, or when a call to it
+ * without `confirm` came back as a no-op (#33): a pause sent then
  * leaves a checked torrent as stopped as the recheck did, and starting it would
  * undo the later request. The last read before the start is what is reported:
  * a torrent removed by then is gone, one at an error errored, one moving still
@@ -169,15 +170,23 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
             // In the lane, so a confirmed write to this client cannot land between the read and the start.
             await write(async ({ overtaken, cancelled }) => {
                 // Standing down needs no read, so it holds up nothing behind it.
-                leftStopped = overtaken;
-                if (overtaken) return;
+                leftStopped = overtaken();
+                if (leftStopped) return;
                 await readAgain();
                 readAtStart = true;
                 if (toStart.length === 0) return;
-                // The last point to stand down: once sent, the start runs to the end, as an apply does,
-                // including the older API's verb when qBittorrent does not know the new one.
+                // Asked again after the read: a call that found nothing to do never waits for the
+                // lane, so one can be answered while that read runs, and it counts as well (#33).
+                leftStopped = overtaken();
+                if (leftStopped) return;
+                // The last point to stand down: once qBittorrent accepts the start, it runs to the end,
+                // as an apply does. A qBittorrent older than 5 refuses the new verb without starting
+                // anything, so both are asked once more before the older one is sent.
                 if (cancelled()) throw new Error('the request was cancelled before they were started');
-                await client.startTorrents(toStart);
+                const started = await client.startTorrents(toStart, () => !overtaken() && !cancelled());
+                if (started) return;
+                leftStopped = overtaken();
+                if (!leftStopped) throw new Error('the request was cancelled before they were started');
             });
         } catch (err) {
             logger.warn({ service: client.id, err }, 'a recheck finished but the torrents could not be started');
@@ -219,7 +228,7 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
         // First, since it qualifies the lists after it: they are what the watch last saw.
         ...(o.state_unread === undefined ? [] : [`what the torrents not started are doing now could not be read (${o.state_unread}), so the lists below are what was last seen; check get_queue before starting any of them`]),
         ...part('started again', o.resumed),
-        ...part(`finished complete but left stopped, because another confirmation to this qBittorrent was accepted before the start (even one that found nothing to do, such as a pause of a stopped torrent); start them with pause_downloads and \`action: "resume"\` if that is still wanted${o.state_unread === undefined ? '' : ', once get_queue shows what they are doing now'}`, o.left_stopped),
+        ...part(`finished complete but left stopped, because another confirmation to this qBittorrent was accepted before the start, or a call to it found nothing to do (such as a pause of a stopped torrent, confirmed or not); start them with pause_downloads and \`action: "resume"\` if that is still wanted${o.state_unread === undefined ? '' : ', once get_queue shows what they are doing now'}`, o.left_stopped),
         ...part('came back incomplete, and any that was not stopped is downloading what is missing', o.incomplete),
         ...part('showing an error after the recheck was sent; get_queue shows only that state, and the reason is in the qBittorrent log', o.errored),
         ...part('still checking, so start these with pause_downloads and `action: "resume"` once get_queue shows them complete', o.still_checking),

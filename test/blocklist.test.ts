@@ -35,7 +35,7 @@ const radarrRow = (over: Record<string, unknown> = {}) => ({
     sourceTitle: 'Creed.III.2023.2160p.WEB-DL-FLUX',
     date: '2026-06-18T08:25:00Z',
     protocol: 'usenet',
-    indexer: 'altHUB (Prowlarr)',
+    indexer: 'Indexer 1 (Prowlarr)',
     message: 'Aborted, could not be completed',
     ...over
 });
@@ -47,7 +47,7 @@ const sonarrRow = (over: Record<string, unknown> = {}) => ({
     sourceTitle: 'Lioness.2023.S03E02.2160p.WEB-DL-NTb',
     date: '2026-08-15T16:05:26Z',
     protocol: 'usenet',
-    indexer: 'altHUB (Prowlarr)',
+    indexer: 'Indexer 1 (Prowlarr)',
     ...over
 });
 

@@ -28,12 +28,16 @@ import { constantTimeEquals } from './secrets.ts';
 export const CONFIRM_TTL_MS = 300_000;
 
 /** Defensive bound on the consumed-token set, which is otherwise TTL-swept. */
-const MAX_CONSUMED = 10_000;
+export const MAX_CONSUMED = 10_000;
 
 /** 96 random bits per token, so two previews never share one. */
 const NONCE_BYTES = 12;
 /** What `NONCE_BYTES` encode to in base64url. */
 const NONCE = /^[A-Za-z0-9_-]{16}$/;
+/** What `Number.toString(36)` writes for a timestamp, and nothing after it.
+ *  `parseInt` alone stops at the first character it cannot read and keeps
+ *  what came before. */
+const ISSUED_AT = /^[0-9a-z]{1,11}$/;
 
 /**
  * Everything a token commits to. Any field that changes the effect of the
@@ -134,13 +138,15 @@ export class ConfirmTokens {
     readonly #now: Clock;
     readonly #ttlMs: number;
     readonly #keyId: string;
+    readonly #maxConsumed: number;
     /** token signature → the moment it stops mattering that it was used. */
     readonly #consumed = new Map<string, number>();
 
-    constructor(opts: { clock?: Clock; ttlMs?: number; key?: Buffer } = {}) {
+    constructor(opts: { clock?: Clock; ttlMs?: number; key?: Buffer; maxConsumed?: number } = {}) {
         this.#key = opts.key ?? randomBytes(32);
         this.#now = opts.clock ?? Date.now;
         this.#ttlMs = opts.ttlMs ?? CONFIRM_TTL_MS;
+        this.#maxConsumed = opts.maxConsumed ?? MAX_CONSUMED;
         this.#keyId = createHmac('sha256', this.#key).update('key-id').digest('base64url').slice(0, 8);
     }
 
@@ -175,10 +181,12 @@ export class ConfirmTokens {
         if (parts.length !== 5 || parts[0] !== 'v3') return { ok: false, failure: 'malformed', remedy: REMEDY.malformed };
         if (parts[1] !== this.#keyId) return { ok: false, failure: 'foreign', remedy: REMEDY.foreign };
 
-        const issuedAt = Number.parseInt(parts[2] ?? '', 36);
+        const issuedAtField = parts[2] ?? '';
+        const issuedAt = Number.parseInt(issuedAtField, 36);
         const nonce = parts[3] ?? '';
         const signature = parts[4] ?? '';
-        if (!Number.isFinite(issuedAt) || !NONCE.test(nonce) || signature === '') {
+        // Only the one spelling `issue` writes: no padding, sign or suffix.
+        if (!ISSUED_AT.test(issuedAtField) || !Number.isSafeInteger(issuedAt) || issuedAt.toString(36) !== issuedAtField || !NONCE.test(nonce) || signature === '') {
             return { ok: false, failure: 'malformed', remedy: REMEDY.malformed };
         }
 
@@ -212,17 +220,23 @@ export class ConfirmTokens {
      * after that the expiry check rejects it regardless, so the entry is dead
      * weight. That bounds the map by (writes per TTL window) rather than by
      * uptime.
+     *
+     * `deadAt` is the last moment the token still verifies (an age of exactly
+     * the TTL is accepted above), so the entry goes only once `now` is past
+     * it. Dropping it at `deadAt` itself left one millisecond in which a spent
+     * token verified and was no longer remembered as spent.
      */
     #sweep(): void {
         const now = this.#now();
         for (const [signature, deadAt] of this.#consumed) {
-            if (deadAt <= now) this.#consumed.delete(signature);
+            if (deadAt < now) this.#consumed.delete(signature);
         }
         // Only reachable if a caller drives more than MAX_CONSUMED writes
-        // inside one TTL window; dropping the oldest is safe because the worst
-        // case is that a long-spent token becomes replayable for the remainder
-        // of its window, and reaching here at all means something is very wrong.
-        while (this.#consumed.size > MAX_CONSUMED) {
+        // inside one TTL window. The oldest entries go even though they have
+        // not expired, so those spent tokens verify again for the rest of their
+        // window: a bounded memory is chosen over single use at that volume,
+        // and reaching here at all means something is very wrong.
+        while (this.#consumed.size > this.#maxConsumed) {
             const oldest = this.#consumed.keys().next().value;
             if (oldest === undefined) break;
             this.#consumed.delete(oldest);

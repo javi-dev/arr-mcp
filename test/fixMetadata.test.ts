@@ -18,7 +18,7 @@ import type { WriteToolResult } from '../src/tools/write.ts';
 import { jsonResponse } from './helpers/serve.ts';
 
 const SERIES = 'cf939e2aa448fbe76b4f5eb80fa0d39f';
-const TVDB = 88031;
+const TVDB = 80001;
 
 const jellyfinConfig = (over: Partial<MultiUserServiceConfig> = {}): MultiUserServiceConfig =>
     ({
@@ -48,19 +48,19 @@ const healthy = (n: number) => ({
     Path: `/storage/tv/Some Show/Season 01/Some Show - S01E0${n} - Real Episode Title ${n} [Bluray-1080p].mkv`
 });
 
-/** The Dragon Ball Kai shape: a file in Specials shown as season 1. */
+/** A file in Specials shown as season 1, as on a live series. */
 const broken = (n: number) => ({
     Id: episodeId(n + 50),
-    Name: 'Prologue to Battle! The Return of Goku!',
+    Name: 'Some Episode Title',
     IndexNumber: 1,
     ParentIndexNumber: 1,
-    Path: `/storage/tv/Dragon Ball Kai (2009)/Specials/Episode 10${n} Videl's Crisis Gohan's Urgent Call-out!.mkv`
+    Path: `/storage/tv/Another Show (2001)/Specials/Episode 10${n} Some Special.mkv`
 });
 
 const seriesItem = (over: Partial<MergedItem> = {}): MergedItem =>
     ({
         kind: 'series',
-        title: 'Dragon Ball Kai',
+        title: 'Another Show',
         ids: { tvdb: TVDB },
         playback: { user: 'Sam', itemId: SERIES },
         presence: 'both',
@@ -209,7 +209,7 @@ describe('fix_metadata', () => {
     it('sends a lone server that could not be read to get_stack_health, not to default_user', async () => {
         const h = harness({ item: seriesItem({ playback: { user: 'Sam' } }), degraded: ['jellyfin'] });
 
-        const err = (await h.call({ query: 'Dragon Ball Kai' }).catch((e: unknown) => e)) as ServiceError;
+        const err = (await h.call({ query: 'Another Show' }).catch((e: unknown) => e)) as ServiceError;
         expect(err).toBeInstanceOf(ServiceError);
         expect(err.detail).toMatch(/could not be read/);
         expect(err.remedy).toMatch(/get_stack_health/);
@@ -220,15 +220,15 @@ describe('fix_metadata', () => {
         // A count is not approvable for a destructive write: the person
         // confirming has to be able to see what the tool thinks is wrong.
         const h = harness();
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+        const { structuredContent } = await h.call({ query: 'Another Show' });
 
-        expect(structuredContent.effects.join('\n')).toContain('Videl');
+        expect(structuredContent.effects.join('\n')).toContain('Some Special');
         expect(structuredContent.summary).toContain('1 of 3 episodes');
     });
 
     it('separates the confident finding from the advisory one', async () => {
         const h = harness();
-        const text = (await h.call({ query: 'Dragon Ball Kai' })).structuredContent.effects.join('\n');
+        const text = (await h.call({ query: 'Another Show' })).structuredContent.effects.join('\n');
 
         expect(text).toContain("1 episode where the path's own season/episode number disagrees");
         expect(text).toContain('0 where only the title text disagrees');
@@ -237,7 +237,7 @@ describe('fix_metadata', () => {
 
     it('previews without writing anything', async () => {
         const h = harness();
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+        const { structuredContent } = await h.call({ query: 'Another Show' });
 
         expect(structuredContent.applied).toBe(false);
         expect(structuredContent.confirm_token).toBeDefined();
@@ -246,7 +246,7 @@ describe('fix_metadata', () => {
 
     it('is a no-op on a series whose files all agree with its metadata', async () => {
         const h = harness({ episodes: [healthy(1), healthy(2)] });
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+        const { structuredContent } = await h.call({ query: 'Another Show' });
 
         expect(structuredContent.noop).toBe(true);
         expect(structuredContent.confirm_token).toBeUndefined();
@@ -260,7 +260,7 @@ describe('fix_metadata', () => {
      */
     it('refuses rather than reporting a clean result when no paths came back', async () => {
         const h = harness({ episodes: [{ Id: episodeId(1), Name: 'No path here', IndexNumber: 1, ParentIndexNumber: 1 }] });
-        await expect(h.call({ query: 'Dragon Ball Kai' })).rejects.toThrow(/no file paths/i);
+        await expect(h.call({ query: 'Another Show' })).rejects.toThrow(/no file paths/i);
     });
 
     /** #312: one item holding two Sonarr series, where only a split helps. */
@@ -289,7 +289,7 @@ describe('fix_metadata', () => {
 
         it('offers the repair as before with no Sonarr', async () => {
             const h = harness({ episodes: [healthy(1), newer] });
-            const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+            const { structuredContent } = await h.call({ query: 'Another Show' });
 
             expect(structuredContent.summary).toContain('Re-identify');
             expect(structuredContent.confirm_token).toBeDefined();
@@ -348,20 +348,20 @@ describe('fix_metadata', () => {
 
     it('names both media servers when neither is configured', async () => {
         const h = harness({ adapters: 'none' });
-        await expect(h.call({ query: 'Dragon Ball Kai' })).rejects.toThrow(/services\.jellyfin or services\.plex/);
+        await expect(h.call({ query: 'Another Show' })).rejects.toThrow(/services\.jellyfin or services\.plex/);
     });
 
     it('says so when no TVDB id is known, because the refresh may re-match the same way', async () => {
         const h = harness({ item: seriesItem({ ids: {} }) });
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+        const { structuredContent } = await h.call({ query: 'Another Show' });
 
         expect(structuredContent.effects.join('\n')).toContain('identity is not pinned');
     });
 
     describe('applying', () => {
         const confirmed = async (h: ReturnType<typeof harness>) => {
-            const preview = await h.call({ query: 'Dragon Ball Kai' });
-            return h.call({ query: 'Dragon Ball Kai', confirm: preview.structuredContent.confirm_token });
+            const preview = await h.call({ query: 'Another Show' });
+            return h.call({ query: 'Another Show', confirm: preview.structuredContent.confirm_token });
         };
 
         /**
@@ -443,11 +443,11 @@ describe('fix_metadata', () => {
  * each episode from the id stored on it.
  */
 describe('episodes pinned to their own provider ids', () => {
-    const pinned = (n: number) => ({ ...broken(n), ProviderIds: { AniDB: '97203', Tvdb: '507731' } });
+    const pinned = (n: number) => ({ ...broken(n), ProviderIds: { AniDB: '12345', Tvdb: '654321' } });
 
     it('states the wider scope in the preview, before it is confirmed', async () => {
         const h = harness({ episodes: [pinned(1)] });
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+        const { structuredContent } = await h.call({ query: 'Another Show' });
 
         expect(structuredContent.summary).toContain('expected to change nothing');
         expect(structuredContent.effects.join('\n')).toContain('EXPECTED TO ACHIEVE NOTHING');
@@ -455,7 +455,7 @@ describe('episodes pinned to their own provider ids', () => {
 
     it('counts only the pinned mismatches, not every mismatch', async () => {
         const h = harness({ episodes: [pinned(1), broken(2), healthy(1)] });
-        const text = (await h.call({ query: 'Dragon Ball Kai' })).structuredContent.effects.join('\n');
+        const text = (await h.call({ query: 'Another Show' })).structuredContent.effects.join('\n');
 
         expect(text).toContain('1 of the 2 mismatching episodes were matched to a specific provider episode');
         expect(text).not.toContain('EXPECTED TO ACHIEVE NOTHING');
@@ -470,7 +470,7 @@ describe('episodes pinned to their own provider ids', () => {
             Path: `/storage/tv/Some Show/Season 01/Some Show - S01E0${n} - ${file} [Bluray-1080p].mkv`
         });
         const h = harness({ episodes: [at(1, 'Stray Dog Strut', 'Asteroid Blues'), at(2, 'Honky Tonk Women', 'Stray Dog Strut')] });
-        const effects = (await h.call({ query: 'Dragon Ball Kai' })).structuredContent.effects.join('\n');
+        const effects = (await h.call({ query: 'Another Show' })).structuredContent.effects.join('\n');
         expect(effects).toContain('2 of the 2 mismatching episodes carry the title Jellyfin gives another episode in the same season');
     });
 
@@ -486,13 +486,13 @@ describe('episodes pinned to their own provider ids', () => {
                 }
             ]
         });
-        const effects = (await h.call({ query: 'Dragon Ball Kai' })).structuredContent.effects.join('\n');
+        const effects = (await h.call({ query: 'Another Show' })).structuredContent.effects.join('\n');
         expect(effects).toContain('1 of the 1 mismatching episodes have the filename and the Jellyfin title in different languages');
     });
 
     it('says nothing about pinning when no episode carries an id', async () => {
         const h = harness();
-        const text = (await h.call({ query: 'Dragon Ball Kai' })).structuredContent.effects.join('\n');
+        const text = (await h.call({ query: 'Another Show' })).structuredContent.effects.join('\n');
 
         expect(text).not.toContain('pinned');
     });
@@ -501,7 +501,7 @@ describe('episodes pinned to their own provider ids', () => {
      *  confirming a destructive no-op is how confirming becomes reflexive. */
     it('does not offer to confirm a repair it expects to achieve nothing', async () => {
         const h = harness({ episodes: [pinned(1)] });
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+        const { structuredContent } = await h.call({ query: 'Another Show' });
 
         expect(structuredContent.noop).toBe(true);
         expect(structuredContent.confirm_token).toBeUndefined();
@@ -511,9 +511,9 @@ describe('episodes pinned to their own provider ids', () => {
     it('reports the repair unverified when the mismatch count did not move', async () => {
         // Unpinned, so the repair is worth attempting and a token is issued.
         const h = harness({ episodes: [broken(1)] });
-        const preview = await h.call({ query: 'Dragon Ball Kai' });
+        const preview = await h.call({ query: 'Another Show' });
         const { structuredContent } = await h.call({
-            query: 'Dragon Ball Kai',
+            query: 'Another Show',
             confirm: preview.structuredContent.confirm_token
         });
 
@@ -756,7 +756,7 @@ describe('fix_metadata on Plex', () => {
         expect(h.writes().map(w => w.path)).toEqual(['/library/metadata/900200/match', '/library/metadata/900200/refresh']);
     });
 
-    /** #312: Cannibal! The Musical kept Plex's year after a repair. The Plex
+    /** #312: a film kept Plex's year after a repair. The Plex
      *  Movie agent takes the year from Plex's own metadata, not from TMDB. */
     describe('a film Plex already matched to the id the repair pins', () => {
         const film = {
@@ -836,7 +836,7 @@ describe('fix_metadata on Plex', () => {
     describe('waiting on the queued refresh', () => {
         const ep = (n: number, title = 'Some other words') => ({ ...plexEpisode(n), title });
 
-        /** Cowboy Bebop: one read straight after caught the show mid-rebuild
+        /** A live apply: one read straight after caught the show mid-rebuild
          *  with nothing to compare, and called that repaired. */
         it('does not call a show with fewer episodes to compare repaired', async () => {
             const h = plexHarness({ episodes: [plexEpisode(1), plexEpisode(2)], reads: [[], [plexEpisode(1), plexEpisode(2)]] });
@@ -856,7 +856,7 @@ describe('fix_metadata on Plex', () => {
             expect(result.note).toContain('compared 1 of the 2 episodes');
         });
 
-        /** Scooby-Doo: the refresh landed seconds after the single read. */
+        /** A live apply: the refresh landed seconds after the single read. */
         it('waits for a film whose refresh lands after the first read', async () => {
             const film = {
                 ratingKey: '900200',
@@ -890,7 +890,7 @@ describe('fix_metadata on Plex', () => {
             expect(h.timing.slept).toEqual([5_000]);
         });
 
-        /** Broken Darkness: repaired, and reported as a 503 from the read after. */
+        /** A live apply: repaired, and reported as a 503 from the read after. */
         it('reads through a 503 while Plex refreshes the item', async () => {
             const h = plexHarness({ failAfterWrite: 2, repaired: [ep(1)] });
             const { structuredContent } = await confirmed(h);
@@ -975,7 +975,7 @@ describe('fix_metadata on Plex', () => {
     });
 
     describe('by id', () => {
-        /** The Fall: the title resolved to the film Fall, the id cannot. */
+        /** A series whose title resolved to a film of almost the same name; the id cannot. */
         it('takes the id get_metadata_issues prints', async () => {
             const h = plexHarness({ item: plexSeries({ title: 'Some other title' }) });
             const { structuredContent } = await h.call({ id: `plex:${PLEX_SERIES}` });
@@ -1046,9 +1046,9 @@ describe('locks on Jellyfin', () => {
 
     it('treats a locked Name as a locked title', async () => {
         const named = { ...broken(1), LockData: false, LockedFields: ['Name'] };
-        const titleOnly = { ...named, IndexNumber: 1, ParentIndexNumber: 1, Path: '/tv/Some Show/Season 01/Some Show - S01E01 - Videl Crisis Urgent.mkv' };
+        const titleOnly = { ...named, IndexNumber: 1, ParentIndexNumber: 1, Path: '/tv/Some Show/Season 01/Some Show - S01E01 - Other Words Here.mkv' };
         const h = harness({ episodes: [titleOnly] });
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+        const { structuredContent } = await h.call({ query: 'Another Show' });
 
         expect(structuredContent.noop).toBe(true);
         expect(structuredContent.confirm_token).toBeUndefined();
@@ -1138,7 +1138,7 @@ describe('fix_metadata with two media servers', () => {
 
     it('reads through the server `service` names, by its own item id', async () => {
         const h = dual();
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin' });
+        const { structuredContent } = await h.call({ query: 'Another Show', service: 'jellyfin' });
 
         expect(structuredContent.service).toBe('jellyfin');
         expect(structuredContent.target).toBe('jellyfin:j9');
@@ -1150,7 +1150,7 @@ describe('fix_metadata with two media servers', () => {
 
     it('defaults to the primary', async () => {
         const h = dual();
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai' });
+        const { structuredContent } = await h.call({ query: 'Another Show' });
 
         expect(structuredContent.target).toBe('plex:p9');
         expect(h.plex.readEpisodeMetadata).toHaveBeenCalledWith(viewers.plex, 'p9');
@@ -1160,7 +1160,7 @@ describe('fix_metadata with two media servers', () => {
 
     it('keeps the token ceiling with the Plex gate in front of it', async () => {
         const h = dual({ plexRepair: false, primary: 'jellyfin', ceiling: new Set<WriteTier>(['safe']) });
-        const { structuredContent } = await h.call({ query: 'Dragon Ball Kai', dry_run: true });
+        const { structuredContent } = await h.call({ query: 'Another Show', dry_run: true });
 
         expect(structuredContent.service).toBe('jellyfin');
         expect(structuredContent.permission).toMatchObject({ allowed: false, reason: 'token is capped' });
@@ -1170,7 +1170,7 @@ describe('fix_metadata with two media servers', () => {
         const unread = seriesItem({ playback: { user: 'Sam', itemId: 'p9' }, media_servers: { plex: { present: true, itemId: 'p9' } } });
         const h = dual({ snapshot: { item: unread, degraded: ['jellyfin'] } });
 
-        const err = await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin' }).catch((e: unknown) => e);
+        const err = await h.call({ query: 'Another Show', service: 'jellyfin' }).catch((e: unknown) => e);
         expect(err).toBeInstanceOf(ServiceError);
         expect((err as ServiceError).detail).toMatch(/could not be read/);
         expect((err as ServiceError).remedy).toMatch(/get_stack_health/);
@@ -1181,7 +1181,7 @@ describe('fix_metadata with two media servers', () => {
         const unread = seriesItem({ playback: { user: 'Sam', itemId: 'p9' }, media_servers: { plex: { present: true, itemId: 'p9' } } });
         const h = dual({ snapshot: { item: unread, degraded: ['jellyfin'] } });
 
-        const err = (await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin' }).catch((e: unknown) => e)) as ServiceError;
+        const err = (await h.call({ query: 'Another Show', service: 'jellyfin' }).catch((e: unknown) => e)) as ServiceError;
         expect(err.remedy).toMatch(/get_stack_health/);
         expect(err.remedy).not.toMatch(/default_user/);
     });
@@ -1190,7 +1190,7 @@ describe('fix_metadata with two media servers', () => {
         const skipped = seriesItem({ playback: { user: 'Sam', itemId: 'p9' }, media_servers: { plex: { present: true, itemId: 'p9' } } });
         const h = dual({ snapshot: { item: skipped, degraded: [] } });
 
-        const err = (await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin' }).catch((e: unknown) => e)) as ServiceError;
+        const err = (await h.call({ query: 'Another Show', service: 'jellyfin' }).catch((e: unknown) => e)) as ServiceError;
         expect(err.detail).toMatch(/could not be read/);
         expect(err.remedy).toMatch(/services\.jellyfin\.default_user/);
     });
@@ -1202,7 +1202,7 @@ describe('fix_metadata with two media servers', () => {
         });
         const h = dual({ snapshot: { item: absent, degraded: [] } });
 
-        const err = await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin' }).catch((e: unknown) => e);
+        const err = await h.call({ query: 'Another Show', service: 'jellyfin' }).catch((e: unknown) => e);
         expect((err as ServiceError).remedy).toMatch(/trigger_scan/);
     });
 
@@ -1228,8 +1228,8 @@ describe('fix_metadata with two media servers', () => {
 
     it('repairs on the server it previewed', async () => {
         const h = dual();
-        const preview = await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin' });
-        const applied = await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin', confirm: preview.structuredContent.confirm_token });
+        const preview = await h.call({ query: 'Another Show', service: 'jellyfin' });
+        const applied = await h.call({ query: 'Another Show', service: 'jellyfin', confirm: preview.structuredContent.confirm_token });
 
         expect(applied.structuredContent.applied).toBe(true);
         expect(h.jellyfin.repairMetadata).toHaveBeenCalledWith('j9', { tvdbId: TVDB });
@@ -1238,8 +1238,8 @@ describe('fix_metadata with two media servers', () => {
 
     it('will not apply a Jellyfin preview to Plex', async () => {
         const h = dual();
-        const preview = await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin' });
-        const again = await h.call({ query: 'Dragon Ball Kai', confirm: preview.structuredContent.confirm_token });
+        const preview = await h.call({ query: 'Another Show', service: 'jellyfin' });
+        const again = await h.call({ query: 'Another Show', confirm: preview.structuredContent.confirm_token });
 
         expect(again.structuredContent.applied).toBe(false);
         expect(h.plex.repairMetadata).not.toHaveBeenCalled();
@@ -1249,24 +1249,24 @@ describe('fix_metadata with two media servers', () => {
     it('gates Plex repair without gating Jellyfin', async () => {
         const h = dual({ plexRepair: false });
 
-        const onPlex = await h.call({ query: 'Dragon Ball Kai', dry_run: true });
+        const onPlex = await h.call({ query: 'Another Show', dry_run: true });
         expect(onPlex.structuredContent.permission.reason).toBe('Plex repair is off');
 
-        const onJellyfin = await h.call({ query: 'Dragon Ball Kai', service: 'jellyfin', dry_run: true });
+        const onJellyfin = await h.call({ query: 'Another Show', service: 'jellyfin', dry_run: true });
         expect(onJellyfin.structuredContent.permission.allowed).toBe(true);
     });
 
     it('gates a Plex secondary, not just the first media server', async () => {
         const h = dual({ plexRepair: false, primary: 'jellyfin' });
 
-        const onJellyfin = await h.call({ query: 'Dragon Ball Kai', dry_run: true });
+        const onJellyfin = await h.call({ query: 'Another Show', dry_run: true });
         expect(onJellyfin.structuredContent.service).toBe('jellyfin');
         expect(onJellyfin.structuredContent.permission.allowed).toBe(true);
 
         expect(h.resolves.jellyfin).toHaveBeenCalled();
         expect(h.resolves.plex).not.toHaveBeenCalled();
 
-        const byService = await h.call({ query: 'Dragon Ball Kai', service: 'plex', dry_run: true });
+        const byService = await h.call({ query: 'Another Show', service: 'plex', dry_run: true });
         expect(h.plex.readEpisodeMetadata).toHaveBeenCalledWith(viewers.plex, 'p9');
         expect(byService.structuredContent.service).toBe('plex');
         expect(byService.structuredContent.permission).toMatchObject({ allowed: false, reason: 'Plex repair is off' });
@@ -1278,7 +1278,7 @@ describe('fix_metadata with two media servers', () => {
 
     it('refuses a service that is not configured', async () => {
         const h = dual();
-        await expect(async () => h.call({ query: 'Dragon Ball Kai', service: 'emby' })).rejects.toThrow(/jellyfin/);
+        await expect(async () => h.call({ query: 'Another Show', service: 'emby' })).rejects.toThrow(/jellyfin/);
     });
 });
 
