@@ -73,13 +73,49 @@ describe('the Prowlarr anonymisers', () => {
         ]);
     });
 
+    it('make a Cardigann definition own settings and site categories neutral, keeping the common ones', () => {
+        const row = anonymiseProwlarrIndexer(
+            {
+                implementation: 'Cardigann',
+                name: 'Some Real Site',
+                capabilities: { categories: [{ id: 5000, name: 'TV', subCategories: [{ id: 123456, name: 'Some Real Site Anime' }] }, { id: 100100, name: 'Site Movies' }] },
+                fields: [
+                    { name: 'baseSettings.queryLimit', label: 'Query Limit', helpText: 'The number of queries' },
+                    { name: 'site-filter', label: 'Filter on the site', value: 0, selectOptions: [{ value: 0, name: 'trusted only', order: 0, hint: 'site words' }] },
+                    { name: 'uploader', label: 'Uploader on the site', helpText: 'Some help', value: 'someone' }
+                ]
+            },
+            0
+        );
+        expect(row.capabilities).toEqual({
+            categories: [{ id: 5000, name: 'TV', subCategories: [{ id: 123456, name: 'Category 123456' }] }, { id: 100100, name: 'Category 100100' }]
+        });
+        expect(row.fields).toEqual([
+            { name: 'baseSettings.queryLimit', label: 'Query Limit', helpText: 'The number of queries' },
+            { name: 'setting1', label: 'Setting 1', value: 0, selectOptions: [{ value: 0, name: 'Option 1', order: 0, hint: '' }] },
+            { name: 'setting2', label: 'Setting 2', helpText: 'A setting of this definition.', value: 'someone' }
+        ]);
+    });
+
+    it('leave a Newznab indexer settings as they are', () => {
+        const fields = [{ name: 'apiPath', label: 'API Path', value: '/api' }, { name: 'categories', label: 'Categories', value: [2000] }];
+        expect(anonymiseProwlarrIndexer({ implementation: 'Newznab', name: 'x', fields }, 0).fields).toEqual(fields);
+    });
+
+    it('replace a host name with a port, and keep an IP address with or without one', () => {
+        const hosts = ['my-server:9696', '192.0.2.10:9696', '[2001:db8::1]:9696', '2001:db8::1', '192.0.2.10'];
+        const body = anonymiseProwlarrIndexerStats({ hosts: hosts.map(host => ({ host })) }) as { hosts: { host: string }[] };
+        expect(body.hosts.map(h => h.host)).toEqual(['service.example.test', '192.0.2.10:9696', '[2001:db8::1]:9696', '2001:db8::1', '192.0.2.10']);
+    });
+
     it('replace a history row search link whole, key and all, and the host that asked', () => {
         const body = anonymiseProwlarrHistory({
             page: 1,
             records: [
                 { id: 1, data: { url: 'https://some-real-site.example/api?t=search&apikey=0123abcd', host: 'my-server', query: 'x' } },
                 { id: 2, data: { host: '192.0.2.10' } },
-                { id: 3 }
+                { id: 3 },
+                { id: 4, eventType: 'releaseGrabbed', data: { grabTitle: 'Some.Library.Title.2024.1080p-GRP', infoUrl: 'https://some-real-site.example/details/1' } }
             ]
         });
         expect(body).toEqual({
@@ -87,7 +123,8 @@ describe('the Prowlarr anonymisers', () => {
             records: [
                 { id: 1, data: { url: 'https://indexer.example.test/', host: 'service.example.test', query: 'x' } },
                 { id: 2, data: { host: '192.0.2.10' } },
-                { id: 3 }
+                { id: 3 },
+                { id: 4, eventType: 'releaseGrabbed', data: { grabTitle: 'Release.4.1080p.WEB-DL.x264-GROUP', infoUrl: 'https://indexer.example.test/' } }
             ]
         });
     });
@@ -131,6 +168,30 @@ describe('the other anonymisers', () => {
         });
     });
 
+    it('rename a news server in any wording a warning uses, as server_stats numbered it', () => {
+        const stats = { servers: { 'news.first-provider.example': {}, 'eu.news.second-provider.example': {} } };
+        expect(
+            anonymiseSabnzbdWarnings(
+                {
+                    warnings: [
+                        { text: 'Login failed for eu.news.second-provider.example' },
+                        { text: 'Server news.first-provider.example will be ignored for 10 minutes' },
+                        { text: 'Cannot connect to server news.first-provider.example [Failed to resolve news.first-provider.example]' },
+                        { text: 'Connection refused 3@news.gone-provider.example:563 (news.gone-provider.example)' }
+                    ]
+                },
+                stats
+            )
+        ).toEqual({
+            warnings: [
+                { text: 'Login failed for news2.example.test' },
+                { text: 'Server news1.example.test will be ignored for 10 minutes' },
+                { text: 'Cannot connect to server news1.example.test [Failed to resolve news1.example.test]' },
+                { text: 'Connection refused 3@news1.example.test:563 (news1.example.test)' }
+            ]
+        });
+    });
+
     it('name a Cleanuparr instance by its type, numbered only when a type repeats', () => {
         expect(
             anonymiseCleanuparrSeeker({
@@ -166,7 +227,7 @@ describe('the committed fixtures', () => {
         ['radarr/blocklist.json', anonymiseArrBlocklist],
         ['sonarr/blocklist.json', anonymiseArrBlocklist],
         ['sabnzbd/server-stats.json', anonymiseSabnzbdServerStats],
-        ['sabnzbd/warnings.json', anonymiseSabnzbdWarnings],
+        ['sabnzbd/warnings.json', (b: unknown) => anonymiseSabnzbdWarnings(b, fixture('sabnzbd/server-stats.json'))],
         ['cleanuparr/2.10.12/configuration-seeker.json', anonymiseCleanuparrSeeker],
         ['jellyfin/system-info.json', anonymiseJellyfinSystemInfo]
     ] as const)('%s is what the capture writes', (path, anonymise) => {

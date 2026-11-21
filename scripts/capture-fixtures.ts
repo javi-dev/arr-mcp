@@ -108,7 +108,7 @@ type Endpoint = {
     /** The response is a bare string rather than JSON — qBittorrent only.
      *  `anonymise` is what shapes it into something writable as a fixture. */
     text?: boolean;
-    anonymise?: (body: unknown) => unknown;
+    anonymise?: (body: unknown, captured: Map<string, unknown>) => unknown;
     /**
      * An override for endpoints that need more than one request to decide
      * what to capture — `plex/section-all` walks sections looking for a
@@ -1072,7 +1072,7 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
         { name: 'version', path: '/api?mode=version&output=json' },
         { name: 'queue', path: '/api?mode=queue&output=json' },
         { name: 'server-stats', path: '/api?mode=server_stats&output=json', anonymise: anonymiseSabnzbdServerStats },
-        { name: 'warnings', path: '/api?mode=warnings&output=json', anonymise: anonymiseSabnzbdWarnings }
+        { name: 'warnings', path: '/api?mode=warnings&output=json', anonymise: (body, captured) => anonymiseSabnzbdWarnings(body, captured.get('server-stats')) }
     ],
     nzbget: [
         { name: 'version', path: '/jsonrpc', body: { jsonrpc: '2.0', method: 'version', params: [], id: 1 } },
@@ -1684,7 +1684,7 @@ for (const instance of listInstances(config)) {
 
             // Anonymise identity first, then redact credentials — so a value
             // the anonymiser rewrites is still checked for leaked secrets.
-            const identified = endpoint.anonymise === undefined ? raw : endpoint.anonymise(raw);
+            const identified = endpoint.anonymise === undefined ? raw : endpoint.anonymise(raw, soFar);
             const serialised = JSON.stringify(redact(identified, secrets, hosts), null, 2);
 
             // The gate. If a configured credential or host survived, refuse to
