@@ -1287,7 +1287,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
 
     it('tells a change an afterWrite makes that nothing overtook it when no other write ran', async () => {
         const r = sending('none', {
-            afterWrite: (_sent, then) => then.write(since => Promise.resolve(since))
+            afterWrite: (_sent, then) => then.write(({ overtaken }) => Promise.resolve({ overtaken }))
         });
         const [first] = await r.confirmAll(['5']);
         expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ overtaken: false });
@@ -1299,7 +1299,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
             plan: ({ id }) => Promise.resolve(id === '9' ? { ...PLAN, target: id, noop: true } : { ...PLAN, target: id }),
             afterWrite: async (_sent, then) => {
                 await later.opened;
-                return then.write(since => Promise.resolve(since));
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken }));
             }
         });
         // The pause is previewed while there is something to pause, and confirmed once there is not.
@@ -1313,20 +1313,65 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
     });
 
     it('does not count a change an afterWrite makes, so two overlapping writes do not both stand down', async () => {
-        const fives = gate();
+        const fiveDone = gate();
         const r = sending('none', {
             afterWrite: async (sent, then) => {
                 const { id } = sent as { id: string };
-                // `5` waits until `9` has confirmed, and makes its change first.
-                if (id === '5') await fives.opened;
-                return then.write(since => Promise.resolve({ id, ...since }));
+                // The older write (`5`) makes its change, or stands down, before the newer one tries.
+                if (id === '9') await fiveDone.opened;
+                const outcome = await then.write(({ overtaken }) => Promise.resolve({ id, overtaken }));
+                if (id === '5') fiveDone.open();
+                return outcome;
             }
         });
         const [first, second] = await r.confirmAll(['5', '9']);
-        await settled();
-        fives.open();
+        // `9` was accepted after `5`, so `5` stands down; `5` standing down is not a confirmation, so `9` does not.
         expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ id: '5', overtaken: true });
         expect(((await second) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ id: '9', overtaken: false });
+    });
+
+    it('does not count a confirmation whose token was refused or whose plan failed', async () => {
+        const later = gate();
+        const h = buildHarness({
+            plan: ({ id }) => (id === 'broken' ? Promise.reject(new Error('no such film')) : Promise.resolve({ ...PLAN, target: id })),
+            afterWrite: async (_sent, then) => {
+                await later.opened;
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken }));
+            }
+        });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        const first = h.call('delete_media', { id: '5', confirm: token });
+        await settled();
+        // A stale token comes back as a fresh preview; a plan that throws refuses. Neither reached the service.
+        expect((await h.call('delete_media', { id: '9', confirm: 'not-a-token' })).structuredContent.applied).toBe(false);
+        await expect(h.call('delete_media', { id: 'broken', confirm: 'not-a-token' })).rejects.toThrow(/no such film/);
+        later.open();
+        expect((await first).structuredContent.result).toEqual({ overtaken: false });
+    });
+
+    it('drops the cache before a change an afterWrite makes hands the lane on', async () => {
+        const r = sending('none', {
+            afterWrite: (_sent, then) => then.write(() => Promise.resolve({}))
+        });
+        const [first] = await r.confirmAll(['5']);
+        await first;
+        // Once as the apply returned, once as the change ended, once as the afterWrite ended.
+        expect(r.h.invalidate).toHaveBeenCalledTimes(3);
+    });
+
+    it('lets a change an afterWrite makes read the request\'s cancellation as it is when it asks', async () => {
+        const abort = new AbortController();
+        const r = sending('none', {
+            signal: abort.signal,
+            afterWrite: (_sent, then) =>
+                then.write(({ cancelled }) => {
+                    const before = cancelled();
+                    abort.abort();
+                    return Promise.resolve({ before, after: cancelled() });
+                })
+        });
+        const [first] = await r.confirmAll(['5']);
+        expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ before: false, after: true });
     });
 
     it('refuses a change an afterWrite makes when its request was already cancelled, without queueing it', async () => {

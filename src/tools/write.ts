@@ -129,19 +129,19 @@ type WriteToolSpec<
      */
     apply(plan: WritePlan<Bound>, args: z.infer<Schema>, adapter: Adapter & ServiceAdapter): Promise<unknown>;
     /**
-     * What a write does once its last change has been made: watching a
-     * recheck, following a job. It receives
-     * what `apply` returned, and its result is the outcome that `applied`,
-     * `landed`, `followUps` and the reply read.
+     * What a write does once its last change has been made, such as watching
+     * a recheck. It receives what `apply` returned, and its result is the
+     * outcome that `applied`, `landed`, `followUps` and the reply read.
      *
      * Run after the harness has released the instance, so a confirmation sent
      * to it meanwhile waits for the write, not for minutes of polling (#12).
      * It must only wait and read: a call that changes something goes through
      * `then.write`, which runs it in the instance's lane again. Not for a wait
      * on work the service has only queued where another write could overtake
-     * it (an *arr command a direct API call can run ahead of): that wait stays
-     * in `apply`, and so does a read-back another write to the same item
-     * could start over. The library cache is dropped when `apply` returns and
+     * it (an *arr command a direct API call can run ahead of, a job a second
+     * one queues behind while its poll budget runs), nor for a read-back
+     * another write to the same item could start over: those stay in
+     * `apply`. The library cache is dropped when `apply` returns and
      * again when this ends; the audit row is settled once it returns, so a
      * throw here records the write as failed, as a throw from `apply` does.
      */
@@ -180,16 +180,20 @@ type WriteToolSpec<
 export type AfterWrite = {
     /**
      * Runs `call`, which changes something, in the instance's lane, as `apply`
-     * ran: once every confirmed write queued ahead of it has finished. `call`
-     * is told whether another confirmation to the instance has run since this
-     * one's (`overtaken`), whatever it found to do, so a change that only made
-     * sense against the state then (starting what a recheck found whole) can
-     * stand down rather than undo a later request: a pause confirmed on a
-     * torrent that is already stopped changes nothing and still counts. Throws
-     * without running it when the instance is still busy after the same 30
-     * seconds a confirmation waits, or when the request is cancelled.
+     * ran: once every confirmed write queued ahead of it has finished, and
+     * drops the library cache before handing the lane on. `call` is told
+     * whether another confirmation to the instance was accepted since this
+     * one (`overtaken`), so a change that only made sense against the state
+     * then (starting what a recheck found whole) can stand down rather than
+     * undo a later request. A confirmation that found nothing to do counts,
+     * since a pause confirmed on a torrent already stopped is still a request
+     * to leave it so; one whose token was refused, or whose plan failed, does
+     * not. `cancelled` reads the request's signal as it is when called, for a
+     * check just before the change. Throws without running `call` when the
+     * instance is still busy after the same 30 seconds a confirmation waits,
+     * or when the request is cancelled first.
      */
-    write: <T>(call: (since: { overtaken: boolean }) => Promise<T>) => Promise<T>;
+    write: <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>) => Promise<T>;
 };
 
 export type WriteContext = {
@@ -360,11 +364,11 @@ function writeInput(schema: z.ZodObject): z.ZodObject {
 
 /**
  * How long a confirmed write waits for its instance. A write that only reads
- * after its last change does so outside the lane (`afterWrite`), but some still
- * take minutes inside it (an *arr command a rename or import waits on, a
- * Jellyfin identify, a grab's indexer search), and a client stops waiting long before that, so a write
- * queued behind one is refused rather than landing after its caller was told
- * it failed.
+ * after its last change does so outside the lane (`afterWrite`), but some
+ * still take minutes inside it (an *arr command a rename or import waits on,
+ * a Jellyfin identify, a grab's indexer search), and a client stops waiting
+ * long before that, so a write queued behind one is refused rather than
+ * landing after its caller was told it failed.
  */
 const LANE_WAIT_MS = 30_000;
 
@@ -382,10 +386,11 @@ type Lane = { waiting: Set<() => void> };
 const writeLanes = new Map<string, Lane>();
 
 /**
- * How many confirmations have taken each instance's lane: an `afterWrite`
- * compares it to the count its own confirmation took, to learn whether another
- * came in between. A `then.write` is not counted, being part of a confirmation
- * already counted. One number per configured instance.
+ * How many confirmations each instance has accepted, counted in its lane: a
+ * valid token about to apply, or one whose plan found nothing to do. An
+ * `afterWrite` compares it to the count its own confirmation took, to learn
+ * whether another came in between. A `then.write` is not counted, being part
+ * of a confirmation already counted. One number per configured instance.
  */
 const confirmations = new Map<string, number>();
 const countConfirmation = (service: string): number => {
@@ -646,14 +651,24 @@ export function registerWriteTool<
             );
         }
 
-        // This confirmation's place in its instance's count, taken as it gets the lane.
+        // This confirmation's place in its instance's count, taken in the lane once it is accepted.
         let counted = 0;
+        const accepted = (): void => {
+            if (presented !== undefined && !dryRun) counted = countConfirmation(service);
+        };
 
         // A later change an `afterWrite` makes, back in the lane the apply held.
         const then: AfterWrite = {
-            write: async <T>(call: (since: { overtaken: boolean }) => Promise<T>): Promise<T> => {
+            write: async <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>): Promise<T> => {
                 if (signal?.aborted === true) throw new Error('the request was cancelled while this write waited for its instance');
-                const turn = await inLane(service, signal, () => call({ overtaken: confirmations.get(service) !== counted }));
+                const turn = await inLane(service, signal, async () => {
+                    try {
+                        return await call({ overtaken: confirmations.get(service) !== counted, cancelled: () => signal?.aborted === true });
+                    } finally {
+                        // Before the lane is handed on, as after `apply`.
+                        library.invalidate();
+                    }
+                });
                 if (turn.ran) return turn.value;
                 throw new Error(
                     turn.why === 'busy'
@@ -754,6 +769,7 @@ export function registerWriteTool<
 
             // --- 1. Nothing to do -------------------------------------------------
             if (plan.noop === true) {
+                accepted();
                 const id = quiet ? undefined : audit.begin(record);
                 const next = plan.next ?? [];
                 if (id !== undefined) audit.settle(id, 'dry_run', next.length > 0 ? 'no-op: listed only' : 'no-op: already in the requested state');
@@ -855,6 +871,7 @@ export function registerWriteTool<
                         ));
                     };
                 }
+                accepted();
             } else {
                 const id = audit.begin(record);
                 audit.settle(id, 'unconfirmed');
@@ -952,10 +969,7 @@ export function registerWriteTool<
         // A confirm call holds its instance's lane from the plan's reads to the
         // end of its apply, so the state its token is checked against is still
         // the state it writes over. Everything else runs at once.
-        const turn = await inLane(service, signal, () => {
-            counted = countConfirmation(service);
-            return proceed();
-        });
+        const turn = await inLane(service, signal, proceed);
         if (turn.ran) return finish(turn.value);
         throw unspent(
             rawTarget(args),

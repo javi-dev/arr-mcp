@@ -2690,8 +2690,8 @@ Safe tier: it changes only Profilarr's own store. The arrs pick up whatever
 changed only when Profilarr syncs them on its own schedule, same as any other
 Profilarr-triggered sync.
 
-A confirmed sync waits for Profilarr's job to finish before reporting, so a
-queued sync is never reported as done. Not reversible through arr-mcp; revert in Profilarr
+`apply` waits for Profilarr's job to finish before reporting, so a queued sync
+is never reported as done. Not reversible through arr-mcp; revert in Profilarr
 or git if the pulled change is unwanted.
 
 A finished job that had nothing to pull shows as `outcome: "skipped"`, and the
@@ -3462,9 +3462,12 @@ outside what they can catch. No tool changes seeding limits.
 
 Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
-The watch runs without holding up other writes to that qBittorrent; when another
-confirmed write reaches it meanwhile, such as a pause, the complete ones are left
-stopped and listed as `left_stopped` rather than started over it. One still checking or still moving to its save path when the watch ends, showing
+The watch does not hold up other writes to that qBittorrent. When another
+confirmed write reaches it meanwhile, such as a pause, the complete torrents are
+left stopped and listed as `left_stopped` rather than started over it; when the
+start cannot be sent, they are listed as `resume_failed` with the reason in
+`resume_error`.
+One still checking or still moving to its save path when the watch ends, showing
 an error, or never seen checking because it is queued behind another, is reported
 as such and left alone. A torrent still fetching
 metadata or being moved is skipped. A check can write where the files are, and can

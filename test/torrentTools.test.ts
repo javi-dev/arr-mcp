@@ -516,7 +516,23 @@ describe('recheck_torrents', () => {
     it('says when a finished torrent could not be started', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'], failing: ['/torrents/start'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
-        expect(applied.structuredContent.result).toMatchObject({ resume_failed: [HASH] });
+        expect(applied.structuredContent.result).toMatchObject({ resume_failed: [HASH], resume_error: expect.stringMatching(/500/) as unknown });
+        expect(applied.content[0]?.text).toMatch(/could not be started \(.*\); start them with pause_downloads/);
+    });
+
+    /** The read in the lane is what the reply goes by, not what the watch saw earlier. */
+    it('reports a torrent removed between the watch and the start as gone, not as unconfirmed', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP', null] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toEqual({ rechecking: [HASH], gone: [HASH] });
+        expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
+    });
+
+    it('does not call a torrent something else started before the start unconfirmed', async () => {
+        const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP', 'uploading'] });
+        const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
+        expect(applied.structuredContent.result).toEqual({ rechecking: [HASH] });
+        expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 });
 

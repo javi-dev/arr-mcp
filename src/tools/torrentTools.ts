@@ -89,7 +89,7 @@ type TorrentToolOptions = { sleep?: (ms: number) => Promise<void> };
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
-type RecheckOutcome = { rechecking: string[]; resumed?: string[]; left_stopped?: string[]; incomplete?: string[]; errored?: string[]; still_checking?: string[]; still_moving?: string[]; unconfirmed?: string[]; gone?: string[]; resume_failed?: string[] };
+type RecheckOutcome = { rechecking: string[]; resumed?: string[]; left_stopped?: string[]; incomplete?: string[]; errored?: string[]; still_checking?: string[]; still_moving?: string[]; unconfirmed?: string[]; gone?: string[]; resume_failed?: string[]; resume_error?: string };
 
 /**
  * Watches a recheck that has been sent, and starts what came back whole and
@@ -102,7 +102,9 @@ type RecheckOutcome = { rechecking: string[]; resumed?: string[]; left_stopped?:
  * reads, and the start at the end goes through `write`, back in the lane. It
  * stands down when another confirmed write reached the client during the
  * watch: a pause sent then leaves a checked torrent as stopped as the recheck
- * did, and starting it would undo the later request.
+ * did, and starting it would undo the later request. A torrent that read finds
+ * removed is reported as gone, and one already running is not reported as
+ * unconfirmed, since the watch did see its check.
  */
 async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: number) => Promise<void>, write: AfterWrite['write']): Promise<RecheckOutcome> {
     const seenChecking = new Set<string>();
@@ -139,23 +141,34 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
     const finished = [...settled.entries()];
     const wholeAndStopped = finished.flatMap(([id, s]) => (s?.complete === true && s.stopped ? [id] : []));
     let toStart = wholeAndStopped.filter(id => seenChecking.has(id));
-    let resumeFailed = false;
+    // Torrents the last read no longer found, or found started by something else.
+    const dropped = { gone: [] as string[], running: [] as string[] };
+    let resumeError: string | undefined;
     let leftStopped = false;
     if (toStart.length > 0) {
         try {
             // In the lane, so a confirmed write to this client cannot land between the read and the start.
-            await write(async ({ overtaken }) => {
+            await write(async ({ overtaken, cancelled }) => {
                 // Read again at the last moment: a batch can outlast what the watch saw of its first torrent.
                 const fresh = await client.torrentCheckStates(toStart);
+                const candidates = toStart;
                 toStart = fresh.filter(s => s.complete && s.stopped && !s.checking).map(s => s.id);
+                for (const id of candidates.filter(id => !toStart.includes(id))) {
+                    const now = fresh.find(s => s.id === id);
+                    if (now === undefined) dropped.gone.push(id);
+                    else if (!now.stopped && !now.checking) dropped.running.push(id);
+                }
                 leftStopped = overtaken;
-                if (toStart.length > 0 && !overtaken) await client.startTorrents(toStart);
+                if (toStart.length === 0 || overtaken) return;
+                if (cancelled()) throw new Error('the request was cancelled before they were started');
+                await client.startTorrents(toStart);
             });
         } catch (err) {
             logger.warn({ service: client.id, err }, 'a recheck finished but the torrents could not be started');
-            resumeFailed = true;
+            resumeError = err instanceof Error ? err.message : String(err);
         }
     }
+    const resumeFailed = resumeError !== undefined;
     const list = (key: keyof RecheckOutcome, values: string[]) => (values.length === 0 ? {} : { [key]: values });
     return {
         rechecking: [...ids],
@@ -164,8 +177,9 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         ...list('errored', [...finished.flatMap(([id, s]) => (s?.state === 'error' ? [id] : [])), ...ids.filter(id => !settled.has(id) && failing.has(id))]),
         ...list('still_checking', ids.filter(id => !settled.has(id) && seenChecking.has(id) && !moving.has(id) && !failing.has(id))),
         ...list('still_moving', ids.filter(id => !settled.has(id) && moving.has(id))),
-        ...list('unconfirmed', [...wholeAndStopped.filter(id => !toStart.includes(id)), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id) && !moving.has(id) && !failing.has(id))]),
-        ...list('gone', finished.flatMap(([id, s]) => (s === undefined ? [id] : [])))
+        ...list('unconfirmed', [...wholeAndStopped.filter(id => !toStart.includes(id) && !Object.values(dropped).some(group => group.includes(id))), ...ids.filter(id => !settled.has(id) && !seenChecking.has(id) && !moving.has(id) && !failing.has(id))]),
+        ...list('gone', [...finished.flatMap(([id, s]) => (s === undefined ? [id] : [])), ...dropped.gone]),
+        ...(resumeError === undefined || toStart.length === 0 ? {} : { resume_error: resumeError })
     };
 }
 
@@ -181,7 +195,10 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
         ...part('still moving to the save path and not started, so once get_queue no longer shows them at moving and shows them complete, start them with pause_downloads and `action: "resume"`', o.still_moving),
         ...part('no check was seen running yet, so these were not started; look at them again in get_queue', o.unconfirmed),
         ...part('removed while checking', o.gone),
-        ...part('finished complete but could not be started', o.resume_failed)
+        ...part(
+            `finished complete but could not be started${o.resume_error === undefined ? '' : ` (${o.resume_error})`}; start them with pause_downloads and \`action: "resume"\` if that is still wanted`,
+            o.resume_failed
+        )
     ].join('; ')}.`;
 };
 
@@ -300,7 +317,7 @@ const AddTorrentInput = z.object({
 const RecheckInput = z.object({
     instance: instanceField,
     ids: z.array(torrentHash).min(1).max(50).describe('Torrent hashes: `id` on their get_queue rows.'),
-    resume_if_complete: z.boolean().default(false).describe('Watch the recheck briefly and start each stopped torrent that comes back complete.'),
+    resume_if_complete: z.boolean().default(false).describe('Watch the recheck briefly and start each stopped torrent that comes back complete, unless another confirmed write reaches qBittorrent first.'),
     allow_removal: allowRemovalField
 });
 

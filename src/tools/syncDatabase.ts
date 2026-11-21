@@ -144,12 +144,7 @@ export function registerSyncDatabase(
         async apply(plan) {
             const { databaseId } = plan.args as { databaseId: number };
             const adapter = findAdapter(adapters);
-            return { adapter, jobId: await adapter.triggerSync(databaseId) };
-        },
-
-        // The job is queued by now; waiting on it holds up no other write to Profilarr.
-        async afterWrite(sent) {
-            const { adapter, jobId } = sent as { adapter: SyncCapable; jobId: number };
+            const jobId = await adapter.triggerSync(databaseId);
             const { status, result, detail } = await awaitJob(adapter, jobId, pollIntervalMs, maxPolls);
 
             if (status !== 'success') {
