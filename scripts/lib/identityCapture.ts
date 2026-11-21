@@ -146,33 +146,43 @@ export function anonymiseProwlarrIndexer(row: Row, index: number): Row {
     };
 }
 
-/** An IP literal, with or without a port (`192.0.2.10:9696`, `[2001:db8::1]:9696`), split into the two. */
+/**
+ * An IP literal, with or without a port (`192.0.2.10:9696`, `[2001:db8::1]:9696`)
+ * or an IPv6 zone (`fe80::1%eth0`, `%25` inside brackets), split into the
+ * address and a function that puts another address back in its place.
+ */
 const address = (value: string): { ip: string; rest: (ip: string) => string } | undefined => {
+    const unzoned = (ip: string): string => ip.replace(/%(?:25)?[^%\]]*$/, '');
     const bracketed = /^\[([^\]]+)\](:\d+)?$/.exec(value);
     if (bracketed !== null) {
         const port = bracketed[2] ?? '';
-        return isIP(bracketed[1] ?? '') === 0 ? undefined : { ip: bracketed[1] ?? '', rest: ip => `[${ip}]${port}` };
+        const ip = unzoned(bracketed[1] ?? '');
+        return isIP(ip) === 0 ? undefined : { ip, rest: other => `[${other}]${port}` };
     }
-    if (isIP(value) !== 0) return { ip: value, rest: ip => ip };
+    if (isIP(unzoned(value)) !== 0) return { ip: unzoned(value), rest: other => other };
     const port = /:(\d+)$/.exec(value);
     const bare = value.replace(/:\d+$/, '');
-    return port !== null && isIP(bare) === 4 ? { ip: bare, rest: ip => `${ip}:${port[1]}` } : undefined;
+    return port !== null && isIP(bare) === 4 ? { ip: bare, rest: other => `${other}:${port[1]}` } : undefined;
 };
 
 /**
- * Private, loopback and link-local addresses, which the capture's redaction
- * already rewrites, and the documentation ranges it rewrites them to. Any
- * other address is a real machine on the internet.
+ * IPv4 addresses the capture's redaction rewrites whole (private, loopback,
+ * link-local), and the documentation ranges it and this file write. Any other
+ * IPv4 address is a real machine on the internet. An IPv6 address is kept only
+ * in the documentation range: the redaction can leave part of a private one,
+ * its zone or an IPv4 address inside it.
  */
-const KEPT_ADDRESS = /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|::1$|f[cd]|fe[89ab]|2001:db8:)/i;
+const KEPT_V4 = /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)/;
+const KEPT_V6 = /^2001:db8:/i;
 
-/** A host name becomes the placeholder host; a public address, a documentation one. */
+/** A host name becomes the placeholder host; any other address, a documentation one. */
 const hostName = (value: unknown): unknown => {
     if (typeof value !== 'string' || value === '') return value;
     const found = address(value);
     if (found === undefined) return ANONYMOUS_HOST;
-    if (KEPT_ADDRESS.test(found.ip)) return value;
-    return found.rest(isIP(found.ip) === 6 ? '2001:db8::10' : '203.0.113.10');
+    const v6 = isIP(found.ip) === 6;
+    if (v6 ? KEPT_V6.test(found.ip) && found.rest(found.ip) === value : KEPT_V4.test(found.ip)) return value;
+    return found.rest(v6 ? '2001:db8::10' : '203.0.113.10');
 };
 
 /**

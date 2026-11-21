@@ -132,6 +132,12 @@ describe('the Prowlarr anonymisers', () => {
         expect(history).toEqual({ records: [{ data: { host: '2001:db8::10' } }] });
     });
 
+    it('replace every IPv6 host outside the documentation range whole, zone and embedded IPv4 included', () => {
+        const hosts = ['fe80::1%eth0', '[fe80::1%25eth0]:9696', '::ffff:192.168.1.5', 'fd00::5', '::1', '2001:db8::7', '2001:db8::7%eth0'];
+        const stats = anonymiseProwlarrIndexerStats({ hosts: hosts.map(host => ({ host })) }) as { hosts: { host: string }[] };
+        expect(stats.hosts.map(h => h.host)).toEqual(['2001:db8::10', '[2001:db8::10]:9696', '2001:db8::10', '2001:db8::10', '2001:db8::10', '2001:db8::7', '2001:db8::10']);
+    });
+
     it('replace a history row search link whole, key and all, and the host that asked', () => {
         const body = anonymiseProwlarrHistory({
             page: 1,
@@ -233,6 +239,22 @@ describe('the other anonymisers', () => {
         );
         expect(Object.keys(stats.servers)).toEqual(['news1.example.test', 'news2.example.test']);
         expect(warnings).toEqual({ warnings: [{ text: 'Login failed for news2.example.test' }] });
+    });
+
+    // capture-fixtures.ts cannot be imported (it loads the config), so this reads it:
+    // each endpoint these anonymisers exist for is registered with its anonymiser.
+    it('register every endpoint with its anonymiser in the capture script', () => {
+        const source = readFileSync(join(import.meta.dirname, '..', 'scripts', 'capture-fixtures.ts'), 'utf8');
+        const registered = (line: string): number => source.split(line).length - 1;
+        expect(registered("{ name: 'blocklist', path: '/api/v3/blocklist?page=1&pageSize=10', anonymise: anonymiseArrBlocklist },")).toBe(2);
+        expect(registered("{ name: 'indexerstats', path: '/api/v1/indexerstats', anonymise: anonymiseProwlarrIndexerStats },")).toBe(1);
+        expect(registered("{ name: 'history', path: '/api/v1/history?pageSize=20', anonymise: anonymiseProwlarrHistory },")).toBe(1);
+        expect(registered("            path: '/api/v1/indexer',\n            anonymise: body => (Array.isArray(body) ? (body as Row[]).map(anonymiseProwlarrIndexer) : body)")).toBe(1);
+        expect(registered("{ name: 'system-info', path: '/System/Info', anonymise: anonymiseJellyfinSystemInfo },")).toBe(1);
+        expect(registered("{ name: 'configuration-seeker', path: '/api/configuration/seeker', anonymise: anonymiseCleanuparrSeeker },")).toBe(1);
+        // No other capture of these endpoints goes around them.
+        expect(source.match(/\{ name: '(?:indexerstats|system-info|configuration-seeker|server-stats|warnings)'/g)).toHaveLength(5);
+        expect(source.match(/path: '\/api\/v1\/history/g)).toHaveLength(1);
     });
 
     // capture-fixtures.ts cannot be imported (it loads the config), so this reads it:
