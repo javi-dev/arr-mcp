@@ -46,12 +46,18 @@ describe('scrubUrls', () => {
         // A sentence's full stop after a cut URL is not doubled onto the placeholder.
         [`refused https://tracker.example/${PASSKEY}.`, 'refused https://tracker.example/...'],
         [`got http://[2001:db8::1]/${PASSKEY}]`, 'got http://[2001:db8::1]/...]'],
-        [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...']
+        [`got http://tracker.example\\${PASSKEY}`, 'got http://tracker.example/...'],
+        // A serialiser leaves a backtick in a query unescaped, so it does not end the URL.
+        [`got https://tracker.example/?a=x\`${PASSKEY}`, 'got https://tracker.example/...'],
+        [`magnet:?xt=urn:btih:abc&dn=x\`y&tr=${PASSKEY} was refused`, '(a magnet link, left out) was refused'],
+        // One that closes a code span stays, outside the cut.
+        [`use \`https://tracker.example/${PASSKEY}\`.`, 'use `https://tracker.example/...`.'],
+        [`use \`magnet:?xt=urn:btih:abc&tr=${PASSKEY}\`.`, 'use `(a magnet link, left out)`.']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
-    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS', 'could not reach http://[2001:db8::1]', 'redirected to (https://[2001:db8::1]:8443).'])('leaves %s alone', text => {
+    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS', 'could not reach http://[2001:db8::1]', 'redirected to (https://[2001:db8::1]:8443).', 'set it to `http://192.0.2.20:8081`.'])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
     });
 });

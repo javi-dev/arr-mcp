@@ -231,15 +231,20 @@ describe('classifyFetchError', () => {
         expect(out.detail).toBe('bad response from http://host:1/... at host:1');
     });
 
-    it('cuts a URL down exactly as a write tool cuts its errors', () => {
-        const messages = [
-            'refused http://user:pw@host:1/key/path?apikey=abc',
-            'refused https://0123456789abcdef0123.example.org/announce',
-            'refused magnet:?xt=urn:btih:abc&tr=http://tracker.example.org/key/announce',
-            'refused http://host:1 and http://host:2/.'
+    it('cuts every URL down to scheme and host, and leaves out magnet links', () => {
+        const cases: [string, string][] = [
+            ['refused http://user:pw@host:1/key/path?apikey=abc', 'refused http://host:1/...'],
+            ['refused https://0123456789abcdef0123.example.org/announce', 'refused https://***.example.org/...'],
+            ['refused magnet:?xt=urn:btih:abc&tr=http://tracker.example.org/key/announce', 'refused (a magnet link, left out)'],
+            ['refused http://host:1 and http://host:2/.', 'refused http://host:1 and http://host:2/.'],
+            // A serialiser leaves a backtick in a query unescaped; the older scrub dropped the whole query, and so does this one.
+            ['refused http://host:1/?apikey=ab`cdef', 'refused http://host:1/...']
         ];
-        for (const message of messages) {
-            expect(classifyFetchError(new Error(message), 'radarr', 'http://h:7878').detail).toBe(`${scrubPastedUrls(message)} at h:7878`);
+        for (const [message, expected] of cases) {
+            const detail = classifyFetchError(new Error(message), 'radarr', 'http://h:7878').detail;
+            expect(detail).toBe(`${expected} at h:7878`);
+            // The same scrub write tools apply, so scrubbing again changes nothing.
+            expect(scrubPastedUrls(detail)).toBe(detail);
         }
     });
 

@@ -3554,7 +3554,7 @@ not call it in a loop. The confirm token binds a SHA-256 of the tracker URLs, so
 a torrent whose trackers changed since the preview needs a new one. A stopped
 torrent has nothing to announce and is a no-op, even when its tracker list is
 malformed or cannot be read at all: its state is read first, and the tracker
-list only for a torrent that is not stopped. For any other,
+list only for a torrent that was not stopped then. For any other,
 if qBittorrent's tracker list cannot be read, both the preview and the confirm
 are refused. The confirm checks the list as it reads it while planning, shortly
 before the reannounce: qBittorrent takes only the torrent's hash, so a tracker
