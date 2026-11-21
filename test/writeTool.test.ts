@@ -230,7 +230,7 @@ describe('write tool harness — preview and confirm', () => {
     // it out takes the trailing word or the final backticked span, and prose
     // after the token defeats both — `unwrap` strips punctuation, not a clause.
     it('ends both the preview and the rejection with the token itself', async () => {
-        const ending = /`v2\.[\w.-]+`\.?$/u;
+        const ending = /`v3\.[\w.-]+`\.?$/u;
 
         const preview = await harness.call('delete_media', { id: '5' });
         expect(preview.content[0]?.text.trimEnd()).toMatch(ending);
@@ -599,7 +599,7 @@ describe('write tool harness — cross-checks', () => {
     const WARNING = 'Seerr still has a request for Alien (1979).';
     const advised = (warnings: string[] = [WARNING], unchecked: string[] = ['reclaimerr']) =>
         vi.fn<CrossChecker>(() => Promise.resolve({ warnings, unchecked }));
-    const endsWithToken = /`v2\.[\w.-]+`\.?$/u;
+    const endsWithToken = /`v3\.[\w.-]+`\.?$/u;
 
     it('shows warnings on a preview, in the structured result and the text', async () => {
         const crossChecks = advised();

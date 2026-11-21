@@ -273,6 +273,8 @@ plus a token, and only a second call carrying that token mutates anything.
 - It binds to the **resolved id, not the phrase the user typed**, so a token
   cannot survive re-resolving a title to a different film.
 - **Single-use**, so "add movie" cannot be confirmed twice into a duplicate.
+  Each token also signs a random nonce, so two previews of one write never share
+  a token, and confirming one does not spend the other.
 - **Five-minute TTL**, so a token found in an old transcript is dead.
 - The signing key is fresh per process and never written down, so a restart
   invalidates outstanding tokens.

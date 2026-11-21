@@ -202,7 +202,7 @@ trigger_search { service: "radarr", id: "5" }
 > - May grab and start downloading a release, which will appear in get_queue.
 >
 > To apply this, call trigger_search again with the same arguments plus
-> `confirm` set to `v2.Hq3xV9aB.mjuohs00.TMzBfBIC42G0BspuPZX0rWd6n9rK_blflWv69_cuVXk`.
+> `confirm` set to `v3.Hq3xV9aB.mjuohs00.k7Qe2rWbN0xYpL4s.TMzBfBIC42G0BspuPZX0rWd6n9rK_blflWv69_cuVXk`.
 
 The token is in the text as well as in the `confirm_token` field of
 `structuredContent`, because not every client forwards the structured half to
@@ -213,7 +213,9 @@ bound to the exact operation and arguments previewed: a token issued for one
 film cannot be replayed against another, and a token from a `delete_media`
 preview that left files on disk cannot be used to wipe them. A token only works
 in the arr-mcp process that issued it, so restarting invalidates any outstanding
-ones, and a token taken to a second instance is refused.
+ones, and a token taken to a second instance is refused. Every preview gets a
+token of its own, even two previews of the same write, so confirming one leaves
+the other usable.
 
 A token that is refused for any reason but having been used already comes back
 as a fresh preview with a new token, and its text carries that preview's summary
