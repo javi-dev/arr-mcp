@@ -88,8 +88,9 @@ The scrub knows a URL by its `scheme://` and a magnet link by `magnet:?`; other
 spellings a URL parser also accepts are not caught yet (#17, #18 and #19). A
 read tool's error for a request that never got an answer (a refused URL, a
 failed connection) has every URL in it, from its `scheme://` to the next
-whitespace, `<` or `>`, cut down to its scheme and host too; one a URL parser
-refuses, or one far longer than any address, is left out whole.
+whitespace, `<` or `>`, cut down to its scheme and host too. One whose address
+a URL parser refuses, or one far longer than any address, is left out whole; a
+short `scheme://` with no address after it stays as written.
 
 ## The repair page renders the config file verbatim
 
