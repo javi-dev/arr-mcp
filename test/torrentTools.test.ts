@@ -104,7 +104,7 @@ describe('recheck_torrents', () => {
     });
 
     /** The recheck is the write; the watch after it waits on qBittorrent alone (#12). */
-    it('lets another confirmed write to the client apply while it watches, and starts what came back whole', async () => {
+    it('lets another confirmed write to the client apply while it watches, then leaves the torrent stopped rather than undo it', async () => {
         const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
         const cfg = config();
         const { server, call } = toolServer();
@@ -129,8 +129,10 @@ describe('recheck_torrents', () => {
             const moved = await call('set_torrent_category', { id: HASH, category: 'tv', confirm: move.structuredContent.confirm_token });
             expect(moved.structuredContent.applied).toBe(true);
             resume();
-            expect((await rechecking).structuredContent.result).toMatchObject({ resumed: [HASH] });
-            expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck', '/torrents/setCategory', '/torrents/start']);
+            const done = await rechecking;
+            expect(done.structuredContent.result).toMatchObject({ left_stopped: [HASH] });
+            expect(done.content[0]?.text).toMatch(/left stopped, because another confirmed write reached qBittorrent during the watch/);
+            expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck', '/torrents/setCategory']);
         } finally {
             resume();
         }

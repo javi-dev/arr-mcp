@@ -22,7 +22,6 @@ import {
     hasMetadataInspect,
     hasMetadataRepair,
     hasTagRepair,
-    alreadySettled,
     type BookFields,
     type BookMetadataCapable,
     type BookSearch,
@@ -30,8 +29,6 @@ import {
     type MetadataInspectCapable,
     type MetadataRepairCapable,
     type RetagFile,
-    type RetagRun,
-    type SentWrite,
     type ServiceAdapter,
     type TagRepairCapable
 } from '../services/types.ts';
@@ -248,13 +245,9 @@ async function planRetag(adapter: Lidarr, artistId: string, files: readonly numb
  * preview of the bound files is what says whether they now match, and only
  * that far: Lidarr's preview also leaves out a file it cannot read.
  */
-async function applyRetag(adapter: Lidarr, bound: { artistId: string; files: number[]; scrub: boolean | null; albums: number[] | null }): Promise<SentWrite<unknown>> {
-    const sent = await adapter.retagFiles(bound.artistId, bound.files);
-    return { wait: async () => checkRetag(adapter, bound, await sent.wait()) };
-}
-
-async function checkRetag(adapter: Lidarr, bound: { artistId: string; files: number[]; scrub: boolean | null; albums: number[] | null }, run: RetagRun) {
+async function applyRetag(adapter: Lidarr, bound: { artistId: string; files: number[]; scrub: boolean | null; albums: number[] | null }) {
     const n = bound.files.length;
+    const run = await adapter.retagFiles(bound.artistId, bound.files);
     // Scrub deletes a file's tags before writing them, and a write that then
     // fails leaves the file with none (`AudioTagService.WriteTags`).
     const scrubbed =
@@ -484,6 +477,9 @@ export type RepairTiming = { pollMs: number; waitMs: number; sleep: (ms: number)
 const DEFAULT_TIMING: RepairTiming = { pollMs: 5_000, waitMs: 30_000, sleep: ms => new Promise(r => setTimeout(r, ms)) };
 
 type Reading = { mismatches: Mismatch[]; compared: number };
+
+/** What a repair still has to read once its change has been sent; outside the lane. */
+type ReadBack = () => Promise<unknown>;
 
 const hasPath = (p: { path?: string }): boolean => p.path !== undefined && p.path.trim() !== '';
 
@@ -919,9 +915,11 @@ export function registerFixMetadata(
 ${note}`;
         },
 
-        afterWrite: sent => (sent as SentWrite<unknown>).wait(),
+        // What `apply` left to do once its last change was sent: the read-back
+        // of a media-server repair, or nothing.
+        afterWrite: sent => (sent as ReadBack)(),
 
-        async apply(plan, { user }): Promise<SentWrite<unknown>> {
+        async apply(plan, { user }): Promise<ReadBack> {
             // From the plan the token was verified against, not a second
             // resolve. Re-resolving would let a concurrent write that
             // invalidated the library index land this repair on a different
@@ -939,13 +937,16 @@ ${note}`;
                 // The Lidarr the token's target names, not a fresh resolve.
                 const target = lidarrTarget(music, plan.target);
                 if (target === undefined) throw new ServiceError('NotFound', 'lidarr', `${plan.target} is no longer a configured Lidarr artist`);
-                return applyRetag(target.adapter, bound);
+                // Waited on in the lane: Lidarr only queues RetagFiles, and a
+                // second retag planned before it ran would send it again.
+                const outcome = await applyRetag(target.adapter, bound);
+                return () => Promise.resolve(outcome);
             }
             if (bound.kind === 'book') {
                 if (books === undefined) throw new ServiceError('NotFound', 'grimmory', 'no Grimmory is configured');
                 const changes = bound.changes ?? {};
                 await books.writeBookMetadata(bound.itemId, changes);
-                return alreadySettled({ changed: Object.keys(changes) });
+                return () => Promise.resolve({ changed: Object.keys(changes) });
             }
             const { adapter, identity } = chooseServer(servers, bound.server, undefined);
             const viewer = await identity.resolve(user);
@@ -966,99 +967,97 @@ ${note}`;
             // Exactly the id the preview named and the token bound.
             const { settled, matchedTo } = await adapter.repairMetadata(series.itemId, bound.providerId ?? {});
             // The repair is the last change; what follows only reads, outside the lane.
-            return {
-                wait: async () => {
-                    const matched =
-                        matchedTo === undefined ? '' : ` Matched to ${titled(matchedTo.name, matchedTo.year)}.`;
+            return async () => {
+                const matched =
+                    matchedTo === undefined ? '' : ` Matched to ${titled(matchedTo.name, matchedTo.year)}.`;
 
-                    /**
-                     * A queued refresh is read until an improvement holds across two
-                     * reads, or the wait runs out. One read straight after was wrong in
-                     * three of four live Plex applies: twice it caught a show mid-rebuild
-                     * with nothing to compare and called that repaired, once it read a
-                     * film before the refresh landed and called that a failure.
-                     */
-                    // The write has landed by now, so a failed read is "not settled
-                    // yet", never an error: Broken Darkness was repaired and reported
-                    // as a 503.
-                    let readError: string | undefined;
-                    const readAfter = async (): Promise<Reading | undefined> => {
-                        try {
-                            return await read();
-                        } catch (err) {
-                            if (!(err instanceof ServiceError) || !STILL_SETTLING.has(err.kind)) throw err;
-                            readError = err.detail;
-                            return undefined;
-                        }
-                    };
-
-                    const improved = (r: Reading | undefined): boolean =>
-                        r !== undefined && r.compared >= before.compared && r.mismatches.length < before.mismatches.length;
-                    let after = await readAfter();
-                    let held = settled && improved(after);
-                    let waitedMs = 0;
-                    while (!settled && waitedMs < timing.waitMs) {
-                        await timing.sleep(timing.pollMs);
-                        waitedMs += timing.pollMs;
-                        const next = await readAfter();
-                        held = improved(after) && improved(next) && next?.mismatches.length === after?.mismatches.length;
-                        if (next !== undefined) after = next;
-                        if (held) break;
+                /**
+                 * A queued refresh is read until an improvement holds across two
+                 * reads, or the wait runs out. One read straight after was wrong in
+                 * three of four live Plex applies: twice it caught a show mid-rebuild
+                 * with nothing to compare and called that repaired, once it read a
+                 * film before the refresh landed and called that a failure.
+                 */
+                // The write has landed by now, so a failed read is "not settled
+                // yet", never an error: Broken Darkness was repaired and reported
+                // as a 503.
+                let readError: string | undefined;
+                const readAfter = async (): Promise<Reading | undefined> => {
+                    try {
+                        return await read();
+                    } catch (err) {
+                        if (!(err instanceof ServiceError) || !STILL_SETTLING.has(err.kind)) throw err;
+                        readError = err.detail;
+                        return undefined;
                     }
+                };
 
-                    const b = before.mismatches.length;
-                    const unit = series.kind === 'movie' ? 'file' : 'episodes';
-                    const waited = `${Math.round(waitedMs / 1000)} seconds`;
+                const improved = (r: Reading | undefined): boolean =>
+                    r !== undefined && r.compared >= before.compared && r.mismatches.length < before.mismatches.length;
+                let after = await readAfter();
+                let held = settled && improved(after);
+                let waitedMs = 0;
+                while (!settled && waitedMs < timing.waitMs) {
+                    await timing.sleep(timing.pollMs);
+                    waitedMs += timing.pollMs;
+                    const next = await readAfter();
+                    held = improved(after) && improved(next) && next?.mismatches.length === after?.mismatches.length;
+                    if (next !== undefined) after = next;
+                    if (held) break;
+                }
 
-                    if (after === undefined) {
-                        return {
-                            mismatchesBefore: b,
-                            comparedBefore: before.compared,
-                            verified: false,
-                            note: `NOT VERIFIED: the repair was accepted, but ${serverName(adapter)} answered every read after it with an error (${readError ?? 'unknown'}) for ${waited}, so the result could not be checked.${matched} That usually means it is still refreshing the item. Run get_metadata_issues again in a few minutes.`
-                        };
-                    }
-                    const a = after.mismatches.length;
-                    const lockedBefore = before.mismatches.filter(m => m.locked === true).length;
-                    const lockNote =
-                        lockedBefore === 0
-                            ? ''
-                            : ` ${lockedBefore} of them ${lockedBefore === 1 ? 'is' : 'are'} on a field locked in ${serverName(adapter)}, which no repair overwrites; unlock it on the item first.`;
+                const b = before.mismatches.length;
+                const unit = series.kind === 'movie' ? 'file' : 'episodes';
+                const waited = `${Math.round(waitedMs / 1000)} seconds`;
 
-                    /**
-                     * The write succeeding and the problem being fixed are two different
-                     * facts, and this tool used to report only the first. A live run
-                     * returned `applied: true` having changed nothing at all, which is
-                     * the reassuring lie every other part of this file is written to
-                     * avoid, so the outcome is stated in its own words here.
-                     *
-                     * Whether an unchanged count is a failure depends on which call ran.
-                     * On Jellyfin the identify path finishes the refresh before it
-                     * answers, so its result is final and an unchanged count means it
-                     * genuinely did nothing. A queued refresh (Jellyfin's plain one, and
-                     * Plex's always) has no done signal, so it gets the wait above and an
-                     * honest "not verified" when that runs out.
-                     */
+                if (after === undefined) {
                     return {
                         mismatchesBefore: b,
-                        mismatchesAfter: a,
                         comparedBefore: before.compared,
-                        comparedAfter: after.compared,
-                        verified: held,
-                        note: held
-                            ? `Repaired: ${b - a} of ${b} mismatches are gone.${matched}` +
-                              (settled ? '' : ` That held across two reads ${Math.round(timing.pollMs / 1000)} seconds apart.`)
-                            : after.compared < before.compared
-                              ? `NOT VERIFIED: ${serverName(adapter)} was still rebuilding the item after ${waited}. The last read compared ${after.compared} of the ${before.compared} ${unit} compared before the repair, so its count says nothing yet.${matched} Run get_metadata_issues again in a few minutes.`
-                              : settled && a >= b
-                                ? `NOT FIXED: the re-identify completed and ${a} mismatches remain, the same as before. This is a final answer rather than an early one, because the server finished the work before replying. An episode's season and number are stored on the item from the original scan and no refresh re-derives them, so the repair that works is trigger_scan with action "rename" on the managing Radarr or Sonarr, then trigger_scan on the media server.`
-                                : `NOT VERIFIED: ${a} of ${b} mismatches remain after waiting ${waited}${a < b ? ', and that count did not hold across a second read' : ''}.${matched}${lockNote} ` +
-                                  (bound.providerId === undefined
-                                      ? 'No provider id could be pinned, so this was a plain refresh, which the server queues. '
-                                      : 'The server queues the refresh and finishes it in the background. ') +
-                                  'Run get_metadata_issues again in a few minutes. If they are still there, this repair does not fix them.'
+                        verified: false,
+                        note: `NOT VERIFIED: the repair was accepted, but ${serverName(adapter)} answered every read after it with an error (${readError ?? 'unknown'}) for ${waited}, so the result could not be checked.${matched} That usually means it is still refreshing the item. Run get_metadata_issues again in a few minutes.`
                     };
                 }
+                const a = after.mismatches.length;
+                const lockedBefore = before.mismatches.filter(m => m.locked === true).length;
+                const lockNote =
+                    lockedBefore === 0
+                        ? ''
+                        : ` ${lockedBefore} of them ${lockedBefore === 1 ? 'is' : 'are'} on a field locked in ${serverName(adapter)}, which no repair overwrites; unlock it on the item first.`;
+
+                /**
+                 * The write succeeding and the problem being fixed are two different
+                 * facts, and this tool used to report only the first. A live run
+                 * returned `applied: true` having changed nothing at all, which is
+                 * the reassuring lie every other part of this file is written to
+                 * avoid, so the outcome is stated in its own words here.
+                 *
+                 * Whether an unchanged count is a failure depends on which call ran.
+                 * On Jellyfin the identify path finishes the refresh before it
+                 * answers, so its result is final and an unchanged count means it
+                 * genuinely did nothing. A queued refresh (Jellyfin's plain one, and
+                 * Plex's always) has no done signal, so it gets the wait above and an
+                 * honest "not verified" when that runs out.
+                 */
+                return {
+                    mismatchesBefore: b,
+                    mismatchesAfter: a,
+                    comparedBefore: before.compared,
+                    comparedAfter: after.compared,
+                    verified: held,
+                    note: held
+                        ? `Repaired: ${b - a} of ${b} mismatches are gone.${matched}` +
+                          (settled ? '' : ` That held across two reads ${Math.round(timing.pollMs / 1000)} seconds apart.`)
+                        : after.compared < before.compared
+                          ? `NOT VERIFIED: ${serverName(adapter)} was still rebuilding the item after ${waited}. The last read compared ${after.compared} of the ${before.compared} ${unit} compared before the repair, so its count says nothing yet.${matched} Run get_metadata_issues again in a few minutes.`
+                          : settled && a >= b
+                            ? `NOT FIXED: the re-identify completed and ${a} mismatches remain, the same as before. This is a final answer rather than an early one, because the server finished the work before replying. An episode's season and number are stored on the item from the original scan and no refresh re-derives them, so the repair that works is trigger_scan with action "rename" on the managing Radarr or Sonarr, then trigger_scan on the media server.`
+                            : `NOT VERIFIED: ${a} of ${b} mismatches remain after waiting ${waited}${a < b ? ', and that count did not hold across a second read' : ''}.${matched}${lockNote} ` +
+                              (bound.providerId === undefined
+                                  ? 'No provider id could be pinned, so this was a plain refresh, which the server queues. '
+                                  : 'The server queues the refresh and finishes it in the background. ') +
+                              'Run get_metadata_issues again in a few minutes. If they are still there, this repair does not fix them.'
+                };
             };
         }
     });

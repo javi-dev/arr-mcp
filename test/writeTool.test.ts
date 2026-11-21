@@ -63,7 +63,7 @@ function buildHarness(
         route?: (args: { id: string }) => string;
         apply?: (plan: WritePlan, args: { id: string }) => Promise<unknown>;
         afterWrite?: (sent: unknown, then: AfterWrite) => Promise<unknown>;
-        serialised?: false;
+        serialised?: false | ((args: { id: string }) => boolean);
         applied?: (outcome: unknown, plan: WritePlan) => string | undefined;
         tier?: 'safe' | 'destructive';
         caller?: string;
@@ -1155,7 +1155,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
      * `afterWrite` for it waits on `watch`, logging each step. Every other id
      * writes and finishes at once.
      */
-    function sending(held: string, opts: { afterWrite?: (sent: unknown, then: AfterWrite) => Promise<unknown> } = {}) {
+    function sending(held: string, opts: { afterWrite?: (sent: unknown, then: AfterWrite) => Promise<unknown>; signal?: AbortSignal } = {}) {
         const log: string[] = [];
         const write = gate();
         const watch = gate();
@@ -1184,7 +1184,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
             const tokens: (string | undefined)[] = [];
             for (const id of ids) tokens.push((await h.call('delete_media', { id })).structuredContent.confirm_token);
             log.length = 0;
-            return ids.map((id, i) => h.call('delete_media', { id, confirm: tokens[i] }).catch((e: unknown) => e));
+            return ids.map((id, i) => h.call('delete_media', { id, confirm: tokens[i] }, i === 0 ? opts.signal : undefined).catch((e: unknown) => e));
         };
         return { h, log, write, watch, confirmAll };
     }
@@ -1224,17 +1224,19 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         await first;
     });
 
-    it('records the write as applied only once its afterWrite returns, with what that returned', async () => {
+    it('drops the cache as the instance is handed on, and records the write as applied once its afterWrite returns', async () => {
         const r = sending('5');
         r.write.open();
         const [first] = await r.confirmAll(['5']);
         await settled();
         expect(outcomes(r.h)).toEqual(['unconfirmed', 'attempted']);
-        expect(r.h.invalidate).not.toHaveBeenCalled();
+        // The change has been made: a write let in now must not plan against the old snapshot.
+        expect(r.h.invalidate).toHaveBeenCalledOnce();
         r.watch.open();
         const done = (await first) as { structuredContent: WriteToolResult };
         expect(outcomes(r.h)).toEqual(['unconfirmed', 'applied']);
-        expect(r.h.invalidate).toHaveBeenCalledOnce();
+        // And again, so a snapshot read during the wait does not outlive the write.
+        expect(r.h.invalidate).toHaveBeenCalledTimes(2);
         expect(done.structuredContent.result).toEqual({ id: '5', watched: true });
     });
 
@@ -1248,7 +1250,8 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         expect(err.message).not.toContain('0123456789abcdef');
         expect(outcomes(r.h).filter(o => o === 'failed')).toHaveLength(2);
         expect(await second).toBeInstanceOf(Error);
-        expect(r.h.invalidate).not.toHaveBeenCalled();
+        // Once per apply, which did land; not again for a wait that failed.
+        expect(r.h.invalidate).toHaveBeenCalledTimes(2);
     });
 
     it('runs a change an afterWrite makes back in the lane, behind the confirmations queued meanwhile', async () => {
@@ -1258,9 +1261,9 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
                 const { id } = sent as { id: string };
                 if (id !== '5') return sent;
                 await later.opened;
-                return then.write(() => {
+                return then.write(({ overtaken }) => {
                     r.log.push(`resume ${id}`);
-                    return Promise.resolve({ id, resumed: true });
+                    return Promise.resolve({ id, resumed: true, overtaken });
                 });
             }
         });
@@ -1278,9 +1281,54 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         await settled();
         expect(r.log).toEqual(['plan 5', 'apply 5', 'sent 5', 'plan 9', 'apply 9']);
         nine.open();
-        expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ id: '5', resumed: true });
+        // Told that `9` started on the instance since its own write.
+        expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ id: '5', resumed: true, overtaken: true });
         await second;
         expect(r.log).toEqual(['plan 5', 'apply 5', 'sent 5', 'plan 9', 'apply 9', 'sent 9', 'resume 5']);
+    });
+
+    it('tells a change an afterWrite makes that nothing overtook it when no other write ran', async () => {
+        const r = sending('none', {
+            afterWrite: (_sent, then) => then.write(since => Promise.resolve(since))
+        });
+        const [first] = await r.confirmAll(['5']);
+        expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ overtaken: false });
+    });
+
+    it('refuses a change an afterWrite makes once its request is cancelled while it waits, without running it', async () => {
+        const abort = new AbortController();
+        const nine = gate();
+        let resumed = false;
+        let refusal: unknown;
+        const r = sending('none', {
+            signal: abort.signal,
+            afterWrite: async (sent, then) => {
+                const { id } = sent as { id: string };
+                if (id !== '5') return sent;
+                await new Promise(resolve => setTimeout(resolve, 20));
+                try {
+                    await then.write(() => {
+                        resumed = true;
+                        return Promise.resolve();
+                    });
+                } catch (err) {
+                    refusal = err;
+                }
+                return sent;
+            }
+        });
+        r.h.apply.mockImplementation(async (_plan, { id }) => {
+            if (id === '9') await nine.opened;
+            return { id };
+        });
+        const [first, second] = await r.confirmAll(['5', '9']);
+        await new Promise(resolve => setTimeout(resolve, 40));
+        abort.abort();
+        await first;
+        expect(resumed).toBe(false);
+        expect(refusal).toMatchObject({ message: 'the request was cancelled while this write waited for its instance' });
+        nine.open();
+        await second;
     });
 
     it('refuses a change an afterWrite makes when the instance stays busy for 30 seconds, without running it', async () => {
@@ -1377,6 +1425,53 @@ describe('write tool harness: a write that is not serialised (#12)', () => {
         expect(log).toEqual(['delete 5', 'grab 9']);
         open();
         await deleting;
+    });
+
+    it('holds up no serialised confirmation while it is still running', async () => {
+        let open = (): void => undefined;
+        const held = new Promise<void>(resolve => {
+            open = resolve;
+        });
+        toRelease.push(open);
+        const additive = buildHarness({
+            serialised: false,
+            apply: async () => {
+                await held;
+                return { grabbed: true };
+            }
+        });
+        const serialised = buildHarness({ plan: ({ id }) => Promise.resolve({ ...PLAN, target: id }) });
+        const grabbing = additive.call('delete_media', { id: '5', confirm: (await additive.call('delete_media', { id: '5' })).structuredContent.confirm_token });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const deleted = await serialised.call('delete_media', { id: '9', confirm: (await serialised.call('delete_media', { id: '9' })).structuredContent.confirm_token });
+        expect(deleted.structuredContent.applied).toBe(true);
+        open();
+        expect((await grabbing).structuredContent.applied).toBe(true);
+    });
+
+    it('reads `serialised` from the arguments, so one tool can queue some calls and not others', async () => {
+        let open = (): void => undefined;
+        const held = new Promise<void>(resolve => {
+            open = resolve;
+        });
+        toRelease.push(open);
+        const holder = buildHarness({
+            apply: async () => {
+                await held;
+                return {};
+            }
+        });
+        const h = buildHarness({ serialised: ({ id }) => id === 'queued', plan: ({ id }) => Promise.resolve({ ...PLAN, target: id }) });
+        const holding = holder.call('delete_media', { id: '5', confirm: (await holder.call('delete_media', { id: '5' })).structuredContent.confirm_token });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const free = await h.call('delete_media', { id: 'free', confirm: (await h.call('delete_media', { id: 'free' })).structuredContent.confirm_token });
+        expect(free.structuredContent.applied).toBe(true);
+        const queued = h.call('delete_media', { id: 'queued', confirm: (await h.call('delete_media', { id: 'queued' })).structuredContent.confirm_token });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(h.apply).toHaveBeenCalledTimes(1);
+        open();
+        expect((await queued).structuredContent.applied).toBe(true);
+        await holding;
     });
 
     it('still refuses a confirmation whose request was cancelled before it started, with its token unspent', async () => {

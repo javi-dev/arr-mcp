@@ -9,6 +9,7 @@ import { ProfilarrAdapter, type JobOutcome, type JobStatus, type ProfilarrDataba
 import type { ServiceAdapter } from '../src/services/types.ts';
 import type { LibraryLoader } from '../src/tools/library.ts';
 import { registerSyncDatabase } from '../src/tools/syncDatabase.ts';
+import { otherWrite } from './helpers/lane.ts';
 import type { WriteToolResult } from '../src/tools/write.ts';
 
 type FakeProfilarr = ServiceAdapter & {
@@ -149,6 +150,36 @@ describe('sync_database', () => {
         expect(applied.structuredContent.result).toMatchObject({ status: 'success' });
         // Never just the 202 — jobStatus had to be asked more than once.
         expect(jobCallCount()).toBeGreaterThan(1);
+    });
+
+    /** The job is queued once the POST returns; following it holds up no other write to Profilarr (#12). */
+    it('lets another confirmed write to Profilarr apply while it follows the job', async () => {
+        const { adapter } = fakeProfilarr([db(3, 'Dictionarry')], ['success']);
+        let finish = (): void => undefined;
+        const running = new Promise<void>(resolve => {
+            finish = resolve;
+        });
+        let polled = false;
+        const slow = {
+            ...adapter,
+            jobStatus: async (jobId: number) => {
+                polled = true;
+                await running;
+                return adapter.jobStatus(jobId);
+            }
+        };
+        const h = harness({ adapter: slow });
+        const other = otherWrite('profilarr');
+        try {
+            const preview = await h.call({});
+            const syncing = h.call({ confirm: preview.structuredContent.confirm_token });
+            await vi.waitFor(() => expect(polled).toBe(true));
+            expect((await other.confirm()).applied).toBe(true);
+            finish();
+            expect((await syncing).structuredContent.applied).toBe(true);
+        } finally {
+            finish();
+        }
     });
 
     it('does not report success when the job ends failed', async () => {

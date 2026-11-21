@@ -97,14 +97,11 @@ describe('LidarrAdapter retagging', () => {
         expect(await lidarr({ settings: null }).adapter.readTagSettings()).toEqual({ scrubAudioTags: undefined, writeAudioTags: 'unknown' });
     });
 
-    it('posts RetagFiles for the files, and waits for it to settle only in `wait`', async () => {
+    it('posts RetagFiles for the files and waits for it to settle', async () => {
         const { adapter, sent } = lidarr();
-        const queued = await adapter.retagFiles('101', [1001, 1003]);
+        const row = await adapter.retagFiles('101', [1001, 1003]);
 
         expect(sent.find(s => s.method === 'POST')?.body).toEqual({ name: 'RetagFiles', artistId: 101, files: [1001, 1003] });
-        // Sent and not yet waited on: the write ends at the POST (#12).
-        expect(sent.some(s => s.path === '/api/v1/command/41')).toBe(false);
-        const row = await queued.wait();
         expect(sent.some(s => s.path === '/api/v1/command/41')).toBe(true);
         expect(row).toMatchObject({ settled: true, status: 'completed' });
     });
@@ -112,7 +109,7 @@ describe('LidarrAdapter retagging', () => {
     // Queued, so it can still run: not a failed write, and no id to name.
     it('reports a retag Lidarr queued without an id as unsettled, naming no command', async () => {
         const { adapter, sent } = lidarr({ queued: { name: 'RetagFiles', status: 'queued' } });
-        const row = await (await adapter.retagFiles('101', [1001])).wait();
+        const row = await adapter.retagFiles('101', [1001]);
 
         expect(row).toEqual({ settled: false, reason: expect.stringMatching(/returned no command id/) as unknown });
         expect(sent.some(s => s.path.startsWith('/api/v1/command/'))).toBe(false);

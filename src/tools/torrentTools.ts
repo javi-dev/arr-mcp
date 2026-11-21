@@ -89,7 +89,7 @@ type TorrentToolOptions = { sleep?: (ms: number) => Promise<void> };
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
-type RecheckOutcome = { rechecking: string[]; resumed?: string[]; incomplete?: string[]; errored?: string[]; still_checking?: string[]; still_moving?: string[]; unconfirmed?: string[]; gone?: string[]; resume_failed?: string[] };
+type RecheckOutcome = { rechecking: string[]; resumed?: string[]; left_stopped?: string[]; incomplete?: string[]; errored?: string[]; still_checking?: string[]; still_moving?: string[]; unconfirmed?: string[]; gone?: string[]; resume_failed?: string[] };
 
 /**
  * Watches a recheck that has been sent, and starts what came back whole and
@@ -99,7 +99,10 @@ type RecheckOutcome = { rechecking: string[]; resumed?: string[]; incomplete?: s
  * incomplete one is watched to the end rather than reported as checked.
  *
  * Run outside the instance's lane, as the write's `afterWrite`: the watch only
- * reads, and the start at the end goes through `write`, back in the lane.
+ * reads, and the start at the end goes through `write`, back in the lane. It
+ * stands down when another confirmed write reached the client during the
+ * watch: a pause sent then leaves a checked torrent as stopped as the recheck
+ * did, and starting it would undo the later request.
  */
 async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: number) => Promise<void>, write: AfterWrite['write']): Promise<RecheckOutcome> {
     const seenChecking = new Set<string>();
@@ -137,10 +140,15 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
     const wholeAndStopped = finished.flatMap(([id, s]) => (s?.complete === true && s.stopped ? [id] : []));
     let toStart = wholeAndStopped.filter(id => seenChecking.has(id));
     let resumeFailed = false;
+    let leftStopped = false;
     if (toStart.length > 0) {
         try {
             // In the lane, so a confirmed write to this client cannot land between the read and the start.
-            await write(async () => {
+            await write(async ({ overtaken }) => {
+                if (overtaken) {
+                    leftStopped = true;
+                    return;
+                }
                 // Read again at the last moment: a batch can outlast what the watch saw of its first torrent.
                 const fresh = await client.torrentCheckStates(toStart);
                 toStart = fresh.filter(s => s.complete && s.stopped && !s.checking).map(s => s.id);
@@ -154,7 +162,7 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
     const list = (key: keyof RecheckOutcome, values: string[]) => (values.length === 0 ? {} : { [key]: values });
     return {
         rechecking: [...ids],
-        ...list(resumeFailed ? 'resume_failed' : 'resumed', toStart),
+        ...list(resumeFailed ? 'resume_failed' : leftStopped ? 'left_stopped' : 'resumed', toStart),
         ...list('incomplete', finished.flatMap(([id, s]) => (s !== undefined && !s.complete && s.state !== 'error' ? [id] : []))),
         ...list('errored', [...finished.flatMap(([id, s]) => (s?.state === 'error' ? [id] : [])), ...ids.filter(id => !settled.has(id) && failing.has(id))]),
         ...list('still_checking', ids.filter(id => !settled.has(id) && seenChecking.has(id) && !moving.has(id) && !failing.has(id))),
@@ -165,10 +173,11 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
 }
 
 const outcomeSentence = (o: RecheckOutcome): string | undefined => {
-    if (o.resumed === undefined && o.incomplete === undefined && o.errored === undefined && o.still_checking === undefined && o.still_moving === undefined && o.unconfirmed === undefined && o.gone === undefined && o.resume_failed === undefined) return undefined;
+    if (o.resumed === undefined && o.left_stopped === undefined && o.incomplete === undefined && o.errored === undefined && o.still_checking === undefined && o.still_moving === undefined && o.unconfirmed === undefined && o.gone === undefined && o.resume_failed === undefined) return undefined;
     const part = (label: string, ids: string[] | undefined) => (ids === undefined ? [] : [`${label}: ${ids.join(', ')}`]);
     return `Recheck sent. ${[
         ...part('started again', o.resumed),
+        ...part('finished complete but left stopped, because another confirmed write reached qBittorrent during the watch; start them with pause_downloads and `action: "resume"` if that is still wanted', o.left_stopped),
         ...part('came back incomplete, and any that was not stopped is downloading what is missing', o.incomplete),
         ...part('showing an error after the recheck was sent; get_queue shows only that state, and the reason is in the qBittorrent log', o.errored),
         ...part('still checking, so start these with pause_downloads and `action: "resume"` once get_queue shows them complete', o.still_checking),

@@ -1060,8 +1060,8 @@ export interface TagRepairCapable {
     previewRetag(artistId: string, albumId?: number): Promise<RetagFile[]>;
     /** Lidarr's "Tag Audio Files with Metadata" (`writeAudioTags`) and "Scrub Existing Tags" settings; `undefined` when Lidarr did not say. */
     readTagSettings(): Promise<{ scrubAudioTags: boolean | undefined; writeAudioTags: string }>;
-    /** Queues Lidarr's `RetagFiles` on those files; `wait` waits for it to settle. */
-    retagFiles(artistId: string, trackFileIds: readonly number[]): Promise<SentWrite<RetagRun>>;
+    /** Runs Lidarr's `RetagFiles` on those files and waits for it to settle. */
+    retagFiles(artistId: string, trackFileIds: readonly number[]): Promise<RetagRun>;
 }
 
 export const hasTagRepair = (a: ServiceAdapter): a is ServiceAdapter & TagRepairCapable =>
@@ -1369,17 +1369,6 @@ export const hasSearch = (a: ServiceAdapter): a is ServiceAdapter & SearchCapabl
  * reports "asked Radarr to search" rather than "found a release": claiming the
  * latter would be a confident lie about work that has not happened yet.
  */
-/**
- * A write whose last change has been sent, with what is still to learn about
- * how it ended. `wait` only waits and reads, never changes anything: a write
- * tool calls it from its `afterWrite`, once the harness has let the next
- * confirmed write to the instance in (#12).
- */
-export type SentWrite<T> = { wait(): Promise<T> };
-
-/** A write with nothing left to wait for once it has been sent. */
-export const alreadySettled = <T>(value: T): SentWrite<T> => ({ wait: () => Promise.resolve(value) });
-
 /**
  * `detail` is for the write that is not one command but several, where some
  * of them failed: Plex scans a library by refreshing each section, and six
@@ -1758,8 +1747,7 @@ export type EpisodeRemapOutcome = {
  */
 export interface EpisodeRemapCapable {
     planEpisodeRemap(seriesId: string, reassignments: EpisodeReassignment[]): Promise<EpisodeRemapPlan>;
-    /** Sends the remap and the renames up to the last one; `wait` waits on that and checks it. */
-    runEpisodeRemap(seriesId: string, reassignments: EpisodeReassignment[]): Promise<SentWrite<EpisodeRemapOutcome>>;
+    runEpisodeRemap(seriesId: string, reassignments: EpisodeReassignment[]): Promise<EpisodeRemapOutcome>;
 }
 
 export const hasEpisodeRemap = (a: ServiceAdapter): a is ServiceAdapter & EpisodeRemapCapable =>

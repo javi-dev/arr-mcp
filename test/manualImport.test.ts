@@ -4,9 +4,6 @@ import { RadarrAdapter } from '../src/services/radarr.ts';
 import { SonarrAdapter } from '../src/services/sonarr.ts';
 import { jsonResponse } from './helpers/serve.ts';
 
-/** The remap sent and its last rename waited on, as the write and its `afterWrite` run them. */
-const remapAndWait = async (sonarr: SonarrAdapter, ...args: Parameters<SonarrAdapter['runEpisodeRemap']>) => (await sonarr.runEpisodeRemap(...args)).wait();
-
 /**
  * "It is in SABnzbd and Jellyfin still cannot see it" — the download finished
  * and the *arr never took it. A library scan does not help: the file is still
@@ -534,7 +531,7 @@ describe('remapping episodes', () => {
 
     it('applies the whole rotation as one command, with the episodes the caller gave', async () => {
         const s = seriesStack();
-        await remapAndWait(s.sonarr, '5', ROTATION);
+        await s.sonarr.runEpisodeRemap('5', ROTATION);
 
         const posts = s.sent.filter(x => x.method === 'POST');
         const command = posts[0]?.body as { name: string; importMode?: string; files: Record<string, unknown>[] };
@@ -559,13 +556,13 @@ describe('remapping episodes', () => {
      *  no episode points at. */
     it('refuses a move that would orphan the file already on the target, and sends nothing', async () => {
         const s = seriesStack();
-        await expect(remapAndWait(s.sonarr, '5', [ROTATION[0]!])).rejects.toThrow(/S01E01.*not in reassignments/);
+        await expect(s.sonarr.runEpisodeRemap('5', [ROTATION[0]!])).rejects.toThrow(/S01E01.*not in reassignments/);
         expect(s.sent.filter(x => x.method === 'POST')).toHaveLength(0);
     });
 
     it('leaves out files already on the episode asked for', async () => {
         const s = seriesStack();
-        await remapAndWait(s.sonarr, '5', [
+        await s.sonarr.runEpisodeRemap('5', [
             { path: 'Season 01/Show - S01E01.mkv', season: 1, episode: 2 },
             { path: 'Season 01/Show - S01E02.mkv', season: 1, episode: 1 },
             { path: 'Season 01/Show - S01E03.mkv', season: 1, episode: 3 }
@@ -589,7 +586,7 @@ describe('remapping episodes', () => {
             ],
             message: '1 selected episode files renamed for Show'
         });
-        const out = await remapAndWait(s.sonarr, '5', ROTATION);
+        const out = await s.sonarr.runEpisodeRemap('5', ROTATION);
 
         const rename = s.sent.find(x => x.method === 'POST' && (x.body as { name?: string })?.name === 'RenameFiles');
         expect(rename?.body).toMatchObject({ seriesId: 5, files: [11] });
@@ -606,7 +603,7 @@ describe('remapping episodes', () => {
      */
     it('renames a rotation through two passes rather than leaving the names wrong', async () => {
         const s = seriesStack({ renames: PENDING_RENAMES, message: '3 selected episode files renamed for Show' });
-        const out = await remapAndWait(s.sonarr, '5', ROTATION);
+        const out = await s.sonarr.runEpisodeRemap('5', ROTATION);
 
         const passes = s.sent.filter(x => (x.body as { name?: string })?.name === 'RenameFiles');
         expect(passes).toHaveLength(2);
@@ -625,7 +622,7 @@ describe('remapping episodes', () => {
             ],
             message: '1 selected episode files renamed for Show'
         });
-        const out = await remapAndWait(s.sonarr, '5', ROTATION);
+        const out = await s.sonarr.runEpisodeRemap('5', ROTATION);
 
         expect(s.sent.filter(x => x.path === '/api/v3/config/naming' && x.method === 'PUT')).toHaveLength(0);
         expect(out.renamed).toBe(1);
@@ -648,9 +645,9 @@ describe('remapping episodes', () => {
             message: '0 selected episode files renamed for Show'
         });
 
-        await expect(remapAndWait(s.sonarr, '5', ROTATION)).rejects.toThrow(/renamed only 0 of 2/);
+        await expect(s.sonarr.runEpisodeRemap('5', ROTATION)).rejects.toThrow(/renamed only 0 of 2/);
         // The message names the series, so it is fenced like the title.
-        await expect(remapAndWait(s.sonarr, '5', ROTATION)).rejects.toThrow(
+        await expect(s.sonarr.runEpisodeRemap('5', ROTATION)).rejects.toThrow(
             /<<untrusted:sonarr\.message>>0 selected episode files renamed for Show<<\/>>/
         );
     });
@@ -665,7 +662,7 @@ describe('remapping episodes', () => {
             ],
             omitMessage: true
         });
-        const out = await remapAndWait(s.sonarr, '5', ROTATION);
+        const out = await s.sonarr.runEpisodeRemap('5', ROTATION);
         expect(out.renamed).toBe(1);
     });
 
@@ -679,7 +676,7 @@ describe('remapping episodes', () => {
             omitMessage: true,
             renameStatus: 'failed'
         });
-        await expect(remapAndWait(s.sonarr, '5', ROTATION)).rejects.toThrow(/RenameFiles command ended failed/);
+        await expect(s.sonarr.runEpisodeRemap('5', ROTATION)).rejects.toThrow(/RenameFiles command ended failed/);
     });
 
     /**
@@ -691,12 +688,12 @@ describe('remapping episodes', () => {
      */
     it('fails when Sonarr reports success but a file did not land on its episode', async () => {
         const s = seriesStack({ halfApplies: true });
-        await expect(remapAndWait(s.sonarr, '5', ROTATION)).rejects.toThrow(/did not land on the episode asked for/);
+        await expect(s.sonarr.runEpisodeRemap('5', ROTATION)).rejects.toThrow(/did not land on the episode asked for/);
     });
 
     it('does not rename anything when the reassignment did not land', async () => {
         const s = seriesStack({ halfApplies: true });
-        await expect(remapAndWait(s.sonarr, '5', ROTATION)).rejects.toThrow();
+        await expect(s.sonarr.runEpisodeRemap('5', ROTATION)).rejects.toThrow();
         expect(s.sent.filter(x => (x.body as { name?: string })?.name === 'RenameFiles')).toHaveLength(0);
     });
 
@@ -704,8 +701,8 @@ describe('remapping episodes', () => {
      *  say which episode is wrong, because that is what a repair needs. */
     it('says what is still on disk and which episode is wrong', async () => {
         const s = seriesStack({ halfApplies: true });
-        await expect(remapAndWait(s.sonarr, '5', ROTATION)).rejects.toThrow(/still on disk/);
-        await expect(remapAndWait(s.sonarr, '5', ROTATION)).rejects.toThrow(/S01E03 should hold/);
+        await expect(s.sonarr.runEpisodeRemap('5', ROTATION)).rejects.toThrow(/still on disk/);
+        await expect(s.sonarr.runEpisodeRemap('5', ROTATION)).rejects.toThrow(/S01E03 should hold/);
     });
 
     it('names the episode a move leaves without a file', async () => {

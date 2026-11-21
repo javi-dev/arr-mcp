@@ -13,10 +13,8 @@ import type {
     EpisodeRemapPlan,
     ImportCandidate,
     ImportMapping,
-    QueueItem,
-    SentWrite
+    QueueItem
 } from './types.ts';
-import { alreadySettled } from './types.ts';
 import { episodeCode } from '../core/labels.ts';
 
 /**
@@ -825,14 +823,13 @@ export async function planArrEpisodeRemap(
 }
 
 /** Re-resolves rather than trusting the preview, for the same reason the
- *  download import does: the association may have moved on since. Returns
- *  once the last rename is sent; `wait` waits on it and checks it. */
+ *  download import does: the association may have moved on since. */
 export async function runArrEpisodeRemap(
     http: ServiceHttp,
     service: string,
     seriesId: string,
     reassignments: EpisodeReassignment[]
-): Promise<SentWrite<EpisodeRemapOutcome>> {
+): Promise<EpisodeRemapOutcome> {
     const id = arrItemId(service, 'series', seriesId);
     const { moves } = await resolveEpisodeRemap(http, service, id, reassignments);
 
@@ -864,8 +861,7 @@ export async function runArrEpisodeRemap(
     const movedPaths = files.map(f => f.path).filter((p): p is string => typeof p === 'string');
     await verifyRemapLanded(http, service, id, moves);
 
-    const renaming = await renameRemappedFiles(http, service, id, movedPaths);
-    return { wait: async () => ({ remap, ...(await renaming.wait()) }) };
+    return { remap, ...(await renameRemappedFiles(http, service, id, movedPaths)) };
 }
 
 /**
@@ -939,16 +935,13 @@ const seriesTypeOf = async (http: ServiceHttp, seriesId: number): Promise<string
  * rather than the status. Breaking that deadlock needs Sonarr's naming format
  * changed and two passes; it is deliberately not done here, and the caller is
  * told which files are waiting on it.
- *
- * Returns once the last `RenameFiles` is sent; `wait` waits on it and reads
- * what it renamed.
  */
 async function renameRemappedFiles(
     http: ServiceHttp,
     service: string,
     seriesId: number,
     movedPaths: string[]
-): Promise<SentWrite<{ renamed: number; blocked: { path: string; wants: string }[]; caughtInWindow?: string[] }>> {
+): Promise<{ renamed: number; blocked: { path: string; wants: string }[]; caughtInWindow?: string[] }> {
     // Re-read for the ids Sonarr has just assigned, and ask it what it would
     // rename rather than deriving names from the format ourselves.
     const [after, pending] = await Promise.all([
@@ -977,16 +970,17 @@ async function renameRemappedFiles(
     // that costs and how it is bounded.
     if (mine.length > 0 && free.length === 0) {
         const ids = mine.map(r => r.episodeFileId).filter((id): id is number => typeof id === 'number');
-        const rotated = await renameThroughTemporaryFormat(http, service, seriesId, await seriesTypeOf(http, seriesId), ids);
-        return {
-            wait: async () => {
-                const { renamed, caughtInWindow } = await rotated.wait();
-                return { renamed, blocked: [], caughtInWindow };
-            }
-        };
+        const { renamed, caughtInWindow } = await renameThroughTemporaryFormat(
+            http,
+            service,
+            seriesId,
+            await seriesTypeOf(http, seriesId),
+            ids
+        );
+        return { renamed, blocked: [], caughtInWindow };
     }
 
-    if (free.length === 0) return alreadySettled({ renamed: 0, blocked: [] });
+    if (free.length === 0) return { renamed: 0, blocked: [] };
 
     const blocked = mine.filter(isBlocked).map(r => ({
         path: fenceText(r.existingPath ?? '', { service, field: 'path' }),
@@ -998,34 +992,30 @@ async function renameRemappedFiles(
         seriesId,
         files: free.map(r => r.episodeFileId)
     });
-    return {
-        wait: async () => {
-            const settled = await awaitArrCommand(http, service, rename.commandId);
-            // A failed or aborted command carries no count, which below would read
-            // as every file renamed. Nothing it says can be trusted, so it fails here.
-            if (settled.status !== 'completed') {
-                throw new ServiceError('UpstreamError', service, `${service} reassigned the files but its RenameFiles command ended ${settled.status}`, {
-                    remedy: `The reassignment is applied and correct; only the filenames are behind. ${service} reported: ${fenceText(settled.message ?? '', { service, field: 'message' }) || 'nothing'}. Check its log, then run action: "rename" on the series to retry.`
-                });
-            }
-            const count = renamedCount(settled.message);
+    const settled = await awaitArrCommand(http, service, rename.commandId);
+    // A failed or aborted command carries no count, which below would read
+    // as every file renamed. Nothing it says can be trusted, so it fails here.
+    if (settled.status !== 'completed') {
+        throw new ServiceError('UpstreamError', service, `${service} reassigned the files but its RenameFiles command ended ${settled.status}`, {
+            remedy: `The reassignment is applied and correct; only the filenames are behind. ${service} reported: ${fenceText(settled.message ?? '', { service, field: 'message' }) || 'nothing'}. Check its log, then run action: "rename" on the series to retry.`
+        });
+    }
+    const count = renamedCount(settled.message);
 
-            // `completed` is not the signal: the count is. A build that stops
-            // sending the message reports undefined, which is not zero: the files it
-            // was asked about are reported as renamed rather than silently written
-            // off, since Sonarr accepted the command and said nothing was wrong.
-            if (count !== undefined && count < free.length) {
-                throw new ServiceError(
-                    'UpstreamError',
-                    service,
-                    `${service} reassigned the files but renamed only ${count} of ${free.length}`,
-                    {
-                        remedy: `The reassignment is applied and correct; only the filenames are behind. ${service} reported: ${fenceText(settled.message ?? '', { service, field: 'message' }) || 'nothing'}. Check its log for the file it would not rename, then run action: "rename" on the series to retry.`
-                    }
-                );
+    // `completed` is not the signal: the count is. A build that stops
+    // sending the message reports undefined, which is not zero: the files it
+    // was asked about are reported as renamed rather than silently written
+    // off, since Sonarr accepted the command and said nothing was wrong.
+    if (count !== undefined && count < free.length) {
+        throw new ServiceError(
+            'UpstreamError',
+            service,
+            `${service} reassigned the files but renamed only ${count} of ${free.length}`,
+            {
+                remedy: `The reassignment is applied and correct; only the filenames are behind. ${service} reported: ${fenceText(settled.message ?? '', { service, field: 'message' }) || 'nothing'}. Check its log for the file it would not rename, then run action: "rename" on the series to retry.`
             }
+        );
+    }
 
-            return { renamed: count ?? free.length, blocked };
-        }
-    };
+    return { renamed: count ?? free.length, blocked };
 }

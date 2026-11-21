@@ -77,7 +77,6 @@ import {
     type RemoveQueueOptions,
     type RetagFile,
     type RetagRun,
-    type SentWrite,
     type RootFolder,
     type ScanStateCapable,
     type SearchCapable,
@@ -977,33 +976,29 @@ export class LidarrAdapter
     }
 
     /**
-     * `RetagFiles` for those track files, queued; `wait` waits on it. It writes
-     * with `force`, so it runs whatever "Tag Audio Files with Metadata" says, as
-     * Lidarr's own Retag button does (`AudioTagService`). Once Lidarr has queued
-     * it, a wait that fails is not a write that failed: the command can still run.
+     * `RetagFiles` for those track files, waited on. It writes with `force`, so
+     * it runs whatever "Tag Audio Files with Metadata" says, as Lidarr's own
+     * Retag button does (`AudioTagService`). Once Lidarr has queued it, a wait
+     * that fails is not a write that failed: the command can still run.
      */
-    async retagFiles(id: string, trackFileIds: readonly number[]): Promise<SentWrite<RetagRun>> {
+    async retagFiles(id: string, trackFileIds: readonly number[]): Promise<RetagRun> {
         const artistId = this.numericId('artist', id);
         const handle = await postArrCommand(this.http, this.id, { name: 'RetagFiles', artistId, files: [...trackFileIds] });
+        let row: Awaited<ReturnType<typeof awaitArrCommand>>;
+        try {
+            // A handle with no id refuses here: queued all the same, so it can still run.
+            row = await awaitArrCommand(this.http, this.id, handle.commandId);
+        } catch (err) {
+            return {
+                settled: false,
+                ...(handle.commandId === undefined ? {} : { commandId: handle.commandId }),
+                reason: err instanceof Error ? err.message : String(err)
+            };
+        }
         return {
-            wait: async () => {
-                let row: Awaited<ReturnType<typeof awaitArrCommand>>;
-                try {
-                    // A handle with no id refuses here: queued all the same, so it can still run.
-                    row = await awaitArrCommand(this.http, this.id, handle.commandId);
-                } catch (err) {
-                    return {
-                        settled: false,
-                        ...(handle.commandId === undefined ? {} : { commandId: handle.commandId }),
-                        reason: err instanceof Error ? err.message : String(err)
-                    };
-                }
-                return {
-                    settled: true,
-                    status: row.status,
-                    ...(row.message === undefined ? {} : { message: fenceText(row.message, { service: this.id, field: 'message' }) })
-                };
-            }
+            settled: true,
+            status: row.status,
+            ...(row.message === undefined ? {} : { message: fenceText(row.message, { service: this.id, field: 'message' }) })
         };
     }
 

@@ -129,27 +129,33 @@ type WriteToolSpec<
      */
     apply(plan: WritePlan<Bound>, args: z.infer<Schema>, adapter: Adapter & ServiceAdapter): Promise<unknown>;
     /**
-     * What a write does once its last change has been sent: waiting on the
-     * command the service queued, watching a recheck, reading back whether a
-     * repair held. It receives what `apply` returned, and its result is the
-     * outcome that `applied`, `landed`, `followUps` and the reply read.
+     * What a write does once its last change has been made: watching a
+     * recheck, reading back whether a repair held, following a job. It receives
+     * what `apply` returned, and its result is the outcome that `applied`,
+     * `landed`, `followUps` and the reply read.
      *
      * Run after the harness has released the instance, so a confirmation sent
      * to it meanwhile waits for the write, not for minutes of polling (#12).
      * It must only wait and read: a call that changes something goes through
-     * `then.write`, which runs it in the instance's lane again. The audit row
-     * is settled once it returns, so a throw here records the write as failed,
-     * as a throw from `apply` does.
+     * `then.write`, which runs it in the instance's lane again. Not for a wait
+     * on work the service has only queued where another write could overtake
+     * it (an *arr command a direct API call can run ahead of): that wait stays
+     * in `apply`. The library cache is dropped when `apply` returns and again
+     * when this does; the audit row is settled once it returns, so a throw here
+     * records the write as failed, as a throw from `apply` does.
      */
     afterWrite?(sent: unknown, then: AfterWrite): Promise<unknown>;
     /**
-     * False for a write whose confirmation neither waits for its instance nor
-     * holds it. Only for a write that adds one thing in a single call and whose
-     * plan reads nothing another write to the instance can change under it:
-     * `grab_release`, whose plan searches the indexers again and can take
-     * minutes, and whose token binds the exact release it sends.
+     * False for a confirmation that neither waits for its instance nor holds
+     * it, derived from the arguments for the same reason `service` is. Only for
+     * a write that adds one thing in a single call, whose token binds exactly
+     * what it adds, and whose apply checks nothing another write could change
+     * first: `grab_release` by guid, whose plan searches the indexers again and
+     * can take minutes. Its plan still reads the library, so a write confirmed
+     * during that search can change what the preview described; the token
+     * holds it to the release it names. Absent means serialised.
      */
-    serialised?: false;
+    serialised?: false | ((args: z.infer<Schema>) => boolean);
     /**
      * Optional override for the sentence shown after a successful apply.
      * Most tools need none; `plan.summary` describes the effect and the
@@ -184,11 +190,15 @@ type WriteToolSpec<
 export type AfterWrite = {
     /**
      * Runs `call`, which changes something, in the instance's lane, as `apply`
-     * ran: once every confirmed write queued ahead of it has finished. Throws
-     * without running it when the instance is still busy after the same 30
-     * seconds a confirmation waits.
+     * ran: once every confirmed write queued ahead of it has finished. `call`
+     * is told whether another confirmed write to the instance has started
+     * since this one's `apply` returned, so a change that only made sense
+     * against the state then (starting what a recheck found whole) can stand
+     * down rather than undo a later one. Throws without running it when the
+     * instance is still busy after the same 30 seconds a confirmation waits,
+     * or when the request is cancelled while it waits.
      */
-    write: <T>(call: () => Promise<T>) => Promise<T>;
+    write: <T>(call: (since: { overtaken: boolean }) => Promise<T>) => Promise<T>;
 };
 
 export type WriteContext = {
@@ -358,12 +368,12 @@ function writeInput(schema: z.ZodObject): z.ZodObject {
 }
 
 /**
- * How long a confirmed write waits for its instance. A write that waits on the
- * service after its last change does so outside the lane (`afterWrite`), but
- * some still take minutes inside it (a remap's import command, the two passes
- * of a rotated rename, a Jellyfin identify), and a client stops waiting long
- * before that, so a write queued behind one is refused rather than landing
- * after its caller was told it failed.
+ * How long a confirmed write waits for its instance. A write that only reads
+ * after its last change does so outside the lane (`afterWrite`), but some still
+ * take minutes inside it (an *arr command a rename or import waits on, a
+ * Jellyfin identify), and a client stops waiting long before that, so a write
+ * queued behind one is refused rather than landing after its caller was told
+ * it failed.
  */
 const LANE_WAIT_MS = 30_000;
 
@@ -375,9 +385,22 @@ type Lane = { waiting: Set<() => void> };
  * write runs its plan, its token check and its apply in that lane, so two
  * confirmations racing on one instance cannot interleave their writes and
  * leave a mix of both (#7). Previews and dry runs only read, so they never
- * wait, and neither does an `afterWrite` until it has something to change.
+ * wait, and neither does an `afterWrite` until it has a change to make
+ * through `then.write`, which queues in the same lane.
  */
 const writeLanes = new Map<string, Lane>();
+
+/**
+ * How many confirmed writes have started on each instance, counted in the
+ * lane: an `afterWrite` compares it to the count its own write left, to learn
+ * whether another write came in between. One number per configured instance.
+ */
+const writesStarted = new Map<string, number>();
+const startWrite = (service: string): number => {
+    const count = (writesStarted.get(service) ?? 0) + 1;
+    writesStarted.set(service, count);
+    return count;
+};
 
 /** Hands the instance to the oldest write still waiting, or frees it. */
 function release(service: string, lane: Lane): void {
@@ -631,13 +654,26 @@ export function registerWriteTool<
             );
         }
 
+        // From the arguments alone, like the tier: whether a confirm queues for its instance.
+        const serialised = typeof spec.serialised === 'function' ? spec.serialised(args) : spec.serialised !== false;
+        // This write's place in its instance's count, taken in the lane as its apply starts.
+        let started = 0;
+
         // A later change an `afterWrite` makes, back in the lane the apply held.
         const then: AfterWrite = {
-            write: async <T>(call: () => Promise<T>): Promise<T> => {
-                if (spec.serialised === false) return call();
-                const turn = await inLane(service, undefined, call);
+            write: async <T>(call: (since: { overtaken: boolean }) => Promise<T>): Promise<T> => {
+                if (!serialised) return call({ overtaken: false });
+                const turn = await inLane(service, signal, () => {
+                    const overtaken = writesStarted.get(service) !== started;
+                    started = startWrite(service);
+                    return call({ overtaken });
+                });
                 if (turn.ran) return turn.value;
-                throw new Error(`another confirmed write to ${service} was still running after ${LANE_WAIT_MS / 1000} seconds`);
+                throw new Error(
+                    turn.why === 'busy'
+                        ? `another confirmed write to ${service} was still running after ${LANE_WAIT_MS / 1000} seconds`
+                        : 'the request was cancelled while this write waited for its instance'
+                );
             }
         };
 
@@ -854,6 +890,7 @@ export function registerWriteTool<
             // --- 5. Apply ---------------------------------------------------------
             const id = audit.begin(record);
             const failed = (err: unknown): void => audit.settle(id, 'failed', err instanceof Error ? err.message : String(err));
+            if (serialised) started = startWrite(service);
             let sent: unknown;
             try {
                 sent = await spec.apply(plan, args, adapter);
@@ -861,6 +898,9 @@ export function registerWriteTool<
                 failed(err);
                 throw err;
             }
+            // The change has been made, so a write let in while `afterWrite`
+            // runs must not plan against a snapshot from before it.
+            if (spec.afterWrite !== undefined) library.invalidate();
 
             const report = async (): Promise<ToolReply> => {
                 let outcome = sent;
@@ -875,7 +915,8 @@ export function registerWriteTool<
 
                 // Only after a write that actually landed: a failed write changed
                 // nothing, and dropping the cache for it would cost every cached
-                // library snapshot for no reason.
+                // library snapshot for no reason. Again after an `afterWrite`, so
+                // a snapshot read while it waited does not outlive the write.
                 library.invalidate();
                 audit.settle(id, 'applied');
 
@@ -920,7 +961,7 @@ export function registerWriteTool<
         const finish = async (reply: ToolReply | (() => Promise<ToolReply>)): Promise<ToolReply> => (typeof reply === 'function' ? reply() : reply);
         if (presented === undefined || dryRun) return finish(await proceed());
         if (signal?.aborted === true) throw unspent(rawTarget(args), 'the request was cancelled before this write started');
-        if (spec.serialised === false) return finish(await proceed());
+        if (!serialised) return finish(await proceed());
         // A confirm call holds its instance's lane from the plan's reads to the
         // end of its apply, so the state its token is checked against is still
         // the state it writes over. Everything else runs at once.

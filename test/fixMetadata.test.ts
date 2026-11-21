@@ -15,6 +15,7 @@ import type { MediaServerAdapter } from '../src/services/types.ts';
 import { registerFixMetadata, type RepairTiming } from '../src/tools/fixMetadata.ts';
 import type { LibraryLoader } from '../src/tools/library.ts';
 import type { WriteToolResult } from '../src/tools/write.ts';
+import { otherWrite } from './helpers/lane.ts';
 import { jsonResponse } from './helpers/serve.ts';
 
 const SERIES = 'cf939e2aa448fbe76b4f5eb80fa0d39f';
@@ -670,6 +671,34 @@ describe('fix_metadata on Plex', () => {
         expect(structuredContent.target).toBe(`plex:${PLEX_SERIES}`);
         expect(structuredContent.confirm_token).toBeDefined();
         expect(h.writes()).toHaveLength(0);
+    });
+
+    /** The match and refresh are the change; reading back whether it held holds up no other write to Plex (#12). */
+    it('lets another confirmed write to Plex apply while it reads the repair back', async () => {
+        const h = plexHarness({ repaired: [{ ...plexEpisode(1), title: 'Some other words' }] });
+        let finish = (): void => undefined;
+        const reading = new Promise<void>(resolve => {
+            finish = resolve;
+        });
+        let waiting = false;
+        h.timing.sleep = async () => {
+            waiting = true;
+            await reading;
+        };
+        const other = otherWrite('plex');
+        try {
+            const preview = await h.call({ query: 'Fixture show 2' });
+            const repairing = h.call({ query: 'Fixture show 2', confirm: preview.structuredContent.confirm_token });
+            await vi.waitFor(() => expect(waiting).toBe(true));
+            expect(h.writes()).toHaveLength(2);
+            expect((await other.confirm()).applied).toBe(true);
+            finish();
+            const { structuredContent } = await repairing;
+            expect(structuredContent.applied).toBe(true);
+            expect((structuredContent.result as { verified: boolean }).verified).toBe(true);
+        } finally {
+            finish();
+        }
     });
 
     it('matches by the TVDB id and refreshes on confirm', async () => {

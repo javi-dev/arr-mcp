@@ -3,7 +3,7 @@ import type { KeyedServiceConfig } from '../src/config/schema.ts';
 import { apiKeyHeader } from '../src/core/auth.ts';
 import { ServiceError } from '../src/core/errors.ts';
 import { ServiceHttp } from '../src/core/http.ts';
-import { RENAME_MARKER, assertQueueClear, namingFormatKey, renameThroughTemporaryFormat as sendTwoPasses } from '../src/services/arrRename.ts';
+import { RENAME_MARKER, assertQueueClear, namingFormatKey, renameThroughTemporaryFormat } from '../src/services/arrRename.ts';
 import { jsonResponse } from './helpers/serve.ts';
 
 /**
@@ -98,14 +98,9 @@ function sonarr(opts: Opts = {}) {
         naming,
         formats,
         renames,
-        failedPuts: () => failedPuts,
-        /** How many times a command's status has been read. */
-        polls: () => pass
+        failedPuts: () => failedPuts
     };
 }
-
-/** Both passes sent and the second one waited on, as the write and its `afterWrite` run them. */
-const renameThroughTemporaryFormat = async (...args: Parameters<typeof sendTwoPasses>) => (await sendTwoPasses(...args)).wait();
 
 describe('namingFormatKey', () => {
     /** Changing the standard format for an anime series changes a format
@@ -156,18 +151,6 @@ describe('renameThroughTemporaryFormat', () => {
         expect(s.renames[0]?.formatAtTheTime).toBe(`${FORMAT}${RENAME_MARKER}`);
         expect(s.renames[1]?.formatAtTheTime).toBe(FORMAT);
         expect(out.renamed).toBe(3);
-    });
-
-    /** The second pass is the last change: what is left only waits, outside the lane (#12). */
-    it('returns once the second pass is sent, with the format back, and waits on it only in `wait`', async () => {
-        const s = sonarr();
-        const sent = await sendTwoPasses(s.http, 'sonarr', 5, 'standard', [11, 12, 13]);
-        expect(s.renames).toHaveLength(2);
-        expect(s.naming.standardEpisodeFormat).toBe(FORMAT);
-        expect(s.polls()).toBe(1);
-        await expect(sent.wait()).resolves.toMatchObject({ renamed: 3 });
-        expect(s.polls()).toBe(2);
-        expect(s.renames).toHaveLength(2);
     });
 
     it('leaves the naming format exactly as it found it', async () => {
