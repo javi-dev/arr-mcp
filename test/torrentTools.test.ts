@@ -131,10 +131,63 @@ describe('recheck_torrents', () => {
             resume();
             const done = await rechecking;
             expect(done.structuredContent.result).toMatchObject({ left_stopped: [HASH] });
-            expect(done.content[0]?.text).toMatch(/left stopped, because another confirmation to this qBittorrent was accepted during the watch/);
+            expect(done.content[0]?.text).toMatch(/left stopped, because another confirmation to this qBittorrent was accepted before the start/);
             expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck', '/torrents/setCategory']);
         } finally {
             resume();
+        }
+    });
+
+    it('stands down without holding the client for the read it reports from', async () => {
+        const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
+        let resume = (): void => undefined;
+        const watching = new Promise<void>(resolve => {
+            resume = resolve;
+        });
+        let unblock = (): void => undefined;
+        const reportRead = new Promise<void>(resolve => {
+            unblock = resolve;
+        });
+        // After the watch resumes: its own read passes, the next one (the read it reports from) hangs.
+        let readsAfterResume: number | undefined;
+        let reportHeld = false;
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.includes('/torrents/info') && readsAfterResume !== undefined && ++readsAfterResume === 2) {
+                reportHeld = true;
+                await reportRead;
+            }
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        let sleeping = false;
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)], {
+            sleep: async () => {
+                if (sleeping) return;
+                sleeping = true;
+                await watching;
+            }
+        });
+        try {
+            const recheck = await call('recheck_torrents', { ids: [HASH], resume_if_complete: true });
+            const move = await call('set_torrent_category', { id: HASH, category: 'tv' });
+            const rechecking = call('recheck_torrents', { ids: [HASH], resume_if_complete: true, confirm: recheck.structuredContent.confirm_token });
+            await vi.waitFor(() => expect(sleeping).toBe(true));
+            expect((await call('set_torrent_category', { id: HASH, category: 'tv', confirm: move.structuredContent.confirm_token })).structuredContent.applied).toBe(true);
+            // The fake keeps no category, so the same move previews as a change again.
+            const again = await call('set_torrent_category', { id: HASH, category: 'tv' });
+            readsAfterResume = 0;
+            resume();
+            await vi.waitFor(() => expect(reportHeld).toBe(true));
+            // The recheck has stood down and is only reading: the client is free.
+            const applied = await call('set_torrent_category', { id: HASH, category: 'tv', confirm: again.structuredContent.confirm_token });
+            expect(applied.structuredContent.applied).toBe(true);
+            unblock();
+            expect((await rechecking).structuredContent.result).toMatchObject({ left_stopped: [HASH] });
+        } finally {
+            resume();
+            unblock();
         }
     });
 
@@ -538,6 +591,34 @@ describe('recheck_torrents', () => {
         expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 
+    it('starts nothing for a request cancelled while it reads the torrents again in the lane', async () => {
+        const abort = new AbortController();
+        const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
+        let reads = 0;
+        // The third read after the recheck is the one in the lane, just before the start.
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.includes('/torrents/info') && qb.posts.length > 0 && ++reads === 3) abort.abort();
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const cfg = config();
+        type Reply = { structuredContent: { confirm_token?: string; applied: boolean; result?: unknown } };
+        const handlers = new Map<string, (args: Record<string, unknown>, ctx?: unknown) => Promise<Reply>>();
+        const server = {
+            registerTool(name: string, c: { inputSchema: { parse(a: unknown): unknown } }, handler: (args: Record<string, unknown>, ctx?: unknown) => Promise<Reply>) {
+                handlers.set(name, (args, ctx) => handler(c.inputSchema.parse(args) as Record<string, unknown>, ctx));
+            }
+        };
+        registerTorrentTools(server as never, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)], { sleep: () => Promise.resolve() });
+        const recheck = handlers.get('recheck_torrents');
+        if (recheck === undefined) throw new Error('not registered');
+        const args = { ids: [HASH], resume_if_complete: true };
+        const preview = await recheck(args);
+        const done = await recheck({ ...args, confirm: preview.structuredContent.confirm_token }, { mcpReq: { signal: abort.signal } });
+        expect(done.structuredContent.result).toMatchObject({ resume_failed: [HASH], resume_error: 'the request was cancelled before they were started' });
+        expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
+    });
+
     it('starts nothing for a request cancelled during the watch, and says why', async () => {
         const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
         const cfg = config();
@@ -566,10 +647,11 @@ describe('recheck_torrents', () => {
         expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 
-    it('does not call a torrent something else started before the start unconfirmed', async () => {
+    it('reports a torrent something else started before the start as already running, not unconfirmed', async () => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP', 'uploading'] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
-        expect(applied.structuredContent.result).toEqual({ rechecking: [HASH] });
+        expect(applied.structuredContent.result).toEqual({ rechecking: [HASH], already_running: [HASH] });
+        expect(applied.content[0]?.text).toMatch(/already running again when it was time to start them/);
         expect(h.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 });

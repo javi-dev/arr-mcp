@@ -244,16 +244,17 @@ A write holds the lane until its last change has been made. The watch that
 seconds) comes after that and only reads, so it runs with the instance already
 free for the next confirmation; qBittorrent goes on checking in the background
 either way. The torrents it finds whole are started back in the lane, behind
-any confirmation that arrived during the watch, after reading them once more
-and with any library snapshot dropped before and after. Whether to start them
-is decided when that start gets the lane: if another confirmation to that
-qBittorrent was accepted since the recheck, even one that found nothing to do
-and even another `recheck_torrents`, they are left stopped and listed as
-`left_stopped`, because a pause sent then would look the same and starting them
-would undo it. If the instance is still busy 30 seconds later, or the request
-has been cancelled, they are left stopped too, listed as `resume_failed` with
-the reason in `resume_error`. Once the start has been sent it runs to the end,
-as any apply does.
+any confirmation that arrived during the watch, after reading them once more,
+and any library snapshot is dropped after it. Whether to start them is decided
+when that start gets the lane: if another confirmation to that qBittorrent was
+accepted since the recheck, even one that found nothing to do and even another
+`recheck_torrents`, they are left stopped and listed as `left_stopped`, because
+a pause sent then would look the same and starting them would undo it. Standing
+down takes the lane only for that decision; the read the reply reports from
+happens after it. If the instance is still busy 30 seconds later, the request
+has been cancelled, or qBittorrent refuses the start, they are left stopped
+too, listed as `resume_failed` with the reason in `resume_error`. Once the start
+has been sent it runs to the end, as any apply does.
 
 Other waits still hold the lane, because the change has not been made, or could
 still be started over, while they run:

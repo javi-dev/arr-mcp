@@ -3465,9 +3465,10 @@ seconds and starts each stopped torrent it saw checking that comes back complete
 The watch does not hold up other writes to that qBittorrent. When any other
 confirmation to it is accepted meanwhile, such as a pause or another recheck,
 the complete torrents are left stopped and listed as `left_stopped` rather than
-started over it. When the start cannot be sent, because the client stays busy
-or the request was cancelled, they are left stopped and listed as
-`resume_failed`, with the reason in `resume_error`.
+started over it. When the start cannot be sent, because the client stays busy,
+the request was cancelled or qBittorrent refuses it, they are left stopped and
+listed as `resume_failed`, with the reason in `resume_error`. One that something
+else has started by then is listed as `already_running`.
 One still checking or still moving to its save path when the watch ends, showing
 an error, or never seen checking because it is queued behind another, is reported
 as such and left alone. A torrent still fetching
