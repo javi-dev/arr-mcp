@@ -418,7 +418,7 @@ describe('write tool harness — the audit trail', () => {
     it('records a refusal thrown while routing to an instance', async () => {
         const routing = buildHarness({
             route: () => {
-                throw new ServiceError('NotFound', 'radarr', 'several radarr instances and none named');
+                throw new ServiceError('InvalidRequest', 'radarr', 'several radarr instances and none named');
             }
         });
         await expect(routing.call('delete_media', { id: '5' })).rejects.toThrow(/none named/);

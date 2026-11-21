@@ -51,8 +51,9 @@ export function resolveInstance(
 
     if (candidates.length === 1) return candidates[0] as ServiceAdapter;
 
+    // InvalidRequest, not NotFound: every instance exists, and the call only has to name one.
     throw new ServiceError(
-        'NotFound',
+        'InvalidRequest',
         type,
         `${type} has ${candidates.length} instances configured, so "${type}" alone does not say which`,
         {
