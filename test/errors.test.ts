@@ -239,6 +239,8 @@ describe('classifyFetchError', () => {
             ['refused http://host:1 and http://host:2/.', 'refused http://host:1 and http://host:2/.'],
             // A serialiser leaves a backtick in a query unescaped; the older scrub dropped the whole query, and so does this one.
             ['refused http://host:1/?apikey=ab`cdef', 'refused http://host:1/...'],
+            // A parser keeps a backtick in a host raw, so the URL goes on past it.
+            ['refused http://a`b.example/api?apikey=abc', 'refused http://a`b.example/...'],
             // Past the shared scrub's scheme bound, which the older read scrub had none of.
             [`refused a${'0'.repeat(32)}://user:pw@host:1/?apikey=abc`, `refused a${'0'.repeat(32)}(a URL, left out)`]
         ];

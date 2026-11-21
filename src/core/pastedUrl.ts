@@ -8,23 +8,25 @@ export const shownValue = (value: string): string => (PASTED_URL.test(value) ? '
 /** A long run of hex, or of letters and digits, is a passkey rather than a host name. */
 const PASSKEY_LABEL = /^(?:[0-9a-f]{16,}|[0-9a-z]{28,})$/i;
 
-/** A hostname with any label that looks like a passkey masked. */
+/** A hostname with any label that looks like a passkey masked. A parser keeps a
+ *  backtick in a host, so each side of one is judged as a label of its own. */
 export const maskedHost = (hostname: string): string =>
     hostname
         .toLowerCase()
         .split('.')
-        .map(label => (PASSKEY_LABEL.test(label) ? '***' : label))
+        .map(label => label.split('`').map(piece => (PASSKEY_LABEL.test(piece) ? '***' : piece)).join('`'))
         .join('.');
 
-// An apostrophe is a legal part of a URL path, so it does not end one. A
-// backtick ends a host or a path, where a URL serialiser escapes it, but not a
-// query or a fragment, where it is left as it is: stopping there would keep the
-// rest of the query. A magnet link is all query. One that closes a code span is
-// walked back off the end like a sentence's punctuation.
+// An apostrophe is a legal part of a URL path, so it does not end one, and nor
+// does a backtick: a URL serialiser leaves one raw in a host and in a query, so
+// stopping there would keep the rest. One that closes a code span is walked back
+// off the end like a sentence's punctuation. Two code spans with nothing between
+// them are read as one URL and cut together, which loses the second but leaks
+// nothing.
 const MAGNET_IN_TEXT = /magnet:\?[^\s"<>]+/gi;
 // The scheme may start with a digit here, so a scheme longer than the bound is
 // still caught by its last characters; the part before its first letter is kept.
-const URL_IN_TEXT = /[a-z0-9+.-]{1,32}:\/\/[^\s"<>`?#]*(?:[?#][^\s"<>]*)?/gi;
+const URL_IN_TEXT = /[a-z0-9+.-]{1,32}:\/\/[^\s"<>]+/gi;
 /** Characters a sentence or a code span can end on that a URL rarely does. */
 const TRAILING = new Set(['.', ',', ';', ':', ')', ']', "'", '`']);
 /** A scheme and an authority with nothing after them but one slash. */
