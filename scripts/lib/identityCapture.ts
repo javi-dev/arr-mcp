@@ -146,14 +146,34 @@ export function anonymiseProwlarrIndexer(row: Row, index: number): Row {
     };
 }
 
-/** An IP literal, with or without a port (`192.0.2.10:9696`, `[2001:db8::1]:9696`): not a host name. */
-const isAddress = (value: string): boolean => {
-    const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(value);
-    if (bracketed !== null) return isIP(bracketed[1] ?? '') !== 0;
-    return isIP(value) !== 0 || isIP(value.replace(/:\d+$/, '')) !== 0;
+/** An IP literal, with or without a port (`192.0.2.10:9696`, `[2001:db8::1]:9696`), split into the two. */
+const address = (value: string): { ip: string; rest: (ip: string) => string } | undefined => {
+    const bracketed = /^\[([^\]]+)\](:\d+)?$/.exec(value);
+    if (bracketed !== null) {
+        const port = bracketed[2] ?? '';
+        return isIP(bracketed[1] ?? '') === 0 ? undefined : { ip: bracketed[1] ?? '', rest: ip => `[${ip}]${port}` };
+    }
+    if (isIP(value) !== 0) return { ip: value, rest: ip => ip };
+    const port = /:(\d+)$/.exec(value);
+    const bare = value.replace(/:\d+$/, '');
+    return port !== null && isIP(bare) === 4 ? { ip: bare, rest: ip => `${ip}:${port[1]}` } : undefined;
 };
 
-const hostName = (value: unknown): unknown => (typeof value === 'string' && value !== '' && !isAddress(value) ? ANONYMOUS_HOST : value);
+/**
+ * Private, loopback and link-local addresses, which the capture's redaction
+ * already rewrites, and the documentation ranges it rewrites them to. Any
+ * other address is a real machine on the internet.
+ */
+const KEPT_ADDRESS = /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|::1$|f[cd]|fe[89ab]|2001:db8:)/i;
+
+/** A host name becomes the placeholder host; a public address, a documentation one. */
+const hostName = (value: unknown): unknown => {
+    if (typeof value !== 'string' || value === '') return value;
+    const found = address(value);
+    if (found === undefined) return ANONYMOUS_HOST;
+    if (KEPT_ADDRESS.test(found.ip)) return value;
+    return found.rest(isIP(found.ip) === 6 ? '2001:db8::10' : '203.0.113.10');
+};
 
 /**
  * Prowlarr `history`: `data.url` is the indexer's own search link, with its

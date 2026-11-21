@@ -119,9 +119,17 @@ describe('the Prowlarr anonymisers', () => {
     });
 
     it('replace a host name with a port, and keep an IP address with or without one', () => {
-        const hosts = ['my-server:9696', '192.0.2.10:9696', '[2001:db8::1]:9696', '2001:db8::1', '192.0.2.10'];
+        const hosts = ['my-server:9696', '192.0.2.10:9696', '[2001:db8::1]:9696', '2001:db8::1', '192.0.2.10', '10.0.0.4'];
         const body = anonymiseProwlarrIndexerStats({ hosts: hosts.map(host => ({ host })) }) as { hosts: { host: string }[] };
-        expect(body.hosts.map(h => h.host)).toEqual(['service.example.test', '192.0.2.10:9696', '[2001:db8::1]:9696', '2001:db8::1', '192.0.2.10']);
+        expect(body.hosts.map(h => h.host)).toEqual(['service.example.test', '192.0.2.10:9696', '[2001:db8::1]:9696', '2001:db8::1', '192.0.2.10', '10.0.0.4']);
+    });
+
+    // A public address is a real machine: the capture's redaction only rewrites private ones.
+    it('replace a public address in either Prowlarr host field with a documentation one, port kept', () => {
+        const stats = anonymiseProwlarrIndexerStats({ hosts: [{ host: '8.8.4.4' }, { host: '8.8.4.4:9696' }, { host: '[2606:4700::1111]:9696' }] }) as { hosts: { host: string }[] };
+        expect(stats.hosts.map(h => h.host)).toEqual(['203.0.113.10', '203.0.113.10:9696', '[2001:db8::10]:9696']);
+        const history = anonymiseProwlarrHistory({ records: [{ data: { host: '2606:4700::1111' } }] });
+        expect(history).toEqual({ records: [{ data: { host: '2001:db8::10' } }] });
     });
 
     it('replace a history row search link whole, key and all, and the host that asked', () => {
@@ -235,6 +243,12 @@ describe('the other anonymisers', () => {
         const warnings = source.indexOf("{ name: 'warnings', path: '/api?mode=warnings&output=json', anonymise: captureSabnzbdWarnings }");
         expect(stats).toBeGreaterThan(-1);
         expect(warnings).toBeGreaterThan(stats);
+        // The loop keeps each raw response before it anonymises the next, and hands them on.
+        const kept = source.indexOf('soFar.set(endpoint.name, raw);');
+        const handed = source.indexOf('endpoint.anonymise(raw, soFar)');
+        expect(kept).toBeGreaterThan(-1);
+        expect(handed).toBeGreaterThan(kept);
+        expect(source.match(/endpoint\.anonymise\(/g)).toHaveLength(1);
     });
 
     it('name a Cleanuparr instance by its type, numbered only when a type repeats', () => {
