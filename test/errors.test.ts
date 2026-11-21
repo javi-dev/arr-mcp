@@ -238,7 +238,9 @@ describe('classifyFetchError', () => {
             ['refused magnet:?xt=urn:btih:abc&tr=http://tracker.example.org/key/announce', 'refused (a magnet link, left out)'],
             ['refused http://host:1 and http://host:2/.', 'refused http://host:1 and http://host:2/.'],
             // A serialiser leaves a backtick in a query unescaped; the older scrub dropped the whole query, and so does this one.
-            ['refused http://host:1/?apikey=ab`cdef', 'refused http://host:1/...']
+            ['refused http://host:1/?apikey=ab`cdef', 'refused http://host:1/...'],
+            // Past the shared scrub's scheme bound, which the older read scrub had none of.
+            [`refused a${'0'.repeat(32)}://user:pw@host:1/?apikey=abc`, `refused a${'0'.repeat(32)}(a URL, left out)`]
         ];
         for (const [message, expected] of cases) {
             const detail = classifyFetchError(new Error(message), 'radarr', 'http://h:7878').detail;

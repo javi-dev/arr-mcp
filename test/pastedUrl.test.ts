@@ -55,14 +55,20 @@ describe('scrubUrls', () => {
         [`use \`magnet:?xt=urn:btih:abc&tr=${PASSKEY}\`.`, 'use `(a magnet link, left out)`.'],
         // A sentence's punctuation after a magnet link stays.
         [`(from magnet:?xt=urn:btih:abc&tr=${PASSKEY}).`, '(from (a magnet link, left out)).'],
-        // The trade-off of a backtick not ending a URL: two code spans with nothing
-        // between them read as one URL that does not parse, so both are left out.
-        ['`http://192.0.2.1:1`/`http://192.0.2.2:2`', '`(a URL, left out)`']
+        // A backtick in a host ends the URL, so a passkey label before it is still masked.
+        ['use `https://0123456789abcdef0123`again', 'use `https://***/...`again'],
+        // The trade-off of a backtick not ending a query: a code span right after one is cut with it.
+        [`see \`http://192.0.2.1/?key=${PASSKEY}\`,\`http://192.0.2.2\``, 'see `http://192.0.2.1/...`'],
+        // A scheme longer than the bound is still caught, by its last 32 characters.
+        [`refused a${'0'.repeat(32)}://user:${PASSKEY}@example.org/?key=${PASSKEY}`, `refused a${'0'.repeat(32)}(a URL, left out)`],
+        [`refused ${'a'.repeat(40)}://user:${PASSKEY}@example.org/`, `refused ${'a'.repeat(40)}://example.org/...`],
+        // What comes before a scheme's first letter is the sentence's, and stays.
+        [`version 1.5http://example.org/${PASSKEY}`, 'version 1.5http://example.org/...']
     ])('cuts %s down', (text, expected) => {
         expect(scrubUrls(text)).toBe(expected);
     });
 
-    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS', 'could not reach http://[2001:db8::1]', 'redirected to (https://[2001:db8::1]:8443).', 'set it to `http://192.0.2.20:8081`.'])('leaves %s alone', text => {
+    it.each(['HTTP 500 at /api/v2/torrents/start', 'could not reach http://192.0.2.20:8081', 'plain words: nothing to cut', 'saved to smb://NAS', 'could not reach http://[2001:db8::1]', 'redirected to (https://[2001:db8::1]:8443).', 'set it to `http://192.0.2.20:8081`.', 'See `https://example.org/`,`https://example.net/`.', '`http://192.0.2.1:1`/`http://192.0.2.2:2`'])('leaves %s alone', text => {
         expect(scrubUrls(text)).toBe(text);
     });
 });

@@ -213,9 +213,9 @@ bound to the exact operation and arguments previewed: a token issued for one
 film cannot be replayed against another, and a token from a `delete_media`
 preview that left files on disk cannot be used to wipe them. A token only works
 in the arr-mcp process that issued it, so restarting invalidates any outstanding
-ones, and a token taken to a second instance is refused. Every preview gets a
-token of its own, even two previews of the same write, so confirming one leaves
-the other usable.
+ones, and a token taken to a second instance is refused. Every preview that
+asks for confirmation gets a token of its own, even two previews of the same
+write, so confirming one leaves the other usable.
 
 A token that is refused for any reason but having been used already comes back
 as a fresh preview with a new token, and its text carries that preview's summary

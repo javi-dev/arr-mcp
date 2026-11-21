@@ -16,12 +16,15 @@ export const maskedHost = (hostname: string): string =>
         .map(label => (PASSKEY_LABEL.test(label) ? '***' : label))
         .join('.');
 
-// An apostrophe is a legal part of a URL path, so it does not end one, and nor
-// does a backtick: a URL serialiser leaves one unescaped in a query, so stopping
-// there would keep the rest of the query. One that closes a code span is
+// An apostrophe is a legal part of a URL path, so it does not end one. A
+// backtick ends a host or a path, where a URL serialiser escapes it, but not a
+// query or a fragment, where it is left as it is: stopping there would keep the
+// rest of the query. A magnet link is all query. One that closes a code span is
 // walked back off the end like a sentence's punctuation.
 const MAGNET_IN_TEXT = /magnet:\?[^\s"<>]+/gi;
-const URL_IN_TEXT = /[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"<>]+/gi;
+// The scheme may start with a digit here, so a scheme longer than the bound is
+// still caught by its last characters; the part before its first letter is kept.
+const URL_IN_TEXT = /[a-z0-9+.-]{1,32}:\/\/[^\s"<>`?#]*(?:[?#][^\s"<>]*)?/gi;
 /** Characters a sentence or a code span can end on that a URL rarely does. */
 const TRAILING = new Set(['.', ',', ';', ':', ')', ']', "'", '`']);
 /** A scheme and an authority with nothing after them but one slash. */
@@ -62,8 +65,11 @@ export function scrubUrls(text: string): string {
     return text
         .replace(MAGNET_IN_TEXT, match => `(a magnet link, left out)${splitTail(match).tail}`)
         .replace(URL_IN_TEXT, match => {
-            const { raw, tail } = splitTail(match);
-            if (!URL.canParse(raw)) return `(a URL, left out)${tail}`;
+            const { raw: whole, tail } = splitTail(match);
+            // Scheme characters before its first letter: the end of a longer word, or of a scheme past the bound.
+            const lead = /^[0-9+.-]*/.exec(whole)?.[0] ?? '';
+            const raw = whole.slice(lead.length);
+            if (!URL.canParse(raw)) return `${lead}(a URL, left out)${tail}`;
             const url = new URL(raw);
             // Judged on the text as written, not the parsed URL: the parser folds a
             // path such as `/key/%2e%2e` down to `/`, which would pass a key through.
@@ -71,6 +77,6 @@ export function scrubUrls(text: string): string {
             // maskedHost lowercases, and a parser keeps the case of a host for a scheme it does not know (`smb://NAS`).
             if (bare && maskedHost(url.hostname) === url.hostname.toLowerCase()) return match;
             // The placeholder already ends in dots, so a sentence's own are not added to them.
-            return `${url.protocol}//${maskedHost(url.hostname)}${url.port === '' ? '' : `:${url.port}`}/...${tail.replace(/^\.+/, '')}`;
+            return `${lead}${url.protocol}//${maskedHost(url.hostname)}${url.port === '' ? '' : `:${url.port}`}/...${tail.replace(/^\.+/, '')}`;
         });
 }

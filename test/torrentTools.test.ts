@@ -2123,8 +2123,19 @@ describe('reannounce_torrent', () => {
         await expect(call('reannounce_torrent', { id: HASH })).rejects.toThrow(/^qbittorrent not found: that is not a torrent info hash/);
     });
 
-    it('names a stopped torrent by the hash it was asked about', async () => {
-        const preview = await harness({ torrents: [torrent({ state: 'stoppedUP' })] }).call('reannounce_torrent', { id: HASH.toUpperCase() });
+    it('names a stopped torrent by the hash it was asked about, not the one qBittorrent lists', async () => {
+        // A hybrid torrent can be listed under its other hash.
+        const qb = fakeQbittorrent({ torrents: [torrent({ hash: OTHER, state: 'stoppedUP' })] });
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (url.pathname.endsWith('/torrents/info')) url.searchParams.set('hashes', OTHER);
+            return qb.impl(url.toString(), init);
+        }) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)]);
+        const preview = await call('reannounce_torrent', { id: HASH.toUpperCase() });
+        expect(preview.structuredContent.noop).toBe(true);
         expect(preview.structuredContent.target).toBe(`qbittorrent:${HASH}`);
     });
 });
