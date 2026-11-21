@@ -30,7 +30,7 @@ type Client = ServiceAdapter & TorrentManageCapable;
 
 const clientOf = (adapters: readonly ServiceAdapter[], instance: string | undefined): Client => {
     const adapter = resolveInstance(adapters, 'qbittorrent', instance);
-    if (!hasTorrentManage(adapter)) throw new ServiceError('NotFound', adapter.id, `${adapter.id} cannot manage torrents`);
+    if (!hasTorrentManage(adapter)) throw new ServiceError('InvalidRequest', adapter.id, `${adapter.id} cannot manage torrents`);
     return adapter;
 };
 
@@ -176,10 +176,10 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
 /** A `.torrent` upload decoded, or a refusal that repeats none of it. */
 function torrentBytes(service: string, base64: string): Buffer {
     if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64) || base64.length % 4 !== 0) {
-        throw new ServiceError('NotFound', service, '`torrent_base64` is not valid base64', { remedy: 'Send the whole .torrent file, base64 encoded.' });
+        throw new ServiceError('InvalidRequest', service, '`torrent_base64` is not valid base64', { remedy: 'Send the whole .torrent file, base64 encoded.' });
     }
     const bytes = Buffer.from(base64, 'base64');
-    if (bytes.length > MAX_TORRENT_BYTES) throw new ServiceError('NotFound', service, 'that .torrent file is larger than the 3 MB limit', { remedy: 'Pass its `url` instead.' });
+    if (bytes.length > MAX_TORRENT_BYTES) throw new ServiceError('InvalidRequest', service, 'that .torrent file is larger than the 3 MB limit', { remedy: 'Pass its `url` instead.' });
     return bytes;
 }
 
@@ -222,14 +222,14 @@ type AddSource = {
 function addSource(service: string, args: { magnet?: string | undefined; url?: string | undefined; torrent_base64?: string | undefined }): AddSource {
     const given = [args.magnet, args.url, args.torrent_base64].filter(v => v !== undefined);
     if (given.length !== 1) {
-        throw new ServiceError('NotFound', service, 'pass exactly one of `magnet`, `url` or `torrent_base64`', {
+        throw new ServiceError('InvalidRequest', service, 'pass exactly one of `magnet`, `url` or `torrent_base64`', {
             remedy: 'Each is a different way to name the same thing: the torrent to add.'
         });
     }
     if (args.magnet !== undefined) {
         const hash = args.magnet.length > 8192 || !MAGNET.test(args.magnet) ? undefined : magnetHash(args.magnet);
         if (hash === undefined) {
-            throw new ServiceError('NotFound', service, 'that is not a magnet link', { remedy: 'A magnet starts `magnet:?` and carries `xt=urn:btih:<hash>` or `xt=urn:btmh:1220<hash>`.' });
+            throw new ServiceError('InvalidRequest', service, 'that is not a magnet link', { remedy: 'A magnet starts `magnet:?` and carries `xt=urn:btih:<hash>` or `xt=urn:btmh:1220<hash>`.' });
         }
         const hosts = magnetHosts(args.magnet);
         return {
@@ -256,7 +256,7 @@ function addSource(service: string, args: { magnet?: string | undefined; url?: s
     try {
         facts = readTorrentFile(bytes);
     } catch (err) {
-        throw new ServiceError('NotFound', service, (err as Error).message, { remedy: 'Send the whole .torrent file, base64 encoded.' });
+        throw new ServiceError('InvalidRequest', service, (err as Error).message, { remedy: 'Send the whole .torrent file, base64 encoded.' });
     }
     return {
         request: { kind: 'file', bytes, filename: 'upload.torrent' },
@@ -483,7 +483,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         name: 'set_torrent_location',
         title: 'Set a torrent location',
         description:
-            'Points a torrent at a new save path inside the allowed paths. qBittorrent cannot change a path without moving what it finds there, so by default this is only for a torrent at `missing files`, still fetching metadata, or with its unfinished data in the incomplete-downloads folder. Follow it with recheck_torrents. `move_files: true` has qBittorrent physically move existing data, and needs `destructive`. Previews first; confirm to apply. Field reference: arr://docs/set_torrent_location.',
+            'Points a torrent at a new save path inside the allowed paths. qBittorrent moves what is at the old path, so without `move_files` this is only for a torrent at `missing files`, fetching metadata, or with unfinished data in the incomplete folder, and not if dropping automatic management gathers its files first. After a `missing files` repoint with metadata, run recheck_torrents. `move_files: true` moves data and needs `destructive`. Previews first; confirm to apply. Field reference: arr://docs/set_torrent_location.',
         inputSchema: LocationInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'set_torrent_location',
@@ -495,13 +495,13 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const path = allowedPath(client.id, location, client.allowedPaths);
             const target = `${client.id}:${details.id}`;
             if (details.savePath !== undefined && details.savePath.replace(/\/+$/, '') === path) {
-                return { target, summary: `${details.title} is already at ${path}.`, effects: [], noop: true };
+                return { target, summary: `The save path of ${details.title} is already ${path}.`, effects: [], noop: true };
             }
             if (details.state === 'moving') {
-                throw new ServiceError('NotFound', client.id, 'that torrent is already being moved', { remedy: 'Wait for the move to finish, then look at it again in get_queue.' });
+                throw new ServiceError('InvalidRequest', client.id, 'that torrent is already being moved', { remedy: 'Wait for the move to finish, then look at it again in get_queue.' });
             }
             if (CHECKING_STATES.has(details.state)) {
-                throw new ServiceError('NotFound', client.id, 'that torrent is being checked, so where its data is cannot be told yet', { remedy: 'Wait for the check to finish, then look at it again in get_queue.' });
+                throw new ServiceError('InvalidRequest', client.id, 'that torrent is being checked, so where its data is cannot be told yet', { remedy: 'Wait for the check to finish, then look at it again in get_queue.' });
             }
             // The state alone decides. `completed: 0` is no proof: preallocated files count as nothing downloaded, and they move.
             const noData = details.state === 'missingFiles' || !details.hasMetadata;
@@ -521,43 +521,88 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const leavesOutside = !moves && movesFrom !== undefined && !isInsideRoots(movesFrom, client.allowedPaths);
             if (movesFrom !== undefined && !leavesOutside) allowedPath(client.id, movesFrom, client.allowedPaths);
             if (leavesOutside && !move_files) {
-                throw new ServiceError('NotFound', client.id, `any file of ${details.title} still in ${movesFrom} would move too, and that folder is outside the allowed locations`, {
+                throw new ServiceError('PermissionDenied', client.id, `any file of ${details.title} still in ${movesFrom} would move too, and that folder is outside the allowed locations`, {
                     remedy: 'Nothing was changed. If that is what you want, call set_torrent_location again with `move_files: true`, which needs `destructive`.'
                 });
             }
+            // qBittorrent cannot find the data, so anything said to move is only whatever is left of it.
+            const missing = details.state === 'missingFiles';
             if (moves && !move_files) {
-                throw new ServiceError('NotFound', client.id, `${details.title} has data at its current path, and qBittorrent would move it`, {
+                const why = missing && gathersTo !== undefined
+                    ? `${details.title} is at missing files, and turning off automatic management first moves any file of it that is left to ${gathersTo}`
+                    : `${details.title} has data at its current path, and qBittorrent would move it`;
+                throw new ServiceError('PermissionDenied', client.id, why, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_location again with `move_files: true`.'
                 });
             }
             // Unfinished and gathered: the files go to the incomplete folder now, and the new path only applies once finished.
             const gatheredOnly = gathersTo !== undefined && keepsUnfinished;
+            // Gathered into the folder it is pointed at, so nothing moves on once it finishes.
+            const gatheredHome = gatheredOnly && gathersTo === path;
+            // Both hops of unfinished data: where it is (or, with no metadata, will be written) now, and `path` once the download finishes.
+            // A second move is ruled out only where that first folder is known.
+            const onFinish = (now: string | undefined) => (now === path ? 'keeps it there once the download finishes' : `moves it to ${path} once the download finishes`);
+            const unfinishedEffect = !details.hasMetadata
+                ? `It has no metadata yet, so nothing is on disk. qBittorrent downloads it into ${incompleteDir} and ${onFinish(incompleteDir)}.`
+                : missing
+                ? `qBittorrent reports its unfinished data missing${storedIn === undefined ? `; it is set to keep it in ${incompleteDir}` : ` from ${storedIn}`}. ${path} only becomes where it goes once the download finishes.`
+                : storedIn === undefined
+                ? `qBittorrent leaves its unfinished data where it is, which it is set to keep in ${incompleteDir}, and saves it ${incompleteDir === path ? 'there' : `in ${path}`} once the download finishes.`
+                : `qBittorrent leaves its unfinished data where it is, in ${storedIn}, and ${onFinish(storedIn)}.`;
+            // A repoint at missing files moves whatever is left at the old path, which the applied sentence must not hide.
+            const repointsMissing = missing && !keepsUnfinished && details.hasMetadata;
+            const savedAt = details.savePath?.replace(/\/+$/, '');
+            // Only a folder the files are known to be in: with that folder unknown, the applied sentence says "the old path" instead.
+            const missingFrom = storedIn;
+            const anyLeft = missing ? `any file of ${details.title} that is left` : details.title;
             return {
                 target,
-                summary: gatheredOnly
-                    ? `Move ${details.title} to ${gathersTo}, and save it at ${path} once finished, on ${client.id}.`
+                summary: gatheredHome
+                    ? `Move ${anyLeft} to ${path} on ${client.id}, where it stays once it finishes.`
+                    : gatheredOnly
+                    ? `Move ${anyLeft} to ${gathersTo} now, and on to ${path} once it finishes, on ${client.id}.`
+                    : keepsUnfinished
+                    ? `Point ${details.title} at ${path} on ${client.id}, where its data goes once the download finishes.`
+                    : repointsMissing
+                    ? `Point ${details.title} at ${path} on ${client.id}, moving any file of it that is left.`
                     : `${moves ? 'Move' : 'Point'} ${details.title} ${moves ? 'to' : 'at'} ${path} on ${client.id}.`,
                 effects: [
-                    ...(gathersTo === undefined ? [] : [`Turning off automatic management first moves its files to ${gathersTo}.`]),
-                    gatheredOnly
-                        ? `${path} is only where they go once finished.`
+                    ...(gathersTo === undefined
+                        ? []
+                        : [missing ? `Turning off automatic management first moves any file of it that is left to ${gathersTo}.` : `Turning off automatic management first moves its files to ${gathersTo}.`]),
+                    gatheredHome
+                        ? 'qBittorrent keeps them there once the download finishes.'
+                        : gatheredOnly
+                        ? `qBittorrent moves them on from ${gathersTo} to ${path} once the download finishes.`
                         : keepsUnfinished
-                        ? 'qBittorrent leaves its unfinished data where it is, and only changes where it goes once finished.'
+                        ? unfinishedEffect
                         : !details.hasMetadata
                         ? 'It has no metadata yet, so there is nothing on disk to move.'
                         : noData
-                        ? `qBittorrent reports its data missing from ${movesFrom ?? details.savePath ?? 'its current path'}. It has no call that changes the path alone, so any file of this torrent still there moves too.`
-                        : `Physically moves ${size(details.completedBytes)} from ${movesFrom ?? details.savePath ?? 'its current path'} to ${path}. Hardlinks into the library break if that crosses a filesystem.`,
+                        ? `qBittorrent reports its data missing${storedIn !== undefined ? ` from ${storedIn}` : savedAt !== undefined ? `; its save path is ${savedAt}` : ''}. It has no call that changes the path alone, so any file of this torrent still at its old path moves too.`
+                        : `Physically moves ${size(details.completedBytes)} ${(gathersTo ?? movesFrom) === undefined ? '' : `${gathersTo === undefined ? '' : 'on '}from ${gathersTo ?? movesFrom} `}to ${path}.${movesFrom === undefined && savedAt !== undefined && gathersTo === undefined ? ` Where its files are now cannot be told; it is set to keep them in ${savedAt}.` : ''} Hardlinks into the library break if ${gathersTo === undefined ? 'that crosses' : 'either move crosses'} a filesystem.`,
                     ...(details.autoManaged ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : []),
-                    ...(details.state === 'missingFiles' && !keepsUnfinished ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
+                    ...(repointsMissing ? ['Run recheck_torrents afterwards so qBittorrent finds the data there.'] : [])
                 ],
                 // `moves`, so a token from a preview that promised no move cannot apply to data that has since come back.
-                args: { id: details.id, location: path, moveFiles: move_files, moves, movesFrom: movesFrom ?? '', gathersTo: gathersTo ?? '', gatheredOnly }
+                // Every folder the preview can name, so a token cannot outlive a change to one of them.
+                args: {
+                    id: details.id, location: path, moveFiles: move_files, moves, movesFrom: movesFrom ?? '', gathersTo: gathersTo ?? '', gatheredOnly, missing, repointsMissing,
+                    missingFrom: repointsMissing ? (missingFrom ?? '') : '', storedIn: storedIn ?? '', savedAt: savedAt ?? '', incompleteDir: incompleteDir ?? ''
+                }
             };
         },
 
         applied: (_outcome, plan) => {
-            if (plan.args?.gatheredOnly === true) return `qBittorrent accepted this for ${plan.target} and moves the files to ${String(plan.args.gathersTo)} in the background. The new location applies once the torrent finishes.`;
+            if (plan.args?.gatheredOnly === true) {
+                const gathersTo = String(plan.args.gathersTo);
+                const now = plan.args.missing === true ? `. Any file of it that is left may still be moving to ${gathersTo} in the background` : ` and moves the files to ${gathersTo} in the background`;
+                return `qBittorrent accepted this for ${plan.target}${now}. ${gathersTo === plan.args.location ? 'They stay there' : 'They move on to the new location'} once the torrent finishes.`;
+            }
+            if (plan.args?.repointsMissing === true) {
+                const from = String(plan.args.missingFrom);
+                return `qBittorrent accepted the new location for ${plan.target}. Any file of it left ${from === '' ? 'at the old path' : `in ${from}`} may still be moving to ${String(plan.args.location)} in the background, so wait until get_queue no longer shows it at \`moving\` before running recheck_torrents.`;
+            }
             return plan.args?.moves === true
                 ? `qBittorrent accepted the new location for ${plan.target} and moves the data in the background. get_queue shows the torrent at \`moving\` until it is done.`
                 : undefined;
@@ -634,7 +679,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             let finishedAt: string | undefined;
             let writesTo: string | undefined;
             if (details.state === 'moving' || (details.autoManaged && CHECKING_STATES.has(details.state))) {
-                throw new ServiceError('NotFound', client.id, 'that torrent is being moved or checked, so where its data is cannot be told yet', {
+                throw new ServiceError('InvalidRequest', client.id, 'that torrent is being moved or checked, so where its data is cannot be told yet', {
                     remedy: 'Nothing was changed. Wait for that to finish, then try again.'
                 });
             }
@@ -664,6 +709,10 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             }
             // A move empties where the files are now, so that has to be allowed too.
             if (destination !== undefined && storedIn !== undefined) allowedPath(client.id, storedIn, client.allowedPaths);
+            // Named in the preview and the refusal. Where the files really are when that can be told, else where the torrent is set to keep them.
+            const configuredIn = unfinished ? (incompleteDir ?? savedAt) : savedAt;
+            const leaves = storedIn === undefined ? '' : `from ${storedIn} `;
+            const unknownSource = storedIn === undefined && configuredIn !== undefined ? `where its files are now cannot be told; it is set to keep them in ${configuredIn}` : undefined;
             const removal = removalAtLimit(details.share, categories, defaults, category);
             // Only a rule this change brings in: moving between categories under the same one exposes the torrent to nothing new.
             const introduced = removal !== undefined && JSON.stringify(removal) !== JSON.stringify(removalAtLimit(details.share, categories, defaults, details.category));
@@ -674,7 +723,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                 });
             }
             if (destination !== undefined && !move_files) {
-                throw new ServiceError('NotFound', client.id, `that category would move ${details.title} to ${destination}`, {
+                throw new ServiceError('PermissionDenied', client.id, `that category would move ${details.title} ${leaves}to ${destination}${unknownSource === undefined ? '' : `, and ${unknownSource}`}`, {
                     remedy: 'Nothing was changed. If the data really should move, call set_torrent_category again with `move_files: true`.'
                 });
             }
@@ -695,11 +744,11 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                             : finishedAt === undefined
                             ? 'The data stays where it is.'
                             : `Its unfinished data stays where it is, and goes to ${finishedAt} once finished.`
-                        : `Physically moves ${size(details.completedBytes)} to ${destination}, because qBittorrent manages this torrent's path by category.${finishedAt === undefined ? '' : ` It goes to ${finishedAt} once finished.`}`,
+                        : `Physically moves ${size(details.completedBytes)} ${leaves}to ${destination}, because qBittorrent manages this torrent's path by category.${unknownSource === undefined ? '' : ` Where its files are now cannot be told; it is set to keep them in ${configuredIn}.`}${finishedAt === undefined ? '' : ` It goes to ${finishedAt} once finished.`}`,
                     ...(details.autoManaged && !relocates ? ['Switches the torrent to manual management, so its category no longer decides its path.'] : [])
                 ],
                 // The destination itself, so a token cannot outlive a change to where the category saves.
-                args: { id: details.id, category, moves: destination !== undefined, movesFrom: destination === undefined ? '' : (storedIn ?? ''), destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal, overridesProtection: protection !== undefined }
+                args: { id: details.id, category, moves: destination !== undefined, movesFrom: destination === undefined ? '' : (storedIn ?? ''), configuredFrom: unknownSource === undefined || destination === undefined ? '' : (configuredIn ?? ''), destination: destination ?? '', finishedAt: finishedAt ?? '', writesTo: writesTo ?? '', removal: removal ?? '', allowRemoval: allow_removal, overridesProtection: protection !== undefined }
             };
         },
 

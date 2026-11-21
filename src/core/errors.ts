@@ -7,6 +7,7 @@ export type ServiceErrorKind =
     | 'Timeout'
     | 'VersionUnsupported'
     | 'PermissionDenied'
+    | 'InvalidRequest'
     | 'UpstreamError';
 
 const PROSE: Record<ServiceErrorKind, string> = {
@@ -21,6 +22,10 @@ const PROSE: Record<ServiceErrorKind, string> = {
     // which is repetitive but keeps every error one shape, and the service
     // name is what tells the model *whose* config to change.
     PermissionDenied: 'permission denied',
+    // Arguments arr-mcp refused before asking the service anything, or a request
+    // the target's current state rules out. Not `NotFound`, which would read as
+    // if the instance itself were missing.
+    InvalidRequest: 'invalid request',
     UpstreamError: 'upstream error'
 };
 

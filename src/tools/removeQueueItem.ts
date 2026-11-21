@@ -134,24 +134,24 @@ export function registerRemoveQueueItem(
             const remove_from_client = requested ?? true;
             if (orphaned === true) {
                 if (id !== undefined) {
-                    throw new ServiceError('NotFound', adapter.id, 'pass `id` or `orphaned: true`, not both', {
+                    throw new ServiceError('InvalidRequest', adapter.id, 'pass `id` or `orphaned: true`, not both', {
                         remedy: 'Leave out `id` to list the orphaned downloads, or leave out `orphaned` to remove that one item.'
                     });
                 }
                 if (requested !== undefined || blocklist) {
-                    throw new ServiceError('NotFound', adapter.id, '`orphaned` only lists, so `remove_from_client` and `blocklist` do nothing with it', {
+                    throw new ServiceError('InvalidRequest', adapter.id, '`orphaned` only lists, so `remove_from_client` and `blocklist` do nothing with it', {
                         remedy: 'Leave them out to list the orphaned downloads, then pass them with each row\'s `id` to remove it.'
                     });
                 }
                 if (!canListOrphans(adapter)) {
-                    throw new ServiceError('NotFound', adapter.id, `${adapter.id} reports no orphaned items`, {
+                    throw new ServiceError('InvalidRequest', adapter.id, `${adapter.id} cannot list orphaned downloads`, {
                         remedy: 'orphaned works with Radarr, Sonarr, Whisparr and Lidarr only.'
                     });
                 }
                 return planOrphaned(adapter);
             }
             if (id === undefined) {
-                throw new ServiceError('NotFound', adapter.id, 'pass `id`, or `orphaned: true` to list the orphaned downloads', {
+                throw new ServiceError('InvalidRequest', adapter.id, 'pass `id`, or `orphaned: true` to list the orphaned downloads', {
                     remedy: 'Take an id from get_queue.'
                 });
             }
@@ -160,7 +160,7 @@ export function registerRemoveQueueItem(
             // an opaque id, and so an id that has already finished downloading
             // fails here instead of as a confusing 404 from a delete.
             if (!hasQueue(adapter)) {
-                throw new ServiceError('NotFound', adapter.id, `${adapter.id} cannot list its own queue`);
+                throw new ServiceError('InvalidRequest', adapter.id, `${adapter.id} cannot list its own queue`);
             }
             const item = (await adapter.getQueue()).find(q => q.id === id);
             if (item === undefined) {
@@ -171,18 +171,18 @@ export function registerRemoveQueueItem(
             }
 
             if (adapter.cancelOnly === true && !remove_from_client) {
-                throw new ServiceError('NotFound', adapter.id, `${adapter.id} can only cancel a download outright, so it cannot leave the download alone`, {
+                throw new ServiceError('InvalidRequest', adapter.id, `${adapter.id} can only cancel a download outright, so it cannot leave the download alone`, {
                     remedy: 'Leave out `remove_from_client` to cancel it.'
                 });
             }
             if (adapter.cancelOnly === true && item.status === 'error') {
-                throw new ServiceError('NotFound', adapter.id, 'that download has already failed, so there is nothing to cancel', {
+                throw new ServiceError('InvalidRequest', adapter.id, 'that download has already failed, so there is nothing to cancel', {
                     remedy: 'retry_download tries it again. To clear the row, dismiss it in Shelfmark.'
                 });
             }
 
             if (adapter.discardsFile === true && !remove_from_client) {
-                throw new ServiceError('NotFound', adapter.id, `${adapter.id} deletes the file when it discards one, so it cannot leave the file alone`, {
+                throw new ServiceError('InvalidRequest', adapter.id, `${adapter.id} deletes the file when it discards one, so it cannot leave the file alone`, {
                     remedy: 'Leave out remove_from_client: discarding always deletes the file.'
                 });
             }
@@ -196,7 +196,7 @@ export function registerRemoveQueueItem(
             // one is failed instead, which `DownloadIsTrackable` never tracks again.
             if ((item.orphaned === true || item.noAlbum === true) && !remove_from_client && !blocklisted) {
                 const why = `${adapter.id} matched ${item.orphaned === true ? 'nothing in its library' : 'no album'} to this download`;
-                throw new ServiceError('NotFound', adapter.id, `${why}, so it cannot leave the download alone and drop the row`, {
+                throw new ServiceError('InvalidRequest', adapter.id, `${why}, so it cannot leave the download alone and drop the row`, {
                     remedy: 'Nothing was changed: a torrent keeps seeding, and the row stays. To delete the download too, leave out remove_from_client.'
                 });
             }
