@@ -2091,21 +2091,29 @@ describe('reannounce_torrent', () => {
         }, /^qbittorrent timed out/]
     ];
 
-    it.each(TRACKER_FAILURES.flatMap(([why, fail]) => ['stoppedUP', 'pausedDL'].map(state => [why, state, fail] as const)))(
-        'has nothing to do when the tracker request meets %s for a torrent at %s',
-        async (_why, state, fail) => {
-            const h = answering({ torrents: [torrent({ state })] }, path => (path === '/torrents/trackers' ? fail() : undefined));
-            const preview = await h.call('reannounce_torrent', { id: HASH.toUpperCase() });
-            expect(preview.structuredContent.noop).toBe(true);
-            expect(preview.structuredContent.summary).toContain('is stopped, so it has nothing to announce');
-            expect(preview.structuredContent.target).toBe(`qbittorrent:${HASH}`);
-            expect(preview.structuredContent.confirm_token).toBeUndefined();
-            expect(h.reads('/torrents/info')).toBe(1);
-            // A stopped torrent's trackers are not asked for at all.
-            expect(h.reads('/torrents/trackers')).toBe(0);
-            expect(h.posts).toEqual([]);
-        }
-    );
+    it.each(['stoppedUP', 'pausedDL'])('has nothing to do for a torrent at %s, and never asks for its trackers', async state => {
+        const h = answering({ torrents: [torrent({ state })] }, path => {
+            if (path === '/torrents/trackers') throw new Error('the trackers of a stopped torrent were asked for');
+            return undefined;
+        });
+        const preview = await h.call('reannounce_torrent', { id: HASH.toUpperCase() });
+        expect(preview.structuredContent.noop).toBe(true);
+        expect(preview.structuredContent.summary).toContain('is stopped, so it has nothing to announce');
+        expect(preview.structuredContent.target).toBe(`qbittorrent:${HASH}`);
+        expect(preview.structuredContent.confirm_token).toBeUndefined();
+        expect(h.reads('/torrents/info')).toBe(1);
+        expect(h.reads('/torrents/trackers')).toBe(0);
+        expect(h.posts).toEqual([]);
+    });
+
+    it('reads only the torrent list and the trackers for a running torrent, even with an incomplete row', async () => {
+        const row = torrent();
+        delete row.save_path;
+        const h = answering({ torrents: [row] }, () => undefined);
+        const preview = await h.call('reannounce_torrent', { id: HASH });
+        expect(preview.structuredContent.confirm_token).toBeDefined();
+        expect([h.reads('/torrents/info'), h.reads('/torrents/trackers'), h.reads('/torrents/files'), h.reads('/torrents/properties')]).toEqual([1, 1, 0, 0]);
+    });
 
     it.each(TRACKER_FAILURES)('still refuses a running torrent when the tracker request meets %s, with that failure', async (_why, fail, message) => {
         const h = answering({}, path => (path === '/torrents/trackers' ? fail() : undefined));

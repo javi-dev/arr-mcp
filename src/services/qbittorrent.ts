@@ -768,7 +768,7 @@ export class QbittorrentAdapter
         const rows = await this.#http.get<RawTracker[]>(`${API}/torrents/trackers?hash=${hash}`).catch((err: unknown) => {
             // As getTorrentDetails reads it: a 404 here is not proof the torrent is gone.
             if (err instanceof ServiceError && err.kind === 'NotFound') {
-                throw new ServiceError('UpstreamError', this.id, 'qBittorrent could not be asked about this torrent');
+                throw new ServiceError('UpstreamError', this.id, 'qBittorrent could not be asked about this torrent', { cause: err });
             }
             throw err;
         });
