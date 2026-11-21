@@ -2068,15 +2068,17 @@ describe('reannounce_torrent', () => {
     function answering(opts: FakeOptions, answer: (path: string) => Response | undefined) {
         const qb = fakeQbittorrent(opts);
         const paths: string[] = [];
+        const requests: string[] = [];
         const impl = (async (input: string | URL | Request, init?: RequestInit) => {
             const path = new URL(input instanceof Request ? input.url : String(input)).pathname.replace('/api/v2', '');
             paths.push(path);
+            requests.push(`${init?.method ?? 'GET'} ${path}`);
             return answer(path) ?? qb.impl(input, init);
         }) as typeof fetch;
         const cfg = config({ username: 'admin', password: 'secret' });
         const { server, call } = toolServer();
         registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)]);
-        return { call, posts: qb.posts, reads: (wanted: string) => paths.filter(p => p === wanted).length };
+        return { call, posts: qb.posts, requests, reads: (wanted: string) => paths.filter(p => p === wanted).length };
     }
 
     const TRACKER_FAILURES: [string, () => Response, RegExp][] = [
@@ -2101,8 +2103,7 @@ describe('reannounce_torrent', () => {
         expect(preview.structuredContent.summary).toContain('is stopped, so it has nothing to announce');
         expect(preview.structuredContent.target).toBe(`qbittorrent:${HASH}`);
         expect(preview.structuredContent.confirm_token).toBeUndefined();
-        expect(h.reads('/torrents/info')).toBe(1);
-        expect(h.reads('/torrents/trackers')).toBe(0);
+        expect(h.requests).toEqual(['GET /torrents/info']);
         expect(h.posts).toEqual([]);
     });
 
@@ -2112,7 +2113,7 @@ describe('reannounce_torrent', () => {
         const h = answering({ torrents: [row] }, () => undefined);
         const preview = await h.call('reannounce_torrent', { id: HASH });
         expect(preview.structuredContent.confirm_token).toBeDefined();
-        expect([h.reads('/torrents/info'), h.reads('/torrents/trackers'), h.reads('/torrents/files'), h.reads('/torrents/properties')]).toEqual([1, 1, 0, 0]);
+        expect(h.requests).toEqual(['GET /torrents/info', 'GET /torrents/trackers']);
     });
 
     it.each(TRACKER_FAILURES)('still refuses a running torrent when the tracker request meets %s, with that failure', async (_why, fail, message) => {
@@ -2139,21 +2140,19 @@ describe('reannounce_torrent', () => {
     });
 
     it.each([
-        ['a 404 on the torrent list', 1, 0, /^qbittorrent upstream error: qBittorrent could not be asked about this torrent/, (path: string) => (path === '/torrents/info' ? new Response('not found', { status: 404 }) : undefined)],
-        ['a refused login', 1, 1, /auth failed/, (path: string) => (path === '/auth/login' ? new Response('Fails.') : new Response('Forbidden', { status: 403 }))],
-        ['an unreachable client', 1, 0, /unreachable/, () => {
+        ['a 404 on the torrent list', ['GET /torrents/info'], /^qbittorrent upstream error: qBittorrent could not be asked about this torrent/, (path: string) => (path === '/torrents/info' ? new Response('not found', { status: 404 }) : undefined)],
+        ['a refused login', ['GET /torrents/info', 'POST /auth/login'], /auth failed/, (path: string) => (path === '/auth/login' ? new Response('Fails.') : new Response('Forbidden', { status: 403 }))],
+        ['an unreachable client', ['GET /torrents/info'], /unreachable/, () => {
             throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
         }],
         // A read that times out is retried once, by the HTTP client, before it fails.
-        ['a client that does not answer', 2, 0, /timed out/, () => {
+        ['a client that does not answer', ['GET /torrents/info', 'GET /torrents/info'], /timed out/, () => {
             throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
         }]
-    ])('fails after %s as it did before, reading the torrent list no more often', async (_why, reads, logins, message, answer) => {
+    ])('fails after %s as it did before, with no request beyond the torrent list', async (_why, requests, message, answer) => {
         const h = answering({}, answer);
         await expect(h.call('reannounce_torrent', { id: HASH })).rejects.toThrow(message);
-        expect(h.reads('/torrents/info')).toBe(reads);
-        expect(h.reads('/auth/login')).toBe(logins);
-        expect(h.posts).toEqual([]);
+        expect(h.requests).toEqual(requests);
     });
 
     it('names a stopped torrent by its hash in lower case', async () => {
