@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CredentialServiceConfig } from '../src/config/schema.ts';
 import { QbittorrentAdapter } from '../src/services/qbittorrent.ts';
+import { ServiceError } from '../src/core/errors.ts';
 import { MAX_BODY_BYTES } from '../src/app.ts';
 import { fenceText } from '../src/core/fence.ts';
 import { MAX_TORRENT_BASE64, registerTorrentTools } from '../src/tools/torrentTools.ts';
@@ -2109,6 +2110,17 @@ describe('reannounce_torrent', () => {
         registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)]);
         await expect(call('reannounce_torrent', { id: HASH })).rejects.toThrow(/^qbittorrent upstream error: qBittorrent could not be asked about this torrent/);
         expect(qb.posts).toEqual([]);
+    });
+
+    it('keeps a refused hash as the refusal it is, not as qBittorrent not answering', async () => {
+        const qb = fakeQbittorrent();
+        const cfg = config();
+        const adapter = new QbittorrentAdapter(cfg, qb.impl);
+        // The schema refuses such an id first; this is the adapter's own refusal, should one get past it.
+        vi.spyOn(adapter, 'torrentCheckStates').mockRejectedValue(new ServiceError('NotFound', 'qbittorrent', 'that is not a torrent info hash'));
+        const { server, call } = toolServer();
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [adapter]);
+        await expect(call('reannounce_torrent', { id: HASH })).rejects.toThrow(/^qbittorrent not found: that is not a torrent info hash/);
     });
 
     it('names a stopped torrent by the hash it was asked about', async () => {

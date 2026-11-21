@@ -846,7 +846,8 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             // answer must not wait on the tracker list, whose read can fail on its own.
             // A 404 here is a proxy's, not proof the torrent is gone, so it reads as getTorrentDetails reads it.
             const [state] = await client.torrentCheckStates([id]).catch((err: unknown) => {
-                if (err instanceof ServiceError && err.kind === 'NotFound') {
+                // Only the HTTP answer: a refused hash is NotFound too, and says what to pass instead.
+                if (err instanceof ServiceError && err.kind === 'NotFound' && err.status === 404) {
                     throw new ServiceError('UpstreamError', client.id, 'qBittorrent could not be asked about this torrent', { cause: err });
                 }
                 throw err;
