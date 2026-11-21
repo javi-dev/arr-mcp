@@ -9,14 +9,12 @@ type Handler = (args: Record<string, unknown>) => Promise<{ structuredContent: W
 
 /**
  * Another confirmed write to the instance `service` names, as a second tool
- * would send it: for a test that needs a write waiting behind, or ahead of,
- * the tool it exercises. The lanes are shared by every registration, so this
- * one queues with the real tool's.
+ * would send it: for a test that needs a write to reach the instance while the
+ * tool it exercises is still running. The lanes are shared by every
+ * registration, so this one queues with the real tool's.
  */
 export function otherWrite(service: string) {
     let handler: Handler = () => Promise.reject(new Error('not registered'));
-    let gate: Promise<void> = Promise.resolve();
-    let open = (): void => undefined;
     const server = {
         registerTool(_name: string, config: { inputSchema: z.ZodObject }, h: Handler) {
             handler = args => h(config.inputSchema.parse(args) as Record<string, unknown>);
@@ -40,25 +38,15 @@ export function otherWrite(service: string) {
             operation: 'other_write',
             tier: 'safe',
             plan: ({ id }) => Promise.resolve({ target: id, summary: `Change ${id}.`, effects: [`Changes ${id}.`] }),
-            apply: async () => {
-                await gate;
-                return { changed: true };
-            }
+            apply: () => Promise.resolve({ changed: true })
         }
     );
 
     return {
-        /** Previews and confirms it; its apply waits for `release` when `hold` was called first. */
+        /** Previews and confirms it, as a caller would. */
         async confirm(id = '1'): Promise<WriteToolResult> {
             const token = (await handler({ id })).structuredContent.confirm_token;
             return (await handler({ id, confirm: token })).structuredContent;
-        },
-        /** Makes the next confirm hold the instance until `release`. */
-        hold(): void {
-            gate = new Promise<void>(resolve => {
-                open = resolve;
-            });
-        },
-        release: (): void => open()
+        }
     };
 }

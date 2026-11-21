@@ -145,14 +145,11 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
         try {
             // In the lane, so a confirmed write to this client cannot land between the read and the start.
             await write(async ({ overtaken }) => {
-                if (overtaken) {
-                    leftStopped = true;
-                    return;
-                }
                 // Read again at the last moment: a batch can outlast what the watch saw of its first torrent.
                 const fresh = await client.torrentCheckStates(toStart);
                 toStart = fresh.filter(s => s.complete && s.stopped && !s.checking).map(s => s.id);
-                if (toStart.length > 0) await client.startTorrents(toStart);
+                leftStopped = overtaken;
+                if (toStart.length > 0 && !overtaken) await client.startTorrents(toStart);
             });
         } catch (err) {
             logger.warn({ service: client.id, err }, 'a recheck finished but the torrents could not be started');
@@ -402,7 +399,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
                     ]),
                     'Reads all their data again, which can take a long time on large torrents and adds disk load while it runs.',
                     resume_if_complete
-                        ? 'Starts each stopped torrent that comes back complete. A stopped one that comes back incomplete stays stopped.'
+                        ? 'Starts each stopped torrent that comes back complete, unless another confirmed write reaches qBittorrent during the watch. A stopped one that comes back incomplete stays stopped.'
                         : 'A stopped torrent stays stopped afterwards. Pass `resume_if_complete` to start the complete ones.'
                 ],
                 args: {

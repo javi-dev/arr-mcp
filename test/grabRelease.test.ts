@@ -16,7 +16,6 @@ import { registerGrabRelease } from '../src/tools/grabRelease.ts';
 import type { CrossChecker } from '../src/tools/crossChecks.ts';
 import type { LibraryLoader } from '../src/tools/library.ts';
 import type { WriteToolResult } from '../src/tools/write.ts';
-import { otherWrite } from './helpers/lane.ts';
 import { jsonResponse } from './helpers/serve.ts';
 
 /**
@@ -334,25 +333,6 @@ describe('grab_release', () => {
  * Nothing about it is vetted by an indexer or an *arr, which is exactly what
  * the preview has to say.
  */
-/** A grab by guid adds only the release its token binds, so its slow confirm does not queue for the instance (#12). */
-describe('grab_release and the instance lane', () => {
-    it('grabs by guid while another confirmed write holds the instance', async () => {
-        const h = harness();
-        const other = otherWrite('radarr');
-        other.hold();
-        const holding = other.confirm();
-        try {
-            const preview = await h.call(ARGS);
-            const applied = await h.call({ ...ARGS, confirm: preview.structuredContent.confirm_token });
-            expect(applied.structuredContent.applied).toBe(true);
-            expect(h.grabbed).toHaveLength(1);
-        } finally {
-            other.release();
-        }
-        expect((await holding).applied).toBe(true);
-    });
-});
-
 describe('grab_release with a magnet', () => {
     const MAGNET = 'magnet:?xt=urn:btih:c12fe1c06bba254a9dc9f519b335aa7c1367a88a&dn=Some.Release';
 
@@ -416,25 +396,6 @@ describe('grab_release with a magnet', () => {
 
         return { call: (a: Record<string, unknown>) => call(a), sent, audit };
     }
-
-    /** The client's duplicate check is only true for one add at a time, so a magnet still queues (#12). */
-    it('queues a magnet behind another confirmed write to the client', async () => {
-        const h = clientHarness({ qbittorrent: true });
-        const other = otherWrite('qbittorrent');
-        other.hold();
-        const holding = other.confirm();
-        try {
-            const preview = await h.call({ service: 'qbittorrent', magnet: MAGNET });
-            const adding = h.call({ service: 'qbittorrent', magnet: MAGNET, confirm: preview.structuredContent.confirm_token });
-            await new Promise(resolve => setTimeout(resolve, 20));
-            expect(h.sent.some(s => s.path === '/api/v2/torrents/add')).toBe(false);
-            other.release();
-            expect((await adding).structuredContent.applied).toBe(true);
-        } finally {
-            other.release();
-        }
-        await holding;
-    });
 
     it('names the hash and says nothing vetted the link', async () => {
         const h = clientHarness();

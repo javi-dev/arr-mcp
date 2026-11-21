@@ -223,12 +223,6 @@ export function registerGrabRelease(
         operation: 'grab_release',
         tier: 'safe',
         crossCheck: 'acquire',
-        // A grab by guid is not queued behind other writes to the instance, nor
-        // holds them up: the confirm searches the indexers again (often 15
-        // seconds or more), and a grab only adds the one release its token
-        // binds, in a single call (#12). A magnet is: it is quick, and the
-        // client's own duplicate check is only true for one add at a time.
-        serialised: ({ magnet }) => magnet !== undefined,
 
         async plan({ service, instance, id, season, episode, album, guid, indexer_id, release_title, magnet }): Promise<WritePlan> {
             if (magnet !== undefined) {

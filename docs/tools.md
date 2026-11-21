@@ -3462,7 +3462,9 @@ outside what they can catch. No tool changes seeding limits.
 
 Rechecks up to 50 torrents by `ids`. `resume_if_complete` watches for about 45
 seconds and starts each stopped torrent it saw checking that comes back complete.
-One still checking or still moving to its save path when the watch ends, showing
+The watch runs without holding up other writes to that qBittorrent; when another
+confirmed write reaches it meanwhile, such as a pause, the complete ones are left
+stopped and listed as `left_stopped` rather than started over it. One still checking or still moving to its save path when the watch ends, showing
 an error, or never seen checking because it is queued behind another, is reported
 as such and left alone. A torrent still fetching
 metadata or being moved is skipped. A check can write where the files are, and can

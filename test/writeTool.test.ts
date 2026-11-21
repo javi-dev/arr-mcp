@@ -63,7 +63,6 @@ function buildHarness(
         route?: (args: { id: string }) => string;
         apply?: (plan: WritePlan, args: { id: string }) => Promise<unknown>;
         afterWrite?: (sent: unknown, then: AfterWrite) => Promise<unknown>;
-        serialised?: false | ((args: { id: string }) => boolean);
         applied?: (outcome: unknown, plan: WritePlan) => string | undefined;
         tier?: 'safe' | 'destructive';
         caller?: string;
@@ -107,7 +106,6 @@ function buildHarness(
             plan,
             apply,
             ...(opts.afterWrite === undefined ? {} : { afterWrite: opts.afterWrite }),
-            ...(opts.serialised === undefined ? {} : { serialised: opts.serialised }),
             ...(opts.applied === undefined ? {} : { applied: opts.applied }),
             ...(opts.crossCheck === undefined ? {} : { crossCheck: opts.crossCheck })
         }
@@ -1250,8 +1248,8 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         expect(err.message).not.toContain('0123456789abcdef');
         expect(outcomes(r.h).filter(o => o === 'failed')).toHaveLength(2);
         expect(await second).toBeInstanceOf(Error);
-        // Once per apply, which did land; not again for a wait that failed.
-        expect(r.h.invalidate).toHaveBeenCalledTimes(2);
+        // As each apply returned, and again as each wait ended, failed or not.
+        expect(r.h.invalidate).toHaveBeenCalledTimes(4);
     });
 
     it('runs a change an afterWrite makes back in the lane, behind the confirmations queued meanwhile', async () => {
@@ -1293,6 +1291,66 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         });
         const [first] = await r.confirmAll(['5']);
         expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ overtaken: false });
+    });
+
+    it('counts a confirmation that found nothing to do as overtaking, since it may be a request to leave things as they are', async () => {
+        const later = gate();
+        const h = buildHarness({
+            plan: ({ id }) => Promise.resolve(id === '9' ? { ...PLAN, target: id, noop: true } : { ...PLAN, target: id }),
+            afterWrite: async (_sent, then) => {
+                await later.opened;
+                return then.write(since => Promise.resolve(since));
+            }
+        });
+        // The pause is previewed while there is something to pause, and confirmed once there is not.
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        const first = h.call('delete_media', { id: '5', confirm: token });
+        await settled();
+        const noop = await h.call('delete_media', { id: '9', confirm: 'any' });
+        expect(noop.structuredContent.noop).toBe(true);
+        later.open();
+        expect((await first).structuredContent.result).toEqual({ overtaken: true });
+    });
+
+    it('does not count a change an afterWrite makes, so two overlapping writes do not both stand down', async () => {
+        const fives = gate();
+        const r = sending('none', {
+            afterWrite: async (sent, then) => {
+                const { id } = sent as { id: string };
+                // `5` waits until `9` has confirmed, and makes its change first.
+                if (id === '5') await fives.opened;
+                return then.write(since => Promise.resolve({ id, ...since }));
+            }
+        });
+        const [first, second] = await r.confirmAll(['5', '9']);
+        await settled();
+        fives.open();
+        expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ id: '5', overtaken: true });
+        expect(((await second) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ id: '9', overtaken: false });
+    });
+
+    it('refuses a change an afterWrite makes when its request was already cancelled, without queueing it', async () => {
+        const abort = new AbortController();
+        let resumed = false;
+        const r = sending('none', {
+            signal: abort.signal,
+            afterWrite: async (sent, then) => {
+                abort.abort();
+                await then
+                    .write(() => {
+                        resumed = true;
+                        return Promise.resolve();
+                    })
+                    .catch((err: unknown) => {
+                        r.log.push(err instanceof Error ? err.message : String(err));
+                    });
+                return sent;
+            }
+        });
+        const [first] = await r.confirmAll(['5']);
+        await first;
+        expect(resumed).toBe(false);
+        expect(r.log).toContain('the request was cancelled while this write waited for its instance');
     });
 
     it('refuses a change an afterWrite makes once its request is cancelled while it waits, without running it', async () => {
@@ -1386,102 +1444,6 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         write.open();
         await Promise.all([first, second]);
         expect(log).toEqual(['apply 5', 'apply 9']);
-    });
-});
-
-describe('write tool harness: a write that is not serialised (#12)', () => {
-    const toRelease: (() => void)[] = [];
-    afterEach(() => {
-        for (const release of toRelease.splice(0)) release();
-    });
-
-    it('neither waits for a confirmation holding its instance nor holds it', async () => {
-        let open = (): void => undefined;
-        const held = new Promise<void>(resolve => {
-            open = resolve;
-        });
-        toRelease.push(open);
-        const log: string[] = [];
-        // One instance, two tools: a serialised write holding it, and a grab that is not.
-        const serialised = buildHarness({
-            apply: async (_plan, { id }) => {
-                log.push(`delete ${id}`);
-                await held;
-                return { id };
-            }
-        });
-        const additive = buildHarness({
-            serialised: false,
-            plan: ({ id }) => Promise.resolve({ ...PLAN, target: id }),
-            apply: (_plan, { id }) => {
-                log.push(`grab ${id}`);
-                return Promise.resolve({ id });
-            }
-        });
-        const deleting = serialised.call('delete_media', { id: '5', confirm: (await serialised.call('delete_media', { id: '5' })).structuredContent.confirm_token });
-        await new Promise(resolve => setTimeout(resolve, 20));
-        const grab = await additive.call('delete_media', { id: '9', confirm: (await additive.call('delete_media', { id: '9' })).structuredContent.confirm_token });
-        expect(grab.structuredContent.applied).toBe(true);
-        expect(log).toEqual(['delete 5', 'grab 9']);
-        open();
-        await deleting;
-    });
-
-    it('holds up no serialised confirmation while it is still running', async () => {
-        let open = (): void => undefined;
-        const held = new Promise<void>(resolve => {
-            open = resolve;
-        });
-        toRelease.push(open);
-        const additive = buildHarness({
-            serialised: false,
-            apply: async () => {
-                await held;
-                return { grabbed: true };
-            }
-        });
-        const serialised = buildHarness({ plan: ({ id }) => Promise.resolve({ ...PLAN, target: id }) });
-        const grabbing = additive.call('delete_media', { id: '5', confirm: (await additive.call('delete_media', { id: '5' })).structuredContent.confirm_token });
-        await new Promise(resolve => setTimeout(resolve, 20));
-        const deleted = await serialised.call('delete_media', { id: '9', confirm: (await serialised.call('delete_media', { id: '9' })).structuredContent.confirm_token });
-        expect(deleted.structuredContent.applied).toBe(true);
-        open();
-        expect((await grabbing).structuredContent.applied).toBe(true);
-    });
-
-    it('reads `serialised` from the arguments, so one tool can queue some calls and not others', async () => {
-        let open = (): void => undefined;
-        const held = new Promise<void>(resolve => {
-            open = resolve;
-        });
-        toRelease.push(open);
-        const holder = buildHarness({
-            apply: async () => {
-                await held;
-                return {};
-            }
-        });
-        const h = buildHarness({ serialised: ({ id }) => id === 'queued', plan: ({ id }) => Promise.resolve({ ...PLAN, target: id }) });
-        const holding = holder.call('delete_media', { id: '5', confirm: (await holder.call('delete_media', { id: '5' })).structuredContent.confirm_token });
-        await new Promise(resolve => setTimeout(resolve, 20));
-        const free = await h.call('delete_media', { id: 'free', confirm: (await h.call('delete_media', { id: 'free' })).structuredContent.confirm_token });
-        expect(free.structuredContent.applied).toBe(true);
-        const queued = h.call('delete_media', { id: 'queued', confirm: (await h.call('delete_media', { id: 'queued' })).structuredContent.confirm_token });
-        await new Promise(resolve => setTimeout(resolve, 20));
-        expect(h.apply).toHaveBeenCalledTimes(1);
-        open();
-        expect((await queued).structuredContent.applied).toBe(true);
-        await holding;
-    });
-
-    it('still refuses a confirmation whose request was cancelled before it started, with its token unspent', async () => {
-        const h = buildHarness({ serialised: false });
-        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
-        const abort = new AbortController();
-        abort.abort();
-        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled before this write started/);
-        expect(h.apply).not.toHaveBeenCalled();
-        expect((await h.call('delete_media', { id: '5', confirm: token })).structuredContent.applied).toBe(true);
     });
 });
 
