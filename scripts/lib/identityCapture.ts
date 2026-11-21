@@ -110,8 +110,8 @@ const neutralCategories = (categories: unknown, renumbered = new Map<number, num
  * A Prowlarr `IndexerResource`. Besides the name, the sort name, the Cardigann
  * definition file, the wiki anchor and the definition's own help texts each
  * say which site it is, and a definition can hold its API host without a
- * scheme. A Cardigann definition's own settings and site categories are made
- * neutral as well. `n` is the indexer's place in the list, as its name
+ * scheme. A Cardigann definition's own settings, and any indexer's site
+ * categories, are made neutral as well. `n` is the indexer's place in the list, as its name
  * already uses.
  */
 export function anonymiseProwlarrIndexer(row: Row, index: number): Row {
@@ -126,8 +126,9 @@ export function anonymiseProwlarrIndexer(row: Row, index: number): Row {
               return neutralSetting(valued, k);
           })
         : row.fields;
+    // Every implementation: a Newznab indexer's own categories are its own list too.
     const capabilities =
-        cardigann && isRow(row.capabilities) && row.capabilities.categories !== undefined
+        isRow(row.capabilities) && row.capabilities.categories !== undefined
             ? { capabilities: { ...row.capabilities, categories: neutralCategories(row.capabilities.categories) } }
             : {};
 
@@ -267,6 +268,13 @@ export function anonymiseSabnzbdWarnings(body: unknown, serverStats?: unknown): 
         })
     };
 }
+
+/**
+ * The warnings endpoint as `capture-fixtures.ts` runs it: `server_stats` is
+ * captured first, and its response is what names the servers.
+ */
+export const captureSabnzbdWarnings = (body: unknown, captured: Map<string, unknown>): unknown =>
+    anonymiseSabnzbdWarnings(body, captured.get('server-stats'));
 
 /**
  * Cleanuparr's seeker configuration names each *arr instance as the operator

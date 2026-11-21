@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
     anonymiseArrBlocklist,
@@ -9,6 +10,7 @@ import {
     anonymiseProwlarrIndexerStats,
     anonymiseSabnzbdServerStats,
     anonymiseSabnzbdWarnings,
+    captureSabnzbdWarnings,
     indexerAliases
 } from '../scripts/lib/identityCapture.ts';
 
@@ -99,9 +101,21 @@ describe('the Prowlarr anonymisers', () => {
         ]);
     });
 
-    it('leave a Newznab indexer settings as they are', () => {
+    it('leave a Newznab indexer settings and standard categories as they are, and its own categories neutral', () => {
         const fields = [{ name: 'apiPath', label: 'API Path', value: '/api' }, { name: 'categories', label: 'Categories', value: [2000] }];
-        expect(anonymiseProwlarrIndexer({ implementation: 'Newznab', name: 'x', fields }, 0).fields).toEqual(fields);
+        const row = anonymiseProwlarrIndexer(
+            {
+                implementation: 'Newznab',
+                name: 'x',
+                fields,
+                capabilities: { categories: [{ id: 2000, name: 'Movies', subCategories: [{ id: 2040, name: 'Movies/HD' }] }, { id: 102040, name: 'Site HD Movies' }] }
+            },
+            0
+        );
+        expect(row.fields).toEqual(fields);
+        expect(row.capabilities).toEqual({
+            categories: [{ id: 2000, name: 'Movies', subCategories: [{ id: 2040, name: 'Movies/HD' }] }, { id: 100001, name: 'Category 100001' }]
+        });
     });
 
     it('replace a host name with a port, and keep an IP address with or without one', () => {
@@ -200,6 +214,27 @@ describe('the other anonymisers', () => {
                 { text: 'Login failed for old.news.first-provider.example' }
             ]
         });
+    });
+
+    it('give the warnings the aliases server_stats got, as the capture runs them', () => {
+        const rawStats = { servers: { 'news.first-provider.example': {}, 'eu.news.second-provider.example': {} } };
+        const stats = anonymiseSabnzbdServerStats(rawStats) as { servers: Record<string, unknown> };
+        const warnings = captureSabnzbdWarnings(
+            { warnings: [{ text: 'Login failed for eu.news.second-provider.example' }] },
+            new Map<string, unknown>([['server-stats', rawStats]])
+        );
+        expect(Object.keys(stats.servers)).toEqual(['news1.example.test', 'news2.example.test']);
+        expect(warnings).toEqual({ warnings: [{ text: 'Login failed for news2.example.test' }] });
+    });
+
+    // capture-fixtures.ts cannot be imported (it loads the config), so this reads it:
+    // the warnings must go through the wiring above, after server_stats is captured.
+    it('wire the SABnzbd warnings to the server_stats captured before them', () => {
+        const source = readFileSync(join(import.meta.dirname, '..', 'scripts', 'capture-fixtures.ts'), 'utf8');
+        const stats = source.indexOf("{ name: 'server-stats', path: '/api?mode=server_stats&output=json', anonymise: anonymiseSabnzbdServerStats }");
+        const warnings = source.indexOf("{ name: 'warnings', path: '/api?mode=warnings&output=json', anonymise: captureSabnzbdWarnings }");
+        expect(stats).toBeGreaterThan(-1);
+        expect(warnings).toBeGreaterThan(stats);
     });
 
     it('name a Cleanuparr instance by its type, numbered only when a type repeats', () => {

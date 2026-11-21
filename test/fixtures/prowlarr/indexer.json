@@ -1598,8 +1598,8 @@
           "subCategories": []
         },
         {
-          "id": 100000,
-          "name": "Reserved",
+          "id": 100001,
+          "name": "Category 100001",
           "subCategories": []
         },
         {
@@ -1664,63 +1664,63 @@
           ]
         },
         {
-          "id": 101010,
-          "name": "Console/NDS",
+          "id": 100002,
+          "name": "Category 100002",
           "subCategories": []
         },
         {
-          "id": 101020,
-          "name": "Console/PSP",
+          "id": 100003,
+          "name": "Category 100003",
           "subCategories": []
         },
         {
-          "id": 101030,
-          "name": "Console/Wii",
+          "id": 100004,
+          "name": "Category 100004",
           "subCategories": []
         },
         {
-          "id": 101035,
-          "name": "Console/Switch",
+          "id": 100005,
+          "name": "Category 100005",
           "subCategories": []
         },
         {
-          "id": 101040,
-          "name": "Console/XBox",
+          "id": 100006,
+          "name": "Category 100006",
           "subCategories": []
         },
         {
-          "id": 101050,
-          "name": "Console/XBox 360",
+          "id": 100007,
+          "name": "Category 100007",
           "subCategories": []
         },
         {
-          "id": 101060,
-          "name": "Console/Wiiware",
+          "id": 100008,
+          "name": "Category 100008",
           "subCategories": []
         },
         {
-          "id": 101070,
-          "name": "Console/XBox 360 DLC",
+          "id": 100009,
+          "name": "Category 100009",
           "subCategories": []
         },
         {
-          "id": 101080,
-          "name": "Console/PS3",
+          "id": 100010,
+          "name": "Category 100010",
           "subCategories": []
         },
         {
-          "id": 101090,
-          "name": "Console/XBox One",
+          "id": 100011,
+          "name": "Category 100011",
           "subCategories": []
         },
         {
-          "id": 101100,
-          "name": "Console/PS4",
+          "id": 100012,
+          "name": "Category 100012",
           "subCategories": []
         },
         {
-          "id": 101000,
-          "name": "Console",
+          "id": 100013,
+          "name": "Category 100013",
           "subCategories": []
         },
         {
@@ -1765,43 +1765,43 @@
           ]
         },
         {
-          "id": 102010,
-          "name": "Movies/Foreign",
+          "id": 100014,
+          "name": "Category 100014",
           "subCategories": []
         },
         {
-          "id": 102020,
-          "name": "Movies/Other",
+          "id": 100015,
+          "name": "Category 100015",
           "subCategories": []
         },
         {
-          "id": 102030,
-          "name": "Movies/SD",
+          "id": 100016,
+          "name": "Category 100016",
           "subCategories": []
         },
         {
-          "id": 102040,
-          "name": "Movies/HD",
+          "id": 100017,
+          "name": "Category 100017",
           "subCategories": []
         },
         {
-          "id": 102045,
-          "name": "Movies/UHD",
+          "id": 100018,
+          "name": "Category 100018",
           "subCategories": []
         },
         {
-          "id": 102050,
-          "name": "Movies/BluRay",
+          "id": 100019,
+          "name": "Category 100019",
           "subCategories": []
         },
         {
-          "id": 102060,
-          "name": "Movies/3D",
+          "id": 100020,
+          "name": "Category 100020",
           "subCategories": []
         },
         {
-          "id": 102000,
-          "name": "Movies",
+          "id": 100021,
+          "name": "Category 100021",
           "subCategories": []
         },
         {
@@ -1836,33 +1836,33 @@
           ]
         },
         {
-          "id": 103010,
-          "name": "Audio/MP3",
+          "id": 100022,
+          "name": "Category 100022",
           "subCategories": []
         },
         {
-          "id": 103020,
-          "name": "Audio/Video",
+          "id": 100023,
+          "name": "Category 100023",
           "subCategories": []
         },
         {
-          "id": 103030,
-          "name": "Audio/Audiobook",
+          "id": 100024,
+          "name": "Category 100024",
           "subCategories": []
         },
         {
-          "id": 103040,
-          "name": "Audio/Lossless",
+          "id": 100025,
+          "name": "Category 100025",
           "subCategories": []
         },
         {
-          "id": 103050,
-          "name": "Audio/Podcast",
+          "id": 100026,
+          "name": "Category 100026",
           "subCategories": []
         },
         {
-          "id": 103000,
-          "name": "Audio",
+          "id": 100027,
+          "name": "Category 100027",
           "subCategories": []
         },
         {
@@ -1907,43 +1907,43 @@
           ]
         },
         {
-          "id": 104010,
-          "name": "PC/0day",
+          "id": 100028,
+          "name": "Category 100028",
           "subCategories": []
         },
         {
-          "id": 104020,
-          "name": "PC/ISO",
+          "id": 100029,
+          "name": "Category 100029",
           "subCategories": []
         },
         {
-          "id": 104030,
-          "name": "PC/Mac",
+          "id": 100030,
+          "name": "Category 100030",
           "subCategories": []
         },
         {
-          "id": 104040,
-          "name": "PC/Mobile - Other",
+          "id": 100031,
+          "name": "Category 100031",
           "subCategories": []
         },
         {
-          "id": 104050,
-          "name": "PC/Games",
+          "id": 100032,
+          "name": "Category 100032",
           "subCategories": []
         },
         {
-          "id": 104060,
-          "name": "PC/Mobile - iOS",
+          "id": 100033,
+          "name": "Category 100033",
           "subCategories": []
         },
         {
-          "id": 104070,
-          "name": "PC/Mobile - Android",
+          "id": 100034,
+          "name": "Category 100034",
           "subCategories": []
         },
         {
-          "id": 104000,
-          "name": "PC",
+          "id": 100035,
+          "name": "Category 100035",
           "subCategories": []
         },
         {
@@ -1993,48 +1993,48 @@
           ]
         },
         {
-          "id": 105020,
-          "name": "TV/Foreign",
+          "id": 100036,
+          "name": "Category 100036",
           "subCategories": []
         },
         {
-          "id": 105030,
-          "name": "TV/SD",
+          "id": 100037,
+          "name": "Category 100037",
           "subCategories": []
         },
         {
-          "id": 105040,
-          "name": "TV/HD",
+          "id": 100038,
+          "name": "Category 100038",
           "subCategories": []
         },
         {
-          "id": 105045,
-          "name": "TV/UHD",
+          "id": 100039,
+          "name": "Category 100039",
           "subCategories": []
         },
         {
-          "id": 105050,
-          "name": "TV/Other",
+          "id": 100040,
+          "name": "Category 100040",
           "subCategories": []
         },
         {
-          "id": 105060,
-          "name": "TV/Sport",
+          "id": 100041,
+          "name": "Category 100041",
           "subCategories": []
         },
         {
-          "id": 105070,
-          "name": "TV/Anime",
+          "id": 100042,
+          "name": "Category 100042",
           "subCategories": []
         },
         {
-          "id": 105080,
-          "name": "TV/Documentary",
+          "id": 100043,
+          "name": "Category 100043",
           "subCategories": []
         },
         {
-          "id": 105000,
-          "name": "TV",
+          "id": 100044,
+          "name": "Category 100044",
           "subCategories": []
         },
         {
@@ -2079,43 +2079,43 @@
           ]
         },
         {
-          "id": 106010,
-          "name": "XXX/DVD",
+          "id": 100045,
+          "name": "Category 100045",
           "subCategories": []
         },
         {
-          "id": 106020,
-          "name": "XXX/WMV",
+          "id": 100046,
+          "name": "Category 100046",
           "subCategories": []
         },
         {
-          "id": 106030,
-          "name": "XXX/XviD",
+          "id": 100047,
+          "name": "Category 100047",
           "subCategories": []
         },
         {
-          "id": 106040,
-          "name": "XXX/x264",
+          "id": 100048,
+          "name": "Category 100048",
           "subCategories": []
         },
         {
-          "id": 106050,
-          "name": "XXX/Pack",
+          "id": 100049,
+          "name": "Category 100049",
           "subCategories": []
         },
         {
-          "id": 106060,
-          "name": "XXX/ImgSet",
+          "id": 100050,
+          "name": "Category 100050",
           "subCategories": []
         },
         {
-          "id": 106070,
-          "name": "XXX/Other",
+          "id": 100051,
+          "name": "Category 100051",
           "subCategories": []
         },
         {
-          "id": 106000,
-          "name": "XXX",
+          "id": 100052,
+          "name": "Category 100052",
           "subCategories": []
         },
         {
@@ -2145,28 +2145,28 @@
           ]
         },
         {
-          "id": 107010,
-          "name": "Books/Mags",
+          "id": 100053,
+          "name": "Category 100053",
           "subCategories": []
         },
         {
-          "id": 107020,
-          "name": "Books/EBook",
+          "id": 100054,
+          "name": "Category 100054",
           "subCategories": []
         },
         {
-          "id": 107030,
-          "name": "Books/Comics",
+          "id": 100055,
+          "name": "Category 100055",
           "subCategories": []
         },
         {
-          "id": 107900,
-          "name": "Books/Category not determined",
+          "id": 100056,
+          "name": "Category 100056",
           "subCategories": []
         },
         {
-          "id": 107000,
-          "name": "Books",
+          "id": 100057,
+          "name": "Category 100057",
           "subCategories": []
         },
         {
@@ -2181,18 +2181,18 @@
           ]
         },
         {
-          "id": 108010,
-          "name": "Other/Misc",
+          "id": 100058,
+          "name": "Category 100058",
           "subCategories": []
         },
         {
-          "id": 108000,
-          "name": "Other",
+          "id": 100059,
+          "name": "Category 100059",
           "subCategories": []
         },
         {
-          "id": 200000,
-          "name": "Custom",
+          "id": 100060,
+          "name": "Category 100060",
           "subCategories": []
         }
       ],

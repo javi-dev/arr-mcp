@@ -51,7 +51,7 @@ import {
     anonymiseProwlarrIndexer,
     anonymiseProwlarrIndexerStats,
     anonymiseSabnzbdServerStats,
-    anonymiseSabnzbdWarnings
+    captureSabnzbdWarnings
 } from './lib/identityCapture.ts';
 import { anonymiseShelfmarkConfig, anonymiseShelfmarkHistory, anonymiseShelfmarkReleases, anonymiseShelfmarkSearch, anonymiseShelfmarkSnapshot, anonymiseShelfmarkStatus } from './lib/shelfmarkCapture.ts';
 import {
@@ -1072,7 +1072,7 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
         { name: 'version', path: '/api?mode=version&output=json' },
         { name: 'queue', path: '/api?mode=queue&output=json' },
         { name: 'server-stats', path: '/api?mode=server_stats&output=json', anonymise: anonymiseSabnzbdServerStats },
-        { name: 'warnings', path: '/api?mode=warnings&output=json', anonymise: (body, captured) => anonymiseSabnzbdWarnings(body, captured.get('server-stats')) }
+        { name: 'warnings', path: '/api?mode=warnings&output=json', anonymise: captureSabnzbdWarnings }
     ],
     nzbget: [
         { name: 'version', path: '/jsonrpc', body: { jsonrpc: '2.0', method: 'version', params: [], id: 1 } },
