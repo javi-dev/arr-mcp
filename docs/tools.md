@@ -3467,10 +3467,11 @@ confirmation to it is accepted meanwhile, such as a pause or another recheck,
 the complete torrents are left stopped and listed as `left_stopped` rather than
 started over it. When the start cannot be sent, because the client stays busy,
 the request was cancelled or qBittorrent refuses it, they are left stopped and
-listed as `resume_failed`, with the reason in `resume_error`. What they are
-doing then is read once more for the reply: one that something else has started
-by then is listed as `already_running`, and `state_unread` says when that read
-failed. One still checking or still moving to its save path when the watch ends,
+listed as `resume_failed`, with the reason in `resume_error`. The reply goes by
+a read taken when it was time to start: the one before the start, or, when the
+start was never reached (overtaken, busy or cancelled), one more taken after
+standing down. One that something else has started by then is listed as
+`already_running`, and `state_unread` says when that last read failed. One still checking or still moving to its save path when the watch ends,
 showing an error, or never seen checking because it is queued behind another, is
 reported as such and left alone, as is one found checking again, at missing
 files or no longer complete when it was time to start it (`unconfirmed`). A torrent still fetching

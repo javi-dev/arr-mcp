@@ -764,8 +764,9 @@ export class QbittorrentAdapter
 
     async torrentCheckStates(ids: readonly string[]): Promise<TorrentCheckState[]> {
         const hashes = ids.map(id => this.#hash(id)).join('|');
-        const rows = await this.#http.get<RawTorrent[]>(`${API}/torrents/info?hashes=${encodeURIComponent(hashes)}`);
-        return (Array.isArray(rows) ? rows : []).flatMap(t => {
+        // `getArray`: a recheck reads a missing row as a removed torrent, and only a real list says that.
+        const rows = await this.#http.getArray<RawTorrent>(`${API}/torrents/info?hashes=${encodeURIComponent(hashes)}`);
+        return rows.flatMap(t => {
             if (typeof t.hash !== 'string') return [];
             const state = t.state ?? '';
             return [{

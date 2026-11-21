@@ -249,12 +249,19 @@ and any library snapshot is dropped after it. Whether to start them is decided
 when that start gets the lane: if another confirmation to that qBittorrent was
 accepted since the recheck, even one that found nothing to do and even another
 `recheck_torrents`, they are left stopped and listed as `left_stopped`, because
-a pause sent then would look the same and starting them would undo it. Standing
-down takes the lane only for that decision; the read the reply reports from
-happens after it. If the instance is still busy 30 seconds later, the request
-has been cancelled, or qBittorrent refuses the start, they are left stopped
-too, listed as `resume_failed` with the reason in `resume_error`. Once the start
-has been sent it runs to the end, as any apply does.
+a pause sent then would look the same and starting them would undo it. If the
+instance is still busy 30 seconds later, the request has been cancelled, or
+qBittorrent refuses the start, they are left stopped too, listed as
+`resume_failed` with the reason in `resume_error`. Once the start has been sent
+it runs to the end, as any apply does.
+
+The reply reports what a read taken when it was time to start found. When the
+start was never reached (the recheck was overtaken, the instance stayed busy,
+or the request was cancelled), that read is one more, taken outside the lane
+after standing down, so it holds up nothing. It can move a torrent out of
+`left_stopped` or `resume_failed`, for instance to `already_running` when
+something else has started it. When that read fails, `state_unread` says the
+lists are what was last seen.
 
 Other waits still hold the lane, because the change has not been made, or could
 still be started over, while they run:

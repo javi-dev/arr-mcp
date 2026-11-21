@@ -66,6 +66,9 @@ const WATCH_POLL_MS = 2_000;
 /** How long a complete torrent may show no checking state before the watch stops waiting for one. */
 const GRACE_MS = 4_000;
 
+/** qBittorrent's states for a torrent that is seeding, downloading or queued to: started, whoever started it. */
+const STARTED_STATES = new Set(['uploading', 'stalledUP', 'queuedUP', 'forcedUP', 'downloading', 'stalledDL', 'queuedDL', 'forcedDL', 'metaDL', 'forcedMetaDL']);
+
 /** While these run, the amount left says nothing about where the data is, and a finished torrent can read as unfinished. */
 const CHECKING_STATES = new Set(['checkingUP', 'checkingDL', 'checkingResumeData']);
 
@@ -154,7 +157,7 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
             if (now === undefined) dropped.gone.push(id);
             else if (now.state === 'error') dropped.errored.push(id);
             else if (now.state === 'moving') dropped.moving.push(id);
-            else if (!now.stopped && !now.checking && now.state !== 'missingFiles') dropped.running.push(id);
+            else if (STARTED_STATES.has(now.state)) dropped.running.push(id);
         }
     };
     let resumeError: string | undefined;
@@ -213,8 +216,10 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
     if (o.resumed === undefined && o.left_stopped === undefined && o.already_running === undefined && o.incomplete === undefined && o.errored === undefined && o.still_checking === undefined && o.still_moving === undefined && o.unconfirmed === undefined && o.gone === undefined && o.resume_failed === undefined) return undefined;
     const part = (label: string, ids: string[] | undefined) => (ids === undefined ? [] : [`${label}: ${ids.join(', ')}`]);
     return `Recheck sent. ${[
+        // First, since it qualifies the lists after it: they are what the watch last saw.
+        ...(o.state_unread === undefined ? [] : [`what the torrents not started are doing now could not be read (${o.state_unread}), so the lists below are what was last seen; check get_queue before starting any of them`]),
         ...part('started again', o.resumed),
-        ...part('finished complete but left stopped, because another confirmation to this qBittorrent was accepted before the start (even one that found nothing to do, such as a pause of a stopped torrent); start them with pause_downloads and `action: "resume"` if that is still wanted', o.left_stopped),
+        ...part(`finished complete but left stopped, because another confirmation to this qBittorrent was accepted before the start (even one that found nothing to do, such as a pause of a stopped torrent); start them with pause_downloads and \`action: "resume"\` if that is still wanted${o.state_unread === undefined ? '' : ', once get_queue shows what they are doing now'}`, o.left_stopped),
         ...part('came back incomplete, and any that was not stopped is downloading what is missing', o.incomplete),
         ...part('showing an error after the recheck was sent; get_queue shows only that state, and the reason is in the qBittorrent log', o.errored),
         ...part('still checking, so start these with pause_downloads and `action: "resume"` once get_queue shows them complete', o.still_checking),
@@ -223,10 +228,9 @@ const outcomeSentence = (o: RecheckOutcome): string | undefined => {
         ...part('no longer in qBittorrent', o.gone),
         ...part('already running when they were read for the start, so not started here', o.already_running),
         ...part(
-            `finished complete but could not be started${o.resume_error === undefined ? '' : ` (${o.resume_error})`}; start them with pause_downloads and \`action: "resume"\` if that is still wanted`,
+            `finished complete but could not be started${o.resume_error === undefined ? '' : ` (${o.resume_error})`}; start them with pause_downloads and \`action: "resume"\` if that is still wanted${o.state_unread === undefined ? '' : ', once get_queue shows what they are doing now'}`,
             o.resume_failed
-        ),
-        ...(o.state_unread === undefined ? [] : [`what those not started are doing now could not be read (${o.state_unread}), so check get_queue before starting any of them`])
+        )
     ].join('; ')}.`;
 };
 

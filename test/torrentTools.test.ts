@@ -668,10 +668,28 @@ describe('recheck_torrents', () => {
         expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 
-    it('starts nothing for a request cancelled during the watch, and says why', async () => {
-        const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
+    /** Cancelled before the start: nothing is started, and the reply comes from one more read, outside the lane. */
+    it.each([
+        ['still stopped', 'stopped', { resume_failed: [HASH], resume_error: 'the request was cancelled before this change was sent' }],
+        ['started by something else', 'running', { already_running: [HASH] }],
+        ['unreadable', 'failing', { resume_failed: [HASH], state_unread: expect.stringMatching(/500|broken/) as unknown }],
+        ['not a list', 'malformed', { resume_failed: [HASH], state_unread: expect.any(String) as unknown }]
+    ])('starts nothing for a request cancelled during the watch, and reports the torrent %s', async (_label, mode, expected) => {
+        const t = torrent({ state: 'stoppedUP' });
+        const qb = fakeQbittorrent({ torrents: [t], recheckStates: ['checkingUP', 'stoppedUP'] });
         const cfg = config();
         const abort = new AbortController();
+        // After the abort, the watch's own read passes; the next is the one the reply comes from.
+        let readsAfterAbort = 0;
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.includes('/torrents/info') && abort.signal.aborted && ++readsAfterAbort === 2) {
+                if (mode === 'running') return jsonResponse([{ ...t, state: 'uploading' }]);
+                if (mode === 'failing') return textResponse('broken', 500);
+                if (mode === 'malformed') return jsonResponse({ error: 'not a list' });
+            }
+            return qb.impl(input, init);
+        }) as typeof fetch;
         type Reply = { content: { text: string }[]; structuredContent: { confirm_token?: string; applied: boolean; result?: unknown } };
         const handlers = new Map<string, (args: Record<string, unknown>, ctx?: unknown) => Promise<Reply>>();
         const server = {
@@ -679,7 +697,7 @@ describe('recheck_torrents', () => {
                 handlers.set(name, (args, ctx) => handler(c.inputSchema.parse(args) as Record<string, unknown>, ctx));
             }
         };
-        registerTorrentTools(server as never, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, qb.impl)], {
+        registerTorrentTools(server as never, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)], {
             // The caller goes while the watch waits.
             sleep: () => {
                 abort.abort();
@@ -692,7 +710,9 @@ describe('recheck_torrents', () => {
         const preview = await recheck(args);
         const done = await recheck({ ...args, confirm: preview.structuredContent.confirm_token }, { mcpReq: { signal: abort.signal } });
         expect(done.structuredContent.applied).toBe(true);
-        expect(done.structuredContent.result).toMatchObject({ resume_failed: [HASH], resume_error: 'the request was cancelled before this change was sent' });
+        expect(done.structuredContent.result).toMatchObject(expected);
+        if (mode === 'running') expect(done.structuredContent.result).not.toHaveProperty('resume_failed');
+        if (mode !== 'running') expect(done.structuredContent.result).not.toHaveProperty('gone');
         expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 
