@@ -112,7 +112,7 @@ describe('the Prowlarr anonymisers', () => {
         const body = anonymiseProwlarrHistory({
             page: 1,
             records: [
-                { id: 1, data: { url: 'https://some-real-site.example/api?t=search&apikey=0123abcd', host: 'my-server', query: 'x' } },
+                { id: 1, data: { url: 'https://some-real-site.example/api?t=search&apikey=0123abcd', host: 'my-server', query: 'Some Library Title 2024' } },
                 { id: 2, data: { host: '192.0.2.10' } },
                 { id: 3 },
                 { id: 4, eventType: 'releaseGrabbed', data: { grabTitle: 'Some.Library.Title.2024.1080p-GRP', infoUrl: 'https://some-real-site.example/details/1' } }
@@ -121,7 +121,7 @@ describe('the Prowlarr anonymisers', () => {
         expect(body).toEqual({
             page: 1,
             records: [
-                { id: 1, data: { url: 'https://indexer.example.test/', host: 'service.example.test', query: 'x' } },
+                { id: 1, data: { url: 'https://indexer.example.test/', host: 'service.example.test', query: 'Title 1' } },
                 { id: 2, data: { host: '192.0.2.10' } },
                 { id: 3 },
                 { id: 4, eventType: 'releaseGrabbed', data: { grabTitle: 'Release.4.1080p.WEB-DL.x264-GROUP', infoUrl: 'https://indexer.example.test/' } }
@@ -177,7 +177,8 @@ describe('the other anonymisers', () => {
                         { text: 'Login failed for eu.news.second-provider.example' },
                         { text: 'Server news.first-provider.example will be ignored for 10 minutes' },
                         { text: 'Cannot connect to server news.first-provider.example [Failed to resolve news.first-provider.example]' },
-                        { text: 'Connection refused 3@news.gone-provider.example:563 (news.gone-provider.example)' }
+                        { text: 'Connection refused 3@news.gone-provider.example:563 (news.gone-provider.example)' },
+                        { text: 'Connection refused 4@old.news.first-provider.example:563 (old.news.first-provider.example)' }
                     ]
                 },
                 stats
@@ -187,7 +188,8 @@ describe('the other anonymisers', () => {
                 { text: 'Login failed for news2.example.test' },
                 { text: 'Server news1.example.test will be ignored for 10 minutes' },
                 { text: 'Cannot connect to server news1.example.test [Failed to resolve news1.example.test]' },
-                { text: 'Connection refused 3@news1.example.test:563 (news1.example.test)' }
+                { text: 'Connection refused 3@news1.example.test:563 (news1.example.test)' },
+                { text: 'Connection refused 4@news1.example.test:563 (news1.example.test)' }
             ]
         });
     });

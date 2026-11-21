@@ -148,9 +148,10 @@ const hostName = (value: unknown): unknown => (typeof value === 'string' && valu
 /**
  * Prowlarr `history`: `data.url` is the indexer's own search link, with its
  * host, its API path and any key in the query; `data.host` is the machine
- * that asked. A grab row adds `data.infoUrl`, the release's page on the
- * indexer, and `data.grabTitle`, the release name, which carries a title
- * from the library.
+ * that asked. A search row's `data.query` is what an *arr searched for, a
+ * title from the library when it is not empty. A grab row adds
+ * `data.infoUrl`, the release's page on the indexer, and `data.grabTitle`,
+ * the release name, which carries a title as well.
  */
 export function anonymiseProwlarrHistory(body: unknown): unknown {
     if (!isRow(body) || !Array.isArray(body.records)) return body;
@@ -163,6 +164,7 @@ export function anonymiseProwlarrHistory(body: unknown): unknown {
                       data: {
                           ...row.data,
                           ...(row.data.url === undefined ? {} : { url: replaceIfString(row.data.url, ANONYMOUS_URL) }),
+                          ...(typeof row.data.query === 'string' && row.data.query !== '' ? { query: `Title ${i + 1}` } : {}),
                           ...(row.data.infoUrl === undefined ? {} : { infoUrl: replaceIfString(row.data.infoUrl, ANONYMOUS_URL) }),
                           ...(row.data.grabTitle === undefined ? {} : { grabTitle: replaceIfString(row.data.grabTitle, `Release.${i + 1}.1080p.WEB-DL.x264-GROUP`) }),
                           ...(row.data.host === undefined ? {} : { host: hostName(row.data.host) })
@@ -236,14 +238,20 @@ export function anonymiseSabnzbdWarnings(body: unknown, serverStats?: unknown): 
         .filter(([host, placeholder]) => host !== placeholder)
         .sort(([a], [b]) => b.length - a.length);
     const fallback = 'news1.example.test';
+    // A whole host name only: a known server that is the tail of a longer
+    // name must not turn that name into a placeholder with a label left on.
+    const whole = (host: string): RegExp => new RegExp(`(?<![A-Za-z0-9.-])${escape(host)}(?![A-Za-z0-9-]|\\.[A-Za-z0-9])`, 'gi');
+    const neutral = (host: string): string => (PLACEHOLDER_SERVER.test(host) ? host : fallback);
     return {
         ...body,
         warnings: (body.warnings as unknown[]).map(w => {
             const scrub = (text: string): string =>
                 known
-                    .reduce((out, [host, placeholder]) => out.replace(new RegExp(escape(host), 'gi'), placeholder), text)
-                    .replace(/(\d+@)[A-Za-z0-9.-]+(:\d+ \()[A-Za-z0-9.-]+(\))/g, (all: string, at: string, port: string, close: string) =>
-                        all.includes('.example.test') ? all : `${at}${fallback}${port}${fallback}${close}`
+                    .reduce((out, [host, placeholder]) => out.replace(whole(host), placeholder), text)
+                    .replace(
+                        /(\d+@)([A-Za-z0-9.-]+)(:\d+ \()([A-Za-z0-9.-]+)(\))/g,
+                        (_all: string, at: string, first: string, port: string, second: string, close: string) =>
+                            `${at}${neutral(first)}${port}${neutral(second)}${close}`
                     );
             if (typeof w === 'string') return scrub(w);
             return isRow(w) && typeof w.text === 'string' ? { ...w, text: scrub(w.text) } : w;
