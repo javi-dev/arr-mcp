@@ -70,32 +70,41 @@ const settingValue = (f: Row, n: number): Row => {
  * A Cardigann definition's own settings (a site's filters, its category list,
  * its sort orders) name it as surely as its name does. Each keeps its type,
  * value and option values, under a neutral name, label and option names. Help
- * text goes too.
+ * text, a help warning and a help link go too.
  */
 const neutralSetting = (f: Row, k: number): Row => ({
     ...f,
     name: `setting${k}`,
     ...(f.label === undefined ? {} : { label: replaceIfString(f.label, `Setting ${k}`) }),
     ...(f.helpText === undefined ? {} : { helpText: replaceIfString(f.helpText, 'A setting of this definition.') }),
+    ...(f.helpTextWarning === undefined ? {} : { helpTextWarning: replaceIfString(f.helpTextWarning, 'A warning about this setting.') }),
+    ...(f.helpLink === undefined ? {} : { helpLink: replaceIfString(f.helpLink, ANONYMOUS_URL) }),
     ...(Array.isArray(f.selectOptions)
         ? { selectOptions: (f.selectOptions as unknown[]).map((o, i) => (isRow(o) ? { ...o, name: replaceIfString(o.name, `Option ${i + 1}`), ...(o.hint === undefined ? {} : { hint: replaceIfString(o.hint, '') }) } : o)) }
         : {})
 });
 
-/** A category id a definition made up for its site (100000 and up) keeps its id and loses its name. */
+/**
+ * A category a definition made up for its site (id 100000 and up). Its name
+ * goes, and so does its id: Prowlarr derives the id from the site's own
+ * category list, so the set of ids would still say which site it is. Ids are
+ * renumbered from 100001 in the order they first appear, one id keeping one
+ * number wherever it repeats, so a second pass changes nothing.
+ */
 const SITE_CATEGORY = 100_000;
-const neutralCategories = (categories: unknown): unknown =>
-    Array.isArray(categories)
-        ? (categories as unknown[]).map(c =>
-              isRow(c)
-                  ? {
-                        ...c,
-                        ...(typeof c.id === 'number' && c.id >= SITE_CATEGORY ? { name: replaceIfString(c.name, `Category ${c.id}`) } : {}),
-                        ...(c.subCategories === undefined ? {} : { subCategories: neutralCategories(c.subCategories) })
-                    }
-                  : c
-          )
-        : categories;
+const neutralCategories = (categories: unknown, renumbered = new Map<number, number>()): unknown => {
+    if (!Array.isArray(categories)) return categories;
+    return (categories as unknown[]).map(c => {
+        if (!isRow(c)) return c;
+        let site = {};
+        if (typeof c.id === 'number' && c.id >= SITE_CATEGORY) {
+            const id = renumbered.get(c.id) ?? SITE_CATEGORY + renumbered.size + 1;
+            renumbered.set(c.id, id);
+            site = { id, name: replaceIfString(c.name, `Category ${id}`) };
+        }
+        return { ...c, ...site, ...(c.subCategories === undefined ? {} : { subCategories: neutralCategories(c.subCategories, renumbered) }) };
+    });
+};
 
 /**
  * A Prowlarr `IndexerResource`. Besides the name, the sort name, the Cardigann

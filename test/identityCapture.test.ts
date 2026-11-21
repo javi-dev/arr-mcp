@@ -78,22 +78,24 @@ describe('the Prowlarr anonymisers', () => {
             {
                 implementation: 'Cardigann',
                 name: 'Some Real Site',
-                capabilities: { categories: [{ id: 5000, name: 'TV', subCategories: [{ id: 123456, name: 'Some Real Site Anime' }] }, { id: 100100, name: 'Site Movies' }] },
+                capabilities: { categories: [{ id: 5000, name: 'TV', subCategories: [{ id: 123456, name: 'Some Real Site Anime' }] }, { id: 100100, name: 'Site Movies' }, { id: 2000, name: 'Movies', subCategories: [{ id: 123456, name: 'Some Real Site Anime' }] }] },
                 fields: [
                     { name: 'baseSettings.queryLimit', label: 'Query Limit', helpText: 'The number of queries' },
                     { name: 'site-filter', label: 'Filter on the site', value: 0, selectOptions: [{ value: 0, name: 'trusted only', order: 0, hint: 'site words' }] },
-                    { name: 'uploader', label: 'Uploader on the site', helpText: 'Some help', value: 'someone' }
+                    { name: 'uploader', label: 'Uploader on the site', helpText: 'Some help', value: 'someone' },
+                    { name: 'site-sort', label: 'Sort', helpTextWarning: 'Some Real Site sorts by age', helpLink: 'https://some-real-site.example/help', value: 1 }
                 ]
             },
             0
         );
         expect(row.capabilities).toEqual({
-            categories: [{ id: 5000, name: 'TV', subCategories: [{ id: 123456, name: 'Category 123456' }] }, { id: 100100, name: 'Category 100100' }]
+            categories: [{ id: 5000, name: 'TV', subCategories: [{ id: 100001, name: 'Category 100001' }] }, { id: 100002, name: 'Category 100002' }, { id: 2000, name: 'Movies', subCategories: [{ id: 100001, name: 'Category 100001' }] }]
         });
         expect(row.fields).toEqual([
             { name: 'baseSettings.queryLimit', label: 'Query Limit', helpText: 'The number of queries' },
             { name: 'setting1', label: 'Setting 1', value: 0, selectOptions: [{ value: 0, name: 'Option 1', order: 0, hint: '' }] },
-            { name: 'setting2', label: 'Setting 2', helpText: 'A setting of this definition.', value: 'someone' }
+            { name: 'setting2', label: 'Setting 2', helpText: 'A setting of this definition.', value: 'someone' },
+            { name: 'setting3', label: 'Setting 3', helpTextWarning: 'A warning about this setting.', helpLink: 'https://indexer.example.test/', value: 1 }
         ]);
     });
 
@@ -178,7 +180,9 @@ describe('the other anonymisers', () => {
                         { text: 'Server news.first-provider.example will be ignored for 10 minutes' },
                         { text: 'Cannot connect to server news.first-provider.example [Failed to resolve news.first-provider.example]' },
                         { text: 'Connection refused 3@news.gone-provider.example:563 (news.gone-provider.example)' },
-                        { text: 'Connection refused 4@old.news.first-provider.example:563 (old.news.first-provider.example)' }
+                        { text: 'Connection refused 4@old.news.first-provider.example:563 (old.news.first-provider.example)' },
+                        { text: 'Connection refused 5@news.first-provider.example:563 (news.gone-provider.example)' },
+                        { text: 'Login failed for old.news.first-provider.example' }
                     ]
                 },
                 stats
@@ -189,7 +193,11 @@ describe('the other anonymisers', () => {
                 { text: 'Server news1.example.test will be ignored for 10 minutes' },
                 { text: 'Cannot connect to server news1.example.test [Failed to resolve news1.example.test]' },
                 { text: 'Connection refused 3@news1.example.test:563 (news1.example.test)' },
-                { text: 'Connection refused 4@news1.example.test:563 (news1.example.test)' }
+                { text: 'Connection refused 4@news1.example.test:563 (news1.example.test)' },
+                { text: 'Connection refused 5@news1.example.test:563 (news1.example.test)' },
+                // A server no longer in server_stats is unknown outside the connection-failure
+                // wording, and is left whole rather than cut down to a placeholder with a label on.
+                { text: 'Login failed for old.news.first-provider.example' }
             ]
         });
     });
