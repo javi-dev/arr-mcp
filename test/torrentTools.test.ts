@@ -195,7 +195,7 @@ describe('recheck_torrents', () => {
     /** Overtaken, it reports from a read taken after standing down: what the torrent is doing then, or that it could not tell. */
     it.each([
         ['running', { left_stopped: undefined, already_running: [HASH] }, /already running when they were read for the start/],
-        ['unreadable', { left_stopped: [HASH], state_unread: expect.stringMatching(/500|broken/) as unknown }, /could not be read .*check get_queue before starting any of them/]
+        ['unreadable', { left_stopped: [HASH], state_unread: expect.stringMatching(/500|broken/) as unknown }, /^Recheck sent\. what the torrents not started are doing now could not be read .*check get_queue before starting any of them; finished complete but left stopped/]
     ])('reports a torrent it stood down on from a read after it: %s', async (mode, expected, said) => {
         const t = torrent({ state: 'stoppedUP' });
         const qb = fakeQbittorrent({ torrents: [t], recheckStates: ['checkingUP', 'stoppedUP'] });
@@ -632,7 +632,10 @@ describe('recheck_torrents', () => {
 
     it.each([
         ['error', 'errored'],
-        ['moving', 'still_moving']
+        ['moving', 'still_moving'],
+        ['allocating', 'already_running'],
+        // A state it does not know is not taken for started.
+        ['someNewState', 'unconfirmed']
     ])('reports a torrent the read before the start finds at %s as %s', async (state, key) => {
         const h = harness({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP', state] });
         const applied = await confirmed(h.call, 'recheck_torrents', { ids: [HASH], resume_if_complete: true });
@@ -673,7 +676,8 @@ describe('recheck_torrents', () => {
         ['still stopped', 'stopped', { resume_failed: [HASH], resume_error: 'the request was cancelled before this change was sent' }],
         ['started by something else', 'running', { already_running: [HASH] }],
         ['unreadable', 'failing', { resume_failed: [HASH], state_unread: expect.stringMatching(/500|broken/) as unknown }],
-        ['not a list', 'malformed', { resume_failed: [HASH], state_unread: expect.any(String) as unknown }]
+        ['not a list', 'malformed', { resume_failed: [HASH], state_unread: expect.any(String) as unknown }],
+        ['listed without a hash', 'hashless', { resume_failed: [HASH], state_unread: expect.stringMatching(/no hash/) as unknown }]
     ])('starts nothing for a request cancelled during the watch, and reports the torrent %s', async (_label, mode, expected) => {
         const t = torrent({ state: 'stoppedUP' });
         const qb = fakeQbittorrent({ torrents: [t], recheckStates: ['checkingUP', 'stoppedUP'] });
@@ -687,6 +691,7 @@ describe('recheck_torrents', () => {
                 if (mode === 'running') return jsonResponse([{ ...t, state: 'uploading' }]);
                 if (mode === 'failing') return textResponse('broken', 500);
                 if (mode === 'malformed') return jsonResponse({ error: 'not a list' });
+                if (mode === 'hashless') return jsonResponse([{ error: 'unavailable' }]);
             }
             return qb.impl(input, init);
         }) as typeof fetch;

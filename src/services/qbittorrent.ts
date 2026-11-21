@@ -764,8 +764,11 @@ export class QbittorrentAdapter
 
     async torrentCheckStates(ids: readonly string[]): Promise<TorrentCheckState[]> {
         const hashes = ids.map(id => this.#hash(id)).join('|');
-        // `getArray`: a recheck reads a missing row as a removed torrent, and only a real list says that.
+        // `getArray`, and every row named: a recheck reads a missing row as a removed torrent, and only a real list says that.
         const rows = await this.#http.getArray<RawTorrent>(`${API}/torrents/info?hashes=${encodeURIComponent(hashes)}`);
+        if (rows.some(t => typeof t?.hash !== 'string')) {
+            throw new ServiceError('UpstreamError', this.id, 'qBittorrent listed a torrent with no hash', { remedy: 'Try again; if it persists, check qBittorrent\'s WebUI API.' });
+        }
         return rows.flatMap(t => {
             if (typeof t.hash !== 'string') return [];
             const state = t.state ?? '';

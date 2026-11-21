@@ -255,10 +255,11 @@ qBittorrent refuses the start, they are left stopped too, listed as
 `resume_failed` with the reason in `resume_error`. Once the start has been sent
 it runs to the end, as any apply does.
 
-The reply reports what a read taken when it was time to start found. When the
-start was never reached (the recheck was overtaken, the instance stayed busy,
-or the request was cancelled), that read is one more, taken outside the lane
-after standing down, so it holds up nothing. It can move a torrent out of
+The reply reports what a read taken when it was time to start found: the one in
+the lane, just before the start. When no read was taken there (the recheck was
+overtaken, the instance stayed busy, the request was cancelled before the start
+got the lane, or that read failed), it takes one more outside the lane, so it
+holds up nothing. It can move a torrent out of
 `left_stopped` or `resume_failed`, for instance to `already_running` when
 something else has started it. When that read fails, `state_unread` says the
 lists are what was last seen.
