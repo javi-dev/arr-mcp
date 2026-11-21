@@ -825,6 +825,40 @@ describe('recheck_torrents', () => {
         expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
     });
 
+    // On a qBittorrent older than 5 the refused new verb started nothing, so a
+    // request cancelled while that refusal comes back sends no older verb.
+    it('starts nothing for a request cancelled between the refused new start verb and the older one', async () => {
+        const abort = new AbortController();
+        const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
+        let startAsked = false;
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.endsWith('/torrents/start')) {
+                startAsked = true;
+                abort.abort();
+                return new Response('Not Found', { status: 404 });
+            }
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const cfg = config();
+        type Reply = { structuredContent: { confirm_token?: string; applied: boolean; result?: unknown } };
+        const handlers = new Map<string, (args: Record<string, unknown>, ctx?: unknown) => Promise<Reply>>();
+        const server = {
+            registerTool(name: string, c: { inputSchema: { parse(a: unknown): unknown } }, handler: (args: Record<string, unknown>, ctx?: unknown) => Promise<Reply>) {
+                handlers.set(name, (args, ctx) => handler(c.inputSchema.parse(args) as Record<string, unknown>, ctx));
+            }
+        };
+        registerTorrentTools(server as never, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)], { sleep: () => Promise.resolve() });
+        const recheck = handlers.get('recheck_torrents');
+        if (recheck === undefined) throw new Error('not registered');
+        const args = { ids: [HASH], resume_if_complete: true };
+        const preview = await recheck(args);
+        const done = await recheck({ ...args, confirm: preview.structuredContent.confirm_token }, { mcpReq: { signal: abort.signal } });
+        expect(startAsked).toBe(true);
+        expect(done.structuredContent.result).toMatchObject({ resume_failed: [HASH], resume_error: 'the request was cancelled before they were started' });
+        expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
+    });
+
     /** Cancelled before the start: nothing is started, and the reply comes from one more read, outside the lane. */
     it.each([
         ['still stopped', 'stopped', { resume_failed: [HASH], resume_error: 'the request was cancelled before this change was sent' }],
