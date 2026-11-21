@@ -9,7 +9,7 @@ import { permissionSourceFrom, type WriteTier } from '../src/core/permissions.ts
 import { cappedTo } from '../src/mcp/scopes.ts';
 import type { LibraryLoader } from '../src/tools/library.ts';
 import type { CrossChecker, CrossCheckProfile } from '../src/tools/crossChecks.ts';
-import { rawTarget, registerWriteTool, type WritePlan, type WriteToolResult } from '../src/tools/write.ts';
+import { rawTarget, registerWriteTool, type AfterWrite, type WritePlan, type WriteToolResult } from '../src/tools/write.ts';
 
 /**
  * A stand-in for McpServer that keeps the one behaviour the harness depends on:
@@ -62,6 +62,8 @@ function buildHarness(
         plan?: WritePlan | ((args: { id: string }) => Promise<WritePlan>);
         route?: (args: { id: string }) => string;
         apply?: (plan: WritePlan, args: { id: string }) => Promise<unknown>;
+        afterWrite?: (sent: unknown, then: AfterWrite) => Promise<unknown>;
+        serialised?: false;
         applied?: (outcome: unknown, plan: WritePlan) => string | undefined;
         tier?: 'safe' | 'destructive';
         caller?: string;
@@ -104,6 +106,8 @@ function buildHarness(
             tier: opts.tier ?? 'destructive',
             plan,
             apply,
+            ...(opts.afterWrite === undefined ? {} : { afterWrite: opts.afterWrite }),
+            ...(opts.serialised === undefined ? {} : { serialised: opts.serialised }),
             ...(opts.applied === undefined ? {} : { applied: opts.applied }),
             ...(opts.crossCheck === undefined ? {} : { crossCheck: opts.crossCheck })
         }
@@ -1123,6 +1127,266 @@ describe('write tool harness: one confirmed write per instance at a time (#7)', 
         const [first, second] = await Promise.all(calls);
         expect(first).toBeInstanceOf(Error);
         expect((second as { structuredContent: WriteToolResult }).structuredContent.applied).toBe(true);
+    });
+});
+
+describe('write tool harness: the instance is free once the write is sent (#12)', () => {
+    // The lanes outlive a test, so a test that fails while holding one must still free it.
+    const toRelease: (() => void)[] = [];
+    afterEach(() => {
+        for (const release of toRelease.splice(0)) release();
+        vi.useRealTimers();
+    });
+
+    /** A promise and the function that resolves it, released after the test whatever happens. */
+    function gate(): { open: () => void; opened: Promise<void> } {
+        let open = (): void => undefined;
+        const opened = new Promise<void>(resolve => {
+            open = resolve;
+        });
+        toRelease.push(open);
+        return { open, opened };
+    }
+
+    const settled = () => new Promise(resolve => setTimeout(resolve, 20));
+
+    /**
+     * A write to radarr whose apply for `held` waits on `write`, and whose
+     * `afterWrite` for it waits on `watch`, logging each step. Every other id
+     * writes and finishes at once.
+     */
+    function sending(held: string, opts: { afterWrite?: (sent: unknown, then: AfterWrite) => Promise<unknown> } = {}) {
+        const log: string[] = [];
+        const write = gate();
+        const watch = gate();
+        const h = buildHarness({
+            plan: ({ id }) => {
+                log.push(`plan ${id}`);
+                return Promise.resolve({ ...PLAN, target: id });
+            },
+            apply: async (_plan, { id }) => {
+                log.push(`apply ${id}`);
+                if (id === held) await write.opened;
+                log.push(`sent ${id}`);
+                return { id };
+            },
+            afterWrite:
+                opts.afterWrite ??
+                (async sent => {
+                    const { id } = sent as { id: string };
+                    log.push(`watch ${id}`);
+                    if (id === held) await watch.opened;
+                    log.push(`watched ${id}`);
+                    return { id, watched: true };
+                })
+        });
+        const confirmAll = async (ids: string[]) => {
+            const tokens: (string | undefined)[] = [];
+            for (const id of ids) tokens.push((await h.call('delete_media', { id })).structuredContent.confirm_token);
+            log.length = 0;
+            return ids.map((id, i) => h.call('delete_media', { id, confirm: tokens[i] }).catch((e: unknown) => e));
+        };
+        return { h, log, write, watch, confirmAll };
+    }
+
+    it('applies a second confirmation while the first one waits after its write, even past 30 seconds', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const r = sending('5');
+        r.write.open();
+        const [first, second] = await r.confirmAll(['5', '9']);
+        // Longer than a confirmation waits for its instance: the first is still watching.
+        await vi.advanceTimersByTimeAsync(31_000);
+        const done = (await second) as { structuredContent: WriteToolResult };
+        expect(done.structuredContent.applied).toBe(true);
+        expect(done.structuredContent.result).toEqual({ id: '9', watched: true });
+        expect(r.log).toContain('watch 5');
+        expect(r.log).not.toContain('watched 5');
+        r.watch.open();
+        const firstDone = (await first) as { structuredContent: WriteToolResult };
+        expect(firstDone.structuredContent).toMatchObject({ applied: true, result: { id: '5', watched: true } });
+    });
+
+    it('still runs the writes themselves one at a time', async () => {
+        const r = sending('5');
+        const [first, second] = await r.confirmAll(['5', '9']);
+        await settled();
+        // The first has not finished sending, so the second has not even planned.
+        expect(r.log).toEqual(['plan 5', 'apply 5']);
+        r.write.open();
+        await settled();
+        // Sent: the second plans and writes while the first waits on what it sent.
+        expect(r.log.slice(0, 3)).toEqual(['plan 5', 'apply 5', 'sent 5']);
+        expect(r.log.filter(step => step.endsWith(' 9'))).toEqual(['plan 9', 'apply 9', 'sent 9', 'watch 9', 'watched 9']);
+        expect(r.log).toContain('watch 5');
+        expect(r.log).not.toContain('watched 5');
+        expect(((await second) as { structuredContent: WriteToolResult }).structuredContent.applied).toBe(true);
+        r.watch.open();
+        await first;
+    });
+
+    it('records the write as applied only once its afterWrite returns, with what that returned', async () => {
+        const r = sending('5');
+        r.write.open();
+        const [first] = await r.confirmAll(['5']);
+        await settled();
+        expect(outcomes(r.h)).toEqual(['unconfirmed', 'attempted']);
+        expect(r.h.invalidate).not.toHaveBeenCalled();
+        r.watch.open();
+        const done = (await first) as { structuredContent: WriteToolResult };
+        expect(outcomes(r.h)).toEqual(['unconfirmed', 'applied']);
+        expect(r.h.invalidate).toHaveBeenCalledOnce();
+        expect(done.structuredContent.result).toEqual({ id: '5', watched: true });
+    });
+
+    it('records a throw from afterWrite as a failed write, its message scrubbed', async () => {
+        const r = sending('none', {
+            afterWrite: () => Promise.reject(new Error('the command ended failed: see https://indexer.example/get?apikey=0123456789abcdef'))
+        });
+        const [first, second] = await r.confirmAll(['5', '9']);
+        const err = (await first) as Error;
+        expect(err.message).toMatch(/^the command ended failed/);
+        expect(err.message).not.toContain('0123456789abcdef');
+        expect(outcomes(r.h).filter(o => o === 'failed')).toHaveLength(2);
+        expect(await second).toBeInstanceOf(Error);
+        expect(r.h.invalidate).not.toHaveBeenCalled();
+    });
+
+    it('runs a change an afterWrite makes back in the lane, behind the confirmations queued meanwhile', async () => {
+        const later = gate();
+        const r = sending('5', {
+            afterWrite: async (sent, then) => {
+                const { id } = sent as { id: string };
+                if (id !== '5') return sent;
+                await later.opened;
+                return then.write(() => {
+                    r.log.push(`resume ${id}`);
+                    return Promise.resolve({ id, resumed: true });
+                });
+            }
+        });
+        // `9` holds the instance by the time `5` wants it back.
+        const nine = gate();
+        r.h.apply.mockImplementation(async (_plan, { id }) => {
+            r.log.push(`apply ${id}`);
+            if (id === '9') await nine.opened;
+            r.log.push(`sent ${id}`);
+            return { id };
+        });
+        const [first, second] = await r.confirmAll(['5', '9']);
+        await settled();
+        later.open();
+        await settled();
+        expect(r.log).toEqual(['plan 5', 'apply 5', 'sent 5', 'plan 9', 'apply 9']);
+        nine.open();
+        expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ id: '5', resumed: true });
+        await second;
+        expect(r.log).toEqual(['plan 5', 'apply 5', 'sent 5', 'plan 9', 'apply 9', 'sent 9', 'resume 5']);
+    });
+
+    it('refuses a change an afterWrite makes when the instance stays busy for 30 seconds, without running it', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const nine = gate();
+        let resumed = false;
+        let refusal: unknown;
+        const r = sending('none', {
+            afterWrite: async (sent, then) => {
+                const { id } = sent as { id: string };
+                if (id !== '5') return sent;
+                // Waits until `9` holds the instance.
+                await new Promise(resolve => setTimeout(resolve, 1_000));
+                try {
+                    await then.write(() => {
+                        resumed = true;
+                        return Promise.resolve();
+                    });
+                } catch (err) {
+                    refusal = err;
+                }
+                return sent;
+            }
+        });
+        r.h.apply.mockImplementation(async (_plan, { id }) => {
+            if (id === '9') await nine.opened;
+            return { id };
+        });
+        const [first, second] = await r.confirmAll(['5', '9']);
+        await vi.advanceTimersByTimeAsync(31_000);
+        expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.applied).toBe(true);
+        expect(resumed).toBe(false);
+        expect(refusal).toMatchObject({ message: 'another confirmed write to radarr was still running after 30 seconds' });
+        nine.open();
+        await second;
+    });
+
+    it('keeps a tool without afterWrite in the lane until its apply returns, as before', async () => {
+        const write = gate();
+        const log: string[] = [];
+        const h = buildHarness({
+            plan: ({ id }) => Promise.resolve({ ...PLAN, target: id }),
+            apply: async (_plan, { id }) => {
+                log.push(`apply ${id}`);
+                if (id === '5') await write.opened;
+                return { id };
+            }
+        });
+        const tokens: (string | undefined)[] = [];
+        for (const id of ['5', '9']) tokens.push((await h.call('delete_media', { id })).structuredContent.confirm_token);
+        const first = h.call('delete_media', { id: '5', confirm: tokens[0] });
+        const second = h.call('delete_media', { id: '9', confirm: tokens[1] });
+        await settled();
+        expect(log).toEqual(['apply 5']);
+        write.open();
+        await Promise.all([first, second]);
+        expect(log).toEqual(['apply 5', 'apply 9']);
+    });
+});
+
+describe('write tool harness: a write that is not serialised (#12)', () => {
+    const toRelease: (() => void)[] = [];
+    afterEach(() => {
+        for (const release of toRelease.splice(0)) release();
+    });
+
+    it('neither waits for a confirmation holding its instance nor holds it', async () => {
+        let open = (): void => undefined;
+        const held = new Promise<void>(resolve => {
+            open = resolve;
+        });
+        toRelease.push(open);
+        const log: string[] = [];
+        // One instance, two tools: a serialised write holding it, and a grab that is not.
+        const serialised = buildHarness({
+            apply: async (_plan, { id }) => {
+                log.push(`delete ${id}`);
+                await held;
+                return { id };
+            }
+        });
+        const additive = buildHarness({
+            serialised: false,
+            plan: ({ id }) => Promise.resolve({ ...PLAN, target: id }),
+            apply: (_plan, { id }) => {
+                log.push(`grab ${id}`);
+                return Promise.resolve({ id });
+            }
+        });
+        const deleting = serialised.call('delete_media', { id: '5', confirm: (await serialised.call('delete_media', { id: '5' })).structuredContent.confirm_token });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const grab = await additive.call('delete_media', { id: '9', confirm: (await additive.call('delete_media', { id: '9' })).structuredContent.confirm_token });
+        expect(grab.structuredContent.applied).toBe(true);
+        expect(log).toEqual(['delete 5', 'grab 9']);
+        open();
+        await deleting;
+    });
+
+    it('still refuses a confirmation whose request was cancelled before it started, with its token unspent', async () => {
+        const h = buildHarness({ serialised: false });
+        const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
+        const abort = new AbortController();
+        abort.abort();
+        await expect(h.call('delete_media', { id: '5', confirm: token }, abort.signal)).rejects.toThrow(/cancelled before this write started/);
+        expect(h.apply).not.toHaveBeenCalled();
+        expect((await h.call('delete_media', { id: '5', confirm: token })).structuredContent.applied).toBe(true);
     });
 });
 
