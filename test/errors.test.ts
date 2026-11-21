@@ -235,7 +235,7 @@ describe('classifyFetchError', () => {
             ['refused http://user:pw@host:1/key/path?apikey=abc', 'refused http://host:1/...'],
             ['refused https://0123456789abcdef0123.example.org/announce', 'refused https://***.example.org/...'],
             ['refused http://host:1 and http://host:2/.', 'refused http://host:1 and http://host:2/.'],
-            ["Failed to parse URL from 'http://host:1/key?apikey=abc'.", "Failed to parse URL from 'http://host:1/...'."],
+            ["Failed to parse URL from 'http://host:1/key?apikey=abc'.", "Failed to parse URL from 'http://host:1/..."],
             // Folded to `/` by the parser, but the key is in the text as written.
             ['refused http://host:1/abc/%2e%2e', 'refused http://host:1/...'],
             // A serialiser leaves a backtick raw in a query and in a host, so neither ends the URL.
@@ -252,19 +252,23 @@ describe('classifyFetchError', () => {
             ['version 1.5http://host:1/key', 'version 1.5http://host:1/...'],
             // A parser keeps a quote raw in a host, so a quote does not end the URL either.
             ['refused http://a"b.example/key?apikey=abc', 'refused http://a"b.example/...'],
-            ['Failed to parse URL from "http://host:1/key?apikey=abc".', 'Failed to parse URL from "http://host:1/...".'],
+            ['Failed to parse URL from "http://host:1/key?apikey=abc".', 'Failed to parse URL from "http://host:1/...'],
             // A passkey-like run is masked whatever sits beside it in the host.
             ["refused https://0123456789abcdef0123's.example/", "refused https://***'s.example/..."],
             ['refused https://0123456789abcdef0123)y.example/', 'refused https://***)y.example/...'],
             ['refused https://0123456789abcdef0123.', 'refused https://***/...'],
-            // Punctuation after a cut URL may end its query, so only a closer for what opened before the URL stays.
+            // Punctuation after a cut URL may end its query, and nothing says where the URL stops, so it goes with it.
             ['includes credentials: http://user:pw@host:1/?password=);,:..', 'includes credentials: http://host:1/...'],
-            ['see (http://host:1/?password=);,:..).', 'see (http://host:1/...).'],
-            ['[http://host:1/key]', '[http://host:1/...]'],
+            ['see (http://host:1/?password=);,:..).', 'see (http://host:1/...'],
+            ['try (http://host:1/?password=);,:.. first)', 'try (http://host:1/... first)'],
+            ['[http://host:1/key]', '[http://host:1/...'],
             ['refused http://[2001:db8::1]/key', 'refused http://[2001:db8::1]/...'],
             // Only normalised, so nothing to cut.
             ['refused HTTP://Host:1/ and http://host:80/', 'refused HTTP://Host:1/ and http://host:80/'],
             ['refused http://[2001:db8::1]', 'refused http://[2001:db8::1]'],
+            // Left as written only when the text as written needs nothing masked or dropped.
+            ['refused http://0000000000000000000000000001/', 'refused http://0.0.0.1/...'],
+            ['refused http://host:1\u001b', 'refused http://host:1/...'],
             // Nothing a URL parser refuses is left whole, and nor is a URL far longer than any address.
             ['refused http://[2001:db8::1/key?apikey=abc', 'refused (a URL, left out)'],
             [`refused http://host:1/${'a'.repeat(3000)}`, 'refused (a URL, left out)'],

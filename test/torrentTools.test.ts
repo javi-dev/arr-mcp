@@ -2080,9 +2080,8 @@ describe('reannounce_torrent', () => {
         expect(h.posts).toEqual([]);
     });
 
-    // Guards the second stop check, after the details read: the first read cannot see a stop that comes later.
-    it('has nothing to do for a torrent that stops between the state read and the details read', async () => {
-        const qb = fakeQbittorrent();
+    it('has nothing to do for a torrent that stops after its details read failed', async () => {
+        const qb = fakeQbittorrent({ failing: ['/torrents/trackers'] });
         // The torrent stops as soon as its state has been read once.
         const impl = (async (input: string | URL | Request, init?: RequestInit) => {
             const answer = await qb.impl(input, init);
@@ -2095,6 +2094,24 @@ describe('reannounce_torrent', () => {
         const preview = await call('reannounce_torrent', { id: HASH });
         expect(preview.structuredContent.noop).toBe(true);
         expect(qb.posts).toEqual([]);
+    });
+
+    it.each([
+        ['a running torrent', 'stalledUP', [], 1],
+        ['a stopped torrent', 'stoppedUP', [], 1],
+        ['a stopped torrent whose tracker list cannot be read', 'stoppedUP', ['/torrents/trackers'], 2]
+    ])('reads the torrent list once for %s, and again only to explain a failure', async (_why, state, failing, reads) => {
+        const qb = fakeQbittorrent({ torrents: [torrent({ state })], failing });
+        const paths: string[] = [];
+        const impl = ((input: string | URL | Request, init?: RequestInit) => {
+            paths.push(new URL(input instanceof Request ? input.url : String(input)).pathname);
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)]);
+        await call('reannounce_torrent', { id: HASH, dry_run: true });
+        expect(paths.filter(p => p.endsWith('/torrents/info'))).toHaveLength(reads);
     });
 
     it('refuses a hash the client does not have', async () => {
@@ -2112,12 +2129,12 @@ describe('reannounce_torrent', () => {
         expect(qb.posts).toEqual([]);
     });
 
-    it('keeps a refused hash as the refusal it is, not as qBittorrent not answering', async () => {
+    it('reports a failure the state read cannot explain as it was', async () => {
         const qb = fakeQbittorrent();
         const cfg = config();
         const adapter = new QbittorrentAdapter(cfg, qb.impl);
-        // The schema refuses such an id first; this is the adapter's own refusal, should one get past it.
-        vi.spyOn(adapter, 'torrentCheckStates').mockRejectedValue(new ServiceError('NotFound', 'qbittorrent', 'that is not a torrent info hash'));
+        vi.spyOn(adapter, 'getTorrentDetails').mockRejectedValue(new ServiceError('NotFound', 'qbittorrent', 'that is not a torrent info hash'));
+        vi.spyOn(adapter, 'torrentCheckStates').mockRejectedValue(new ServiceError('Unreachable', 'qbittorrent', 'gone'));
         const { server, call } = toolServer();
         registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [adapter]);
         await expect(call('reannounce_torrent', { id: HASH })).rejects.toThrow(/^qbittorrent not found: that is not a torrent info hash/);

@@ -842,20 +842,18 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
 
         async plan({ instance, id }): Promise<WritePlan> {
             const client = clientOf(adapters, instance);
-            // The state comes first and alone: a stopped torrent has nothing to announce, so its
-            // answer must not wait on the tracker list, whose read can fail on its own.
-            // A 404 here is a proxy's, not proof the torrent is gone, so it reads as getTorrentDetails reads it.
-            const [state] = await client.torrentCheckStates([id]).catch((err: unknown) => {
-                // Only the HTTP answer: a refused hash is NotFound too, and says what to pass instead.
-                if (err instanceof ServiceError && err.kind === 'NotFound' && err.status === 404) {
-                    throw new ServiceError('UpstreamError', client.id, 'qBittorrent could not be asked about this torrent', { cause: err });
-                }
+            // A stopped torrent has nothing to announce, so its answer must not depend on the
+            // tracker list, whose read can fail on its own. When the details cannot be read,
+            // the state alone is asked for; any other answer is the original failure.
+            let details: TorrentDetails;
+            try {
+                details = await client.getTorrentDetails(id);
+            } catch (err) {
+                const [state] = await client.torrentCheckStates([id]).catch(() => []);
+                if (state?.stopped === true) return stopped(`${client.id}:${state.id}`, state.title);
                 throw err;
-            });
-            if (state?.stopped === true) return stopped(`${client.id}:${state.id}`, state.title);
-            const details = await client.getTorrentDetails(id);
+            }
             const target = `${client.id}:${details.id}`;
-            // It may have stopped between the two reads.
             if (details.status === 'stopped') return stopped(target, details.title);
             if (details.trackerDigest === null) {
                 throw new ServiceError('UpstreamError', client.id, 'the tracker list qBittorrent gave for this torrent could not be read, so nobody can say where a reannounce would go', {

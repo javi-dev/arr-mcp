@@ -115,12 +115,11 @@ const SCHEME_CHAR = /[a-z0-9+.-]/i;
 const URL_END = /[\s<>]/;
 /** Punctuation that can close a sentence or a quotation around a URL. */
 const URL_TRAILING = new Set(['.', ',', ';', ':', ')', ']', "'", '"', '`']);
-/** The closer each character before a URL pairs with, when the URL is quoted or bracketed. */
-const CLOSER: Readonly<Record<string, string>> = { "'": "'", '"': '"', '`': '`', '(': ')', '[': ']' };
-/** A scheme and an authority with nothing after them but one slash, judged as written. */
-const BARE_URL = /^[a-z][a-z0-9+.-]*:\/\/[^/?#\\@]*\/?$/i;
+/** A scheme and an authority with nothing after them but one slash, judged as
+ *  written, in printable characters a parser keeps as they are. */
+const BARE_URL = /^[a-z][a-z0-9+.-]*:\/\/([!$&-.0-9:;=[\]_a-z~]*)\/?$/i;
 /** A run of hex, or of letters and digits, long enough to be a passkey rather than a name. */
-const PASSKEY_RUN = /^(?:[0-9a-f]{16,}|[0-9a-z]{28,})$/;
+const PASSKEY_RUN = /^(?:[0-9a-f]{16,}|[0-9a-z]{28,})$/i;
 /** Far past any address a service is configured with. A parser's time grows faster than its input. */
 const MAX_URL_LENGTH = 2048;
 
@@ -165,13 +164,10 @@ function scrubUrls(text: string): string {
         if (kept === undefined) {
             out += text.slice(start, end);
         } else {
-            // Punctuation after a cut URL may be the end of its query. Only the closer
-            // of a quotation or bracket opened before the URL, and what follows it,
-            // is the sentence's; the placeholder's dots stand in for a full stop.
-            const closer = CLOSER[text[start - 1] ?? ''];
-            const tail = text.slice(cut, end);
-            const at = closer === undefined ? -1 : tail.lastIndexOf(closer);
-            out += kept + (at === -1 ? '' : tail.slice(at));
+            // Punctuation after a cut URL may be the end of its query, and nothing in
+            // the text says where the URL stops, so it goes with it. A quotation's
+            // closing mark can go too; the placeholder's dots stand in for a full stop.
+            out += kept;
         }
         copied = end;
         separator.lastIndex = end;
@@ -186,11 +182,18 @@ function scrubUrls(text: string): string {
 function hostOnly(raw: string): string | undefined {
     const url = raw.length > MAX_URL_LENGTH ? null : URL.parse(raw);
     if (url === null) return '(a URL, left out)';
-    // Runs, not labels: a parser keeps a quote, a bracket or a backtick in a host, so a passkey can sit beside one.
-    const host = url.hostname.toLowerCase().replace(/[0-9a-z]+/g, run => (PASSKEY_RUN.test(run) ? '***' : run));
-    // Judged on the text as written: the parser folds a path such as `/key/%2e%2e` down to `/`.
-    if (BARE_URL.test(raw) && host === url.hostname.toLowerCase()) return undefined;
+    const host = masked(url.hostname.toLowerCase());
+    // Left as written only when nothing in it, as written or as parsed, needs masking:
+    // a parser rewrites a host (`0000000000000000000000000001` is `0.0.0.1`), and
+    // folds a path such as `/key/%2e%2e` down to `/`.
+    const authority = BARE_URL.exec(raw)?.[1];
+    if (authority !== undefined && masked(authority) === authority && host === url.hostname.toLowerCase()) return undefined;
     return `${url.protocol}//${host}${url.port === '' ? '' : `:${url.port}`}/...`;
+}
+
+/** Runs, not labels: a parser keeps a quote, a bracket or a backtick in a host, so a passkey can sit beside one. */
+function masked(text: string): string {
+    return text.replace(/[0-9a-z]+/gi, run => (PASSKEY_RUN.test(run) ? '***' : run));
 }
 
 /** A plain endpoint-vocabulary word, or a REST version segment such as `v3`. */
