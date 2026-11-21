@@ -248,7 +248,7 @@ free for the next confirmation; qBittorrent goes on checking in the background
 either way. The torrents it finds whole are started back in the lane, behind
 any confirmation that arrived during the watch, after reading them once more,
 and any library snapshot is dropped after it. Whether to start them is decided
-when that start gets the lane: if another confirmation to that qBittorrent was
+when that start gets the lane, and asked again after that read: if another confirmation to that qBittorrent was
 accepted since the recheck, even one that found nothing to do and even another
 `recheck_torrents`, or a call without `confirm` came back as a no-op (a
 `pause_downloads` of a torrent already stopped answers that way, and asks for

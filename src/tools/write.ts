@@ -189,12 +189,15 @@ export type AfterWrite = {
      * or not (only a dry run does not), since a pause of a torrent already
      * stopped is still a request to leave it so, and without a confirmation is
      * how it usually arrives; one whose token was refused, or whose plan
-     * failed, does not. `cancelled` reads the request's signal as it is when called, for a
-     * check just before the change. Throws without running `call` when the
+     * failed, does not. `overtaken` reads the count as it is when called: a
+     * call without a token never waits for the lane, so one can be answered
+     * while `call` is reading, and is seen by asking again just before the
+     * change. `cancelled` reads the request's signal as it is when called, for
+     * a check just before the change. Throws without running `call` when the
      * instance is still busy after the same 30 seconds a confirmation waits,
      * or when the request is cancelled first.
      */
-    write: <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>) => Promise<T>;
+    write: <T>(call: (since: { overtaken: () => boolean; cancelled: () => boolean }) => Promise<T>) => Promise<T>;
 };
 
 export type WriteContext = {
@@ -668,11 +671,11 @@ export function registerWriteTool<
 
         // A later change an `afterWrite` makes, back in the lane the apply held.
         const then: AfterWrite = {
-            write: async <T>(call: (since: { overtaken: boolean; cancelled: () => boolean }) => Promise<T>): Promise<T> => {
+            write: async <T>(call: (since: { overtaken: () => boolean; cancelled: () => boolean }) => Promise<T>): Promise<T> => {
                 if (signal?.aborted === true) throw new Error('the request was cancelled before this change was sent');
                 const turn = await inLane(service, signal, async () => {
                     try {
-                        return await call({ overtaken: confirmations.get(service) !== counted, cancelled: () => signal?.aborted === true });
+                        return await call({ overtaken: () => confirmations.get(service) !== counted, cancelled: () => signal?.aborted === true });
                     } finally {
                         // Before the lane is handed on, as after `apply`.
                         library.invalidate();

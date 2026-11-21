@@ -1261,7 +1261,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
                 await later.opened;
                 return then.write(({ overtaken }) => {
                     r.log.push(`resume ${id}`);
-                    return Promise.resolve({ id, resumed: true, overtaken });
+                    return Promise.resolve({ id, resumed: true, overtaken: overtaken() });
                 });
             }
         });
@@ -1287,7 +1287,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
 
     it('tells a change an afterWrite makes that nothing overtook it when no other write ran', async () => {
         const r = sending('none', {
-            afterWrite: (_sent, then) => then.write(({ overtaken }) => Promise.resolve({ overtaken }))
+            afterWrite: (_sent, then) => then.write(({ overtaken }) => Promise.resolve({ overtaken: overtaken() }))
         });
         const [first] = await r.confirmAll(['5']);
         expect(((await first) as { structuredContent: WriteToolResult }).structuredContent.result).toEqual({ overtaken: false });
@@ -1299,7 +1299,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
             plan: ({ id }) => Promise.resolve(id === '9' ? { ...PLAN, target: id, noop: true } : { ...PLAN, target: id }),
             afterWrite: async (_sent, then) => {
                 await later.opened;
-                return then.write(({ overtaken }) => Promise.resolve({ overtaken }));
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken: overtaken() }));
             }
         });
         // The pause is previewed while there is something to pause, and confirmed once there is not.
@@ -1323,7 +1323,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
             plan: ({ id }) => Promise.resolve(id === '9' ? { ...PLAN, target: id, noop: true } : { ...PLAN, target: id }),
             afterWrite: async (_sent, then) => {
                 await later.opened;
-                return then.write(({ overtaken }) => Promise.resolve({ overtaken }));
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken: overtaken() }));
             }
         });
         const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
@@ -1341,7 +1341,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
         const h = buildHarness({
             afterWrite: async (_sent, then) => {
                 await later.opened;
-                return then.write(({ overtaken }) => Promise.resolve({ overtaken }));
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken: overtaken() }));
             }
         });
         const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;
@@ -1359,7 +1359,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
                 const { id } = sent as { id: string };
                 // The older write (`5`) makes its change, or stands down, before the newer one tries.
                 if (id === '9') await fiveDone.opened;
-                const outcome = await then.write(({ overtaken }) => Promise.resolve({ id, overtaken }));
+                const outcome = await then.write(({ overtaken }) => Promise.resolve({ id, overtaken: overtaken() }));
                 if (id === '5') fiveDone.open();
                 return outcome;
             }
@@ -1376,7 +1376,7 @@ describe('write tool harness: the instance is free once the write is sent (#12)'
             plan: ({ id }) => (id === 'broken' ? Promise.reject(new Error('no such film')) : Promise.resolve({ ...PLAN, target: id })),
             afterWrite: async (_sent, then) => {
                 await later.opened;
-                return then.write(({ overtaken }) => Promise.resolve({ overtaken }));
+                return then.write(({ overtaken }) => Promise.resolve({ overtaken: overtaken() }));
             }
         });
         const token = (await h.call('delete_media', { id: '5' })).structuredContent.confirm_token;

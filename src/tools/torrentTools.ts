@@ -170,11 +170,15 @@ async function watchRecheck(client: Client, ids: readonly string[], sleep: (ms: 
             // In the lane, so a confirmed write to this client cannot land between the read and the start.
             await write(async ({ overtaken, cancelled }) => {
                 // Standing down needs no read, so it holds up nothing behind it.
-                leftStopped = overtaken;
-                if (overtaken) return;
+                leftStopped = overtaken();
+                if (leftStopped) return;
                 await readAgain();
                 readAtStart = true;
                 if (toStart.length === 0) return;
+                // Asked again after the read: a call that found nothing to do never waits for the
+                // lane, so one can be answered while that read runs, and it counts as well (#33).
+                leftStopped = overtaken();
+                if (leftStopped) return;
                 // The last point to stand down: once sent, the start runs to the end, as an apply does,
                 // including the older API's verb when qBittorrent does not know the new one.
                 if (cancelled()) throw new Error('the request was cancelled before they were started');

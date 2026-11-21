@@ -186,6 +186,65 @@ describe('recheck_torrents', () => {
         }
     });
 
+    /**
+     * #33, the later window: the start reads the torrents once more in the
+     * lane, and a call that finds nothing to do never waits for the lane, so
+     * a no-op pause can be answered while that read runs. It still has to stop
+     * the start.
+     */
+    it('leaves the torrent stopped when a no-op pause is answered during the read just before the start', async () => {
+        const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
+        let resume = (): void => undefined;
+        const watching = new Promise<void>(resolve => {
+            resume = resolve;
+        });
+        let unblock = (): void => undefined;
+        const startRead = new Promise<void>(resolve => {
+            unblock = resolve;
+        });
+        // After the watch resumes: its own read passes, the next one (the read in the lane, just before the start) hangs.
+        let readsAfterResume: number | undefined;
+        let startReadHeld = false;
+        const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.includes('/torrents/info') && readsAfterResume !== undefined && ++readsAfterResume === 2) {
+                startReadHeld = true;
+                await startRead;
+            }
+            return qb.impl(input, init);
+        }) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        const context = writeContext(instancesOf({ qbittorrent: cfg }));
+        const adapter = new QbittorrentAdapter(cfg, impl);
+        let sleeping = false;
+        registerTorrentTools(server, context, [adapter], {
+            sleep: async () => {
+                if (sleeping) return;
+                sleeping = true;
+                await watching;
+            }
+        });
+        registerPauseDownloads(server, context, [adapter]);
+        try {
+            const recheck = await call('recheck_torrents', { ids: [HASH], resume_if_complete: true });
+            const rechecking = call('recheck_torrents', { ids: [HASH], resume_if_complete: true, confirm: recheck.structuredContent.confirm_token });
+            await vi.waitFor(() => expect(sleeping).toBe(true));
+            readsAfterResume = 0;
+            resume();
+            await vi.waitFor(() => expect(startReadHeld).toBe(true));
+            const pause = await call('pause_downloads', { service: 'qbittorrent', action: 'pause', id: HASH });
+            expect(pause.structuredContent.noop).toBe(true);
+            unblock();
+            const done = await rechecking;
+            expect(done.structuredContent.result).toMatchObject({ left_stopped: [HASH] });
+            expect(qb.posts.map(p => p.path)).toEqual(['/torrents/recheck']);
+        } finally {
+            resume();
+            unblock();
+        }
+    });
+
     it('stands down without holding the client for the read it reports from', async () => {
         const qb = fakeQbittorrent({ torrents: [torrent({ state: 'stoppedUP' })], recheckStates: ['checkingUP', 'stoppedUP'] });
         let resume = (): void => undefined;
