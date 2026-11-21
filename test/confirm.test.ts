@@ -209,8 +209,15 @@ describe('confirmation tokens', () => {
         const tokens = new ConfirmTokens();
         for (const bad of ['', 'nonsense', 'v2.abc.def', 'v1.abc', 'v3.abc.def.ghi', 'v3.abc.def.ghi.jkl.mno']) {
             const result = tokens.verifyAndConsume(bad, intent());
-            expect(result.ok, bad).toBe(false);
+            if (result.ok) throw new Error(`expected a rejection for ${bad}`);
+            expect(result.failure, bad).toBe('malformed');
         }
+    });
+
+    it('calls a well-formed token with another key id foreign', () => {
+        const result = new ConfirmTokens().verifyAndConsume('v3.abcdefgh.def.ghijklmnopqrstuv.jkl', intent());
+        if (result.ok) throw new Error('expected a rejection');
+        expect(result.failure).toBe('foreign');
     });
 
     // Two servers, or one server restarted, must not honour each other's tokens.

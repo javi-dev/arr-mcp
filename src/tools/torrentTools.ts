@@ -844,8 +844,15 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
             const client = clientOf(adapters, instance);
             // The state comes first and alone: a stopped torrent has nothing to announce, so its
             // answer must not wait on the tracker list, whose read can fail on its own.
-            const [state] = await client.torrentCheckStates([id]);
-            if (state?.stopped === true) return stopped(`${client.id}:${state.id}`, state.title);
+            // A 404 here is a proxy's, not proof the torrent is gone, so it reads as getTorrentDetails reads it.
+            const [state] = await client.torrentCheckStates([id]).catch((err: unknown) => {
+                if (err instanceof ServiceError && err.kind === 'NotFound') {
+                    throw new ServiceError('UpstreamError', client.id, 'qBittorrent could not be asked about this torrent', { cause: err });
+                }
+                throw err;
+            });
+            // The hash as given, as the details read names it: a hybrid torrent's own may be its other one.
+            if (state?.stopped === true) return stopped(`${client.id}:${id.trim().toLowerCase()}`, state.title);
             const details = await client.getTorrentDetails(id);
             const target = `${client.id}:${details.id}`;
             // It may have stopped between the two reads.

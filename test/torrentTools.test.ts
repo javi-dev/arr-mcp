@@ -2079,6 +2079,7 @@ describe('reannounce_torrent', () => {
         expect(h.posts).toEqual([]);
     });
 
+    // Guards the second stop check, after the details read: the first read cannot see a stop that comes later.
     it('has nothing to do for a torrent that stops between the state read and the details read', async () => {
         const qb = fakeQbittorrent();
         // The torrent stops as soon as its state has been read once.
@@ -2097,5 +2098,21 @@ describe('reannounce_torrent', () => {
 
     it('refuses a hash the client does not have', async () => {
         await expect(harness().call('reannounce_torrent', { id: OTHER })).rejects.toThrow(/^qbittorrent not found: no torrent with hash/);
+    });
+
+    it('reads a 404 on the torrent list as qBittorrent not answering, not as a missing torrent', async () => {
+        const qb = fakeQbittorrent();
+        const impl = (async (input: string | URL | Request, init?: RequestInit) =>
+            String(input instanceof Request ? input.url : input).includes('/torrents/info') ? new Response('not found', { status: 404 }) : qb.impl(input, init)) as typeof fetch;
+        const cfg = config();
+        const { server, call } = toolServer();
+        registerTorrentTools(server, writeContext(instancesOf({ qbittorrent: cfg })), [new QbittorrentAdapter(cfg, impl)]);
+        await expect(call('reannounce_torrent', { id: HASH })).rejects.toThrow(/^qbittorrent upstream error: qBittorrent could not be asked about this torrent/);
+        expect(qb.posts).toEqual([]);
+    });
+
+    it('names a stopped torrent by the hash it was asked about', async () => {
+        const preview = await harness({ torrents: [torrent({ state: 'stoppedUP' })] }).call('reannounce_torrent', { id: HASH.toUpperCase() });
+        expect(preview.structuredContent.target).toBe(`qbittorrent:${HASH}`);
     });
 });
