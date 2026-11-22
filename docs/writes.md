@@ -247,13 +247,14 @@ seconds) comes after that and only reads, so it runs with the instance already
 free for the next confirmation; qBittorrent goes on checking in the background
 either way. The torrents it finds whole are started back in the lane, behind
 any confirmation that arrived during the watch, after reading them once more,
-and any library snapshot is dropped after it. Whether to start them is decided
-when that start gets the lane, and asked again after that read: if another confirmation to that qBittorrent was
-accepted since the recheck, even one that found nothing to do and even another
-`recheck_torrents`, or a call without `confirm` came back as a no-op (a
-`pause_downloads` of a torrent already stopped answers that way, and asks for
-no confirmation), they are left stopped and listed as `left_stopped`, because
-a pause sent then would look the same and starting them would undo it. If the
+and any library snapshot is dropped after it. Whether to start them is asked
+when that start gets the lane, and again after that read: if another
+confirmation to that qBittorrent was accepted since the recheck, even one that
+found nothing to do and even another `recheck_torrents`, or a call without
+`confirm` came back as a no-op (a `pause_downloads` of a torrent already
+stopped answers that way, and asks for no confirmation), they are left stopped
+and listed as `left_stopped`, because a pause sent then would look the same and
+starting them would undo it. If the
 instance is still busy 30 seconds later, the request has been cancelled, or
 qBittorrent refuses the start, they are left stopped too, listed as
 `resume_failed` with the reason in `resume_error`. Once qBittorrent has accepted
