@@ -2966,7 +2966,7 @@
         "order": 0,
         "name": "setting1",
         "label": "Setting 1",
-        "value": "indexer.example.test",
+        "value": "Value 1",
         "type": "textbox",
         "advanced": false,
         "privacy": "normal",

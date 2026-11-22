@@ -49,7 +49,7 @@ import {
     anonymiseJellyfinSystemInfo,
     anonymiseProwlarrHistory,
     anonymiseProwlarrIndexer,
-    anonymiseProwlarrIndexerStats,
+    captureProwlarrIndexerStats,
     anonymiseSabnzbdServerStats,
     captureSabnzbdWarnings
 } from './lib/identityCapture.ts';
@@ -823,7 +823,7 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
             anonymise: body => (Array.isArray(body) ? (body as Row[]).map(anonymiseProwlarrIndexer) : body)
         },
         { name: 'indexerstatus', path: '/api/v1/indexerstatus' },
-        { name: 'indexerstats', path: '/api/v1/indexerstats', anonymise: anonymiseProwlarrIndexerStats },
+        { name: 'indexerstats', path: '/api/v1/indexerstats', anonymise: captureProwlarrIndexerStats },
         { name: 'history', path: '/api/v1/history?pageSize=20', anonymise: anonymiseProwlarrHistory },
         { name: 'command', path: '/api/v1/command' },
         {

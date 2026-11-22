@@ -9,7 +9,7 @@
  * writes.
  */
 import { isIP } from 'node:net';
-import { ANONYMOUS_HOST, ANONYMOUS_URL, isRow, replaceIfString, type Row } from './redact.ts';
+import { ANONYMOUS_HOST, ANONYMOUS_URL, isRow, REDACTED, replaceIfString, type Row } from './redact.ts';
 
 /** The name an indexer gets in a fixture, and the suffix an *arr adds to one it syncs from Prowlarr. */
 const PLACEHOLDER_INDEXER = /^Indexer (\d+)$/;
@@ -20,17 +20,19 @@ const SYNCED = ' (Prowlarr)';
  * response, so rows from one indexer still share a name. An *arr's ` (Prowlarr)`
  * suffix is kept: it says the indexer is synced, which the seeding checks read.
  * A placeholder keeps its number, and a new name never takes a number one
- * already holds anywhere in `names`, every name the response carries.
+ * already holds anywhere in `names`, every name the response carries, or in
+ * `reserved`, numbers another response already gave.
  */
-export function indexerAliases(names: readonly unknown[] = []): (name: unknown) => unknown {
+export function indexerAliases(names: readonly unknown[] = [], reserved: Iterable<number> = []): (name: unknown) => unknown {
     const given = new Map<string, string>();
     const base = (name: string): string => (name.endsWith(SYNCED) ? name.slice(0, -SYNCED.length) : name);
-    const taken = new Set<number>(
-        names.flatMap(name => {
+    const taken = new Set<number>([
+        ...reserved,
+        ...names.flatMap(name => {
             const kept = typeof name === 'string' ? PLACEHOLDER_INDEXER.exec(base(name)) : null;
             return kept === null ? [] : [Number(kept[1])];
         })
-    );
+    ]);
     let next = 1;
     const alias = (base: string): string => {
         const kept = PLACEHOLDER_INDEXER.exec(base);
@@ -76,11 +78,27 @@ const settingValue = (f: Row, n: number): Row => {
  * A Cardigann definition's own settings (a site's filters, its category list,
  * its sort orders) name it as surely as its name does. Each keeps its type,
  * value and option values, under a neutral name, label and option names. Help
- * text, a help warning and a help link go too.
+ * text, a help warning and a help link go too, and so does a typed value: a
+ * site's host, an uploader's name or a cookie can sit in one.
  */
+/** A setting that holds a credential: Prowlarr marks its privacy, or its name says so. */
+const SECRET_SETTING = /cookie|key|token|pass|secret|session|auth/i;
+
+/**
+ * What the operator typed into a definition's own setting: a credential
+ * becomes the redaction placeholder, any other text a neutral value. Numbers,
+ * booleans, an info field's text and an empty value stay.
+ */
+const neutralValue = (f: Row, k: number): unknown => {
+    if (typeof f.value !== 'string' || f.value === '' || f.type === 'info' || (typeof f.name === 'string' && /^info/i.test(f.name))) return f.value;
+    const secret = (typeof f.privacy === 'string' && f.privacy !== 'normal') || (typeof f.name === 'string' && SECRET_SETTING.test(f.name));
+    return secret ? REDACTED : `Value ${k}`;
+};
+
 const neutralSetting = (f: Row, k: number): Row => ({
     ...f,
     name: `setting${k}`,
+    ...(f.value === undefined ? {} : { value: neutralValue(f, k) }),
     ...(f.label === undefined ? {} : { label: replaceIfString(f.label, `Setting ${k}`) }),
     ...(f.helpText === undefined ? {} : { helpText: replaceIfString(f.helpText, 'A setting of this definition.') }),
     ...(f.helpTextWarning === undefined ? {} : { helpTextWarning: replaceIfString(f.helpTextWarning, 'A warning about this setting.') }),
@@ -222,14 +240,27 @@ export function anonymiseProwlarrHistory(body: unknown): unknown {
     };
 }
 
-/** Prowlarr `indexerstats`: each indexer by name, and each host that queried it. */
-export function anonymiseProwlarrIndexerStats(body: unknown): unknown {
+/**
+ * Prowlarr `indexerstats`: each indexer by name, and each host that queried it.
+ * `indexers` is the `indexer` response from the same capture: an indexer it
+ * lists gets the name the indexer anonymiser gave it there, by id, so one
+ * placeholder means one indexer in both fixtures. Any other name is numbered
+ * after those.
+ */
+export function anonymiseProwlarrIndexerStats(body: unknown, indexers?: unknown): unknown {
     if (!isRow(body)) return body;
-    const alias = indexerAliases(Array.isArray(body.indexers) ? (body.indexers as Row[]).map(row => row.indexerName) : []);
+    const listed = new Map<unknown, string>(
+        Array.isArray(indexers) ? (indexers as unknown[]).flatMap((row, i) => (isRow(row) && row.id !== undefined ? [[row.id, `Indexer ${i + 1}`] as const] : [])) : []
+    );
+    const rows = Array.isArray(body.indexers) ? (body.indexers as Row[]) : [];
+    const alias = indexerAliases(
+        rows.filter(row => !listed.has(row.indexerId)).map(row => row.indexerName),
+        Array.from({ length: Array.isArray(indexers) ? indexers.length : 0 }, (_, i) => i + 1)
+    );
     return {
         ...body,
         ...(Array.isArray(body.indexers)
-            ? { indexers: (body.indexers as Row[]).map(row => ({ ...row, indexerName: alias(row.indexerName) })) }
+            ? { indexers: rows.map(row => ({ ...row, indexerName: typeof row.indexerName === 'string' ? (listed.get(row.indexerId) ?? alias(row.indexerName)) : row.indexerName })) }
             : {}),
         ...(Array.isArray(body.hosts) ? { hosts: (body.hosts as Row[]).map(row => ({ ...row, host: hostName(row.host) })) } : {})
     };
@@ -306,6 +337,10 @@ export function anonymiseSabnzbdWarnings(body: unknown, serverStats?: unknown): 
         })
     };
 }
+
+/** The indexer stats endpoint as `capture-fixtures.ts` runs it, after the indexer list. */
+export const captureProwlarrIndexerStats = (body: unknown, captured: Map<string, unknown>): unknown =>
+    anonymiseProwlarrIndexerStats(body, captured.get('indexer'));
 
 /**
  * The warnings endpoint as `capture-fixtures.ts` runs it: `server_stats` is

@@ -10,6 +10,7 @@ import {
     anonymiseProwlarrIndexerStats,
     anonymiseSabnzbdServerStats,
     anonymiseSabnzbdWarnings,
+    captureProwlarrIndexerStats,
     captureSabnzbdWarnings,
     indexerAliases
 } from '../scripts/lib/identityCapture.ts';
@@ -102,7 +103,7 @@ describe('the Prowlarr anonymisers', () => {
         expect(row.fields).toEqual([
             { name: 'baseSettings.queryLimit', label: 'Query Limit', helpText: 'The number of queries' },
             { name: 'setting1', label: 'Setting 1', value: 0, selectOptions: [{ value: 0, name: 'Option 1', order: 0, hint: '' }] },
-            { name: 'setting2', label: 'Setting 2', helpText: 'A setting of this definition.', value: 'someone' },
+            { name: 'setting2', label: 'Setting 2', helpText: 'A setting of this definition.', value: 'Value 2' },
             { name: 'setting3', label: 'Setting 3', helpTextWarning: 'A warning about this setting.', helpLink: 'https://indexer.example.test/', value: 1 }
         ]);
     });
@@ -142,6 +143,43 @@ describe('the Prowlarr anonymisers', () => {
         const hosts = ['fe80::1%eth0', '[fe80::1%25eth0]:9696', '::ffff:192.168.1.5', 'fd00::5', '::1', '2001:db8::7', '2001:db8::7%eth0', '2001:db8::198.51.100.9'];
         const stats = anonymiseProwlarrIndexerStats({ hosts: hosts.map(host => ({ host })) }) as { hosts: { host: string }[] };
         expect(stats.hosts.map(h => h.host)).toEqual(['2001:db8::10', '[2001:db8::10]:9696', '2001:db8::10', '2001:db8::10', '2001:db8::10', '2001:db8::7', '2001:db8::10', '2001:db8::10']);
+    });
+
+    it('neutralise what was typed into a definition own settings, credentials as the redaction placeholder', () => {
+        const row = anonymiseProwlarrIndexer(
+            {
+                implementation: 'Cardigann',
+                name: 'x',
+                fields: [
+                    { name: 'cookie', type: 'textbox', value: 'session=abc123' },
+                    { name: 'siteKey', type: 'password', privacy: 'password', value: 'k' },
+                    { name: 'apiHost', type: 'textbox', value: 'api.some-real-site.example' },
+                    { name: 'freeleech', type: 'checkbox', value: true },
+                    { name: 'notice', type: 'info', value: 'Some Real Site help' },
+                    { name: 'empty', type: 'textbox', value: '' }
+                ]
+            },
+            0
+        );
+        expect((row.fields as { value: unknown }[]).map(f => f.value)).toEqual([
+            '__REDACTED__',
+            '__REDACTED__',
+            'Value 3',
+            true,
+            'Information this indexer shows in Prowlarr.',
+            ''
+        ]);
+    });
+
+    it('give an indexer in the stats the name the indexer list gave it, by id, and number the rest after them', () => {
+        const list = [{ id: 21 }, { id: 8 }];
+        const body = captureProwlarrIndexerStats(
+            { indexers: [{ indexerId: 8, indexerName: 'Some Real Site' }, { indexerId: 99, indexerName: 'Gone Site' }, { indexerId: 21, indexerName: 'Other Site' }] },
+            new Map<string, unknown>([['indexer', list]])
+        );
+        expect(body).toEqual({
+            indexers: [{ indexerId: 8, indexerName: 'Indexer 2' }, { indexerId: 99, indexerName: 'Indexer 3' }, { indexerId: 21, indexerName: 'Indexer 1' }]
+        });
     });
 
     it('replace a history row search link whole, key and all, and the host that asked', () => {
@@ -263,7 +301,7 @@ describe('the other anonymisers', () => {
         const source = readFileSync(join(import.meta.dirname, '..', 'scripts', 'capture-fixtures.ts'), 'utf8');
         const registered = (line: string): number => source.split(line).length - 1;
         expect(registered("{ name: 'blocklist', path: '/api/v3/blocklist?page=1&pageSize=10', anonymise: anonymiseArrBlocklist },")).toBe(2);
-        expect(registered("{ name: 'indexerstats', path: '/api/v1/indexerstats', anonymise: anonymiseProwlarrIndexerStats },")).toBe(1);
+        expect(registered("{ name: 'indexerstats', path: '/api/v1/indexerstats', anonymise: captureProwlarrIndexerStats },")).toBe(1);
         expect(registered("{ name: 'history', path: '/api/v1/history?pageSize=20', anonymise: anonymiseProwlarrHistory },")).toBe(1);
         expect(registered("            path: '/api/v1/indexer',\n            anonymise: body => (Array.isArray(body) ? (body as Row[]).map(anonymiseProwlarrIndexer) : body)")).toBe(1);
         expect(registered("{ name: 'system-info', path: '/System/Info', anonymise: anonymiseJellyfinSystemInfo },")).toBe(1);
@@ -312,6 +350,19 @@ describe('the other anonymisers', () => {
     });
 });
 
+// One placeholder is one indexer: the stats and the list agree by id.
+describe('the committed Prowlarr fixtures', () => {
+    it('name each indexer the same in the list and the stats', () => {
+        const list = fixture('prowlarr/indexer.json') as { id: number; name: string }[];
+        const stats = fixture('prowlarr/indexerstats.json') as { indexers: { indexerId: number; indexerName: string }[] };
+        const byId = new Map(list.map(row => [row.id, row.name]));
+        for (const row of stats.indexers) {
+            if (byId.has(row.indexerId)) expect(row.indexerName, String(row.indexerId)).toBe(byId.get(row.indexerId));
+        }
+        expect(stats.indexers.some(row => byId.has(row.indexerId))).toBe(true);
+    });
+});
+
 /**
  * Each committed fixture is exactly what its anonymiser writes: running it
  * again changes nothing. A value the capture would have replaced fails here.
@@ -319,7 +370,7 @@ describe('the other anonymisers', () => {
 describe('the committed fixtures', () => {
     it.each([
         ['prowlarr/indexer.json', (b: unknown) => (Array.isArray(b) ? b.map(anonymiseProwlarrIndexer) : b)],
-        ['prowlarr/indexerstats.json', anonymiseProwlarrIndexerStats],
+        ['prowlarr/indexerstats.json', (b: unknown) => anonymiseProwlarrIndexerStats(b, fixture('prowlarr/indexer.json'))],
         ['prowlarr/history.json', anonymiseProwlarrHistory],
         ['radarr/blocklist.json', anonymiseArrBlocklist],
         ['sonarr/blocklist.json', anonymiseArrBlocklist],
