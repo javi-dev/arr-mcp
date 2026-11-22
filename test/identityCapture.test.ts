@@ -169,6 +169,13 @@ describe('the Prowlarr anonymisers', () => {
         expect(anonymiseProwlarrIndexer(named, 0)).toEqual(named);
     });
 
+    it('redact a credential at the very start of the extra query parameters, after a leading question mark', () => {
+        const row = anonymiseProwlarrIndexer({ implementation: 'Newznab', name: 'x', fields: [{ name: 'additionalParameters', value: '?apikey=0123abcd&q=keep' }] }, 0);
+        expect(row.fields).toEqual([{ name: 'additionalParameters', value: '?apikey=__REDACTED__&q=keep' }]);
+        const after = anonymiseProwlarrIndexer({ implementation: 'Newznab', name: 'x', fields: [{ name: 'additionalParameters', value: 'foo?passkey=zz' }] }, 0);
+        expect(after.fields).toEqual([{ name: 'additionalParameters', value: 'foo?passkey=__REDACTED__' }]);
+    });
+
     it('redact a credential in a Newznab indexer extra query parameters and keep the rest', () => {
         const row = anonymiseProwlarrIndexer(
             { implementation: 'Newznab', name: 'x', fields: [{ name: 'additionalParameters', value: '&extended=1&apikey=0123abcd&passkey=zz&api%6Bey=enc&passwd=p&secret=two words&accessToken=t"x&q=keep' }] },
