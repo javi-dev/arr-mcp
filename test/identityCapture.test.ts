@@ -169,6 +169,15 @@ describe('the Prowlarr anonymisers', () => {
         expect(anonymiseProwlarrIndexer(named, 0)).toEqual(named);
     });
 
+    it('redact a credential in a Newznab indexer extra query parameters and keep the rest', () => {
+        const row = anonymiseProwlarrIndexer(
+            { implementation: 'Newznab', name: 'x', fields: [{ name: 'additionalParameters', value: '&extended=1&apikey=0123abcd&passkey=zz' }] },
+            0
+        );
+        expect(row.fields).toEqual([{ name: 'additionalParameters', value: '&extended=1&apikey=__REDACTED__&passkey=__REDACTED__' }]);
+        expect(anonymiseProwlarrIndexer(row, 0)).toEqual(row);
+    });
+
     it('name a built-in indexer implementation generically, and leave the generic ones', () => {
         const row = anonymiseProwlarrIndexer({ implementation: 'SomeRealSite', implementationName: 'Some Real Site', configContract: 'SomeRealSiteSettings', name: 'x', fields: [] }, 0);
         expect(row).toMatchObject({ implementation: 'Indexer', implementationName: 'Indexer', configContract: 'IndexerSettings' });
