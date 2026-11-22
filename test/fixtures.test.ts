@@ -131,11 +131,22 @@ export const querySecrets = (text: string): string[] =>
 /** The names the capture script gives indexers: `Indexer 3`, `Indexer 3 (Prowlarr)`, `indexer 3` as a sort name. */
 const PLACEHOLDER_INDEXER = /^(?:(?:Example )?Indexer(?: \d+)?(?: \(Prowlarr\))?|indexer \d+|Direct Download)$/;
 
-/** Every indexer name (`indexer`, `indexerName`) in raw text, and a Prowlarr indexer's `sortName`, that is not a placeholder. */
-export const realIndexerNames = (text: string, prowlarrIndexers = false): string[] =>
-    [...text.matchAll(prowlarrIndexers ? /"(?:indexer|indexerName|sortName)"\s*:\s*"([^"]*)"/g : /"(?:indexer|indexerName)"\s*:\s*"([^"]*)"/g)]
-        .map(m => m[1]!)
-        .filter(n => n !== '' && !PLACEHOLDER_INDEXER.test(n));
+/**
+ * Every indexer name (`indexer`, `indexerName`) in raw text that is not a
+ * placeholder. For Prowlarr's indexer list, also each row's own `name` and
+ * `sortName`: read from the parsed rows, since settings and categories
+ * further down carry `name` keys of their own.
+ */
+export const realIndexerNames = (text: string, prowlarrIndexers = false): string[] => {
+    const named = [...text.matchAll(/"(?:indexer|indexerName)"\s*:\s*"([^"]*)"/g)].map(m => m[1]!);
+    const rows: unknown = prowlarrIndexers ? JSON.parse(text) : [];
+    const listed = (Array.isArray(rows) ? rows : [rows]).flatMap(row =>
+        row !== null && typeof row === 'object'
+            ? [(row as Record<string, unknown>).name, (row as Record<string, unknown>).sortName].filter((v): v is string => typeof v === 'string')
+            : []
+    );
+    return [...named, ...listed].filter(n => n !== '' && !PLACEHOLDER_INDEXER.test(n));
+};
 
 type Finding = { file: string; path: string; reason: string };
 
@@ -270,6 +281,8 @@ describe('the guard itself', () => {
         expect(realIndexerNames('{"indexer":"Some Real Site (Prowlarr)","b":{"indexerName":"Indexer 2"}}')).toEqual(['Some Real Site (Prowlarr)']);
         expect(realIndexerNames('{"indexer":"Indexer 12","indexer2":"x","indexerName":"Example Indexer 1"}')).toEqual([]);
         expect(realIndexerNames('{"sortName":"some real site"}', true)).toEqual(['some real site']);
+        // A row's own name, even beside a placeholder sort name or with none; a setting's name further down is not one.
+        expect(realIndexerNames('[{"name":"Some Real Site","sortName":"indexer 1","fields":[{"name":"baseUrl"}]},{"name":"Other Site"},{"name":"Indexer 3"}]', true)).toEqual(['Some Real Site', 'Other Site']);
         expect(realIndexerNames('{"sortName":"daft punk"}')).toEqual([]);
     });
 
