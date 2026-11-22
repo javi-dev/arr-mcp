@@ -145,8 +145,8 @@ describe('the Prowlarr anonymisers', () => {
         expect(stats.hosts.map(h => h.host)).toEqual(['2001:db8::10', '[2001:db8::10]:9696', '2001:db8::10', '2001:db8::10', '2001:db8::10', '2001:db8::7', '2001:db8::10', '2001:db8::10']);
     });
 
-    it('neutralise what was typed into a definition own settings, credentials as the redaction placeholder', () => {
-        const row = anonymiseProwlarrIndexer(
+    it('neutralise what was typed into a definition own settings, credentials as the redaction placeholder, and keep it on a second pass', () => {
+        const once = anonymiseProwlarrIndexer(
             {
                 implementation: 'Cardigann',
                 name: 'x',
@@ -161,14 +161,22 @@ describe('the Prowlarr anonymisers', () => {
             },
             0
         );
-        expect((row.fields as { value: unknown }[]).map(f => f.value)).toEqual([
-            '__REDACTED__',
-            '__REDACTED__',
-            'Value 3',
-            true,
-            'Information this indexer shows in Prowlarr.',
-            ''
-        ]);
+        const values = ['__REDACTED__', '__REDACTED__', 'Value 3', true, 'Information this indexer shows in Prowlarr.', ''];
+        expect((once.fields as { value: unknown }[]).map(f => f.value)).toEqual(values);
+        // A recapture checked against its own output: the names that told these apart are gone by now.
+        expect(anonymiseProwlarrIndexer(once, 0)).toEqual(once);
+        const named = anonymiseProwlarrIndexer({ implementation: 'Cardigann', name: 'x', fields: [{ name: 'info_extra', type: 'textbox', value: 'Some Real Site help' }] }, 0);
+        expect(anonymiseProwlarrIndexer(named, 0)).toEqual(named);
+    });
+
+    it('name a built-in indexer implementation generically, and leave the generic ones', () => {
+        const row = anonymiseProwlarrIndexer({ implementation: 'SomeRealSite', implementationName: 'Some Real Site', configContract: 'SomeRealSiteSettings', name: 'x', fields: [] }, 0);
+        expect(row).toMatchObject({ implementation: 'Indexer', implementationName: 'Indexer', configContract: 'IndexerSettings' });
+        expect(anonymiseProwlarrIndexer(row, 0)).toEqual(row);
+        for (const implementation of ['Newznab', 'Torznab', 'Cardigann']) {
+            const generic = { implementation, implementationName: implementation, configContract: `${implementation}Settings`, name: 'x', fields: [] };
+            expect(anonymiseProwlarrIndexer(generic, 0)).toMatchObject({ implementation, implementationName: implementation, configContract: `${implementation}Settings` });
+        }
     });
 
     it('give an indexer in the stats the name the indexer list gave it, by id, and number the rest after them', () => {
@@ -276,11 +284,11 @@ describe('the other anonymisers', () => {
 
     it('rename an IP literal in a connection failure for a server server_stats does not list', () => {
         const body = anonymiseSabnzbdWarnings(
-            { warnings: [{ text: 'Connection refused 22@2001:db8:77::5:563 (2001:db8:77::5)' }, { text: 'Connection refused 23@198.51.100.9:119 (198.51.100.9)' }, { text: 'Connection refused 24@fe80::1%eth0:563 (fe80::1%eth0)' }] },
+            { warnings: [{ text: 'Connection refused 22@2001:db8:77::5:563 (2001:db8:77::5)' }, { text: 'Connection refused 23@198.51.100.9:119 (198.51.100.9)' }, { text: 'Connection refused 24@fe80::1%eth0:563 (fe80::1%eth0)' }, { text: 'Connection refused 25@fe80::1%my_nic:563 (fe80::1%my_nic)' }] },
             { servers: {} }
         );
         expect(body).toEqual({
-            warnings: [{ text: 'Connection refused 22@news1.example.test:563 (news1.example.test)' }, { text: 'Connection refused 23@news1.example.test:119 (news1.example.test)' }, { text: 'Connection refused 24@news1.example.test:563 (news1.example.test)' }]
+            warnings: [{ text: 'Connection refused 22@news1.example.test:563 (news1.example.test)' }, { text: 'Connection refused 23@news1.example.test:119 (news1.example.test)' }, { text: 'Connection refused 24@news1.example.test:563 (news1.example.test)' }, { text: 'Connection refused 25@news1.example.test:563 (news1.example.test)' }]
         });
     });
 

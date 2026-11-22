@@ -65,7 +65,7 @@ const settingValue = (f: Row, n: number): Row => {
     const name = typeof f.name === 'string' ? f.name : '';
     if (name === 'definitionFile') return { ...f, value: `indexer${n}` };
     // An info field is help text the definition shows, whatever its name.
-    if (/^info/i.test(name) || f.type === 'info') return { ...f, value: 'Information this indexer shows in Prowlarr.' };
+    if (/^info/i.test(name) || f.type === 'info') return { ...f, value: INFO_TEXT };
     if (/url$/i.test(name)) {
         // A URL setting is the site's address whole: nothing of it is kept, a relative path aside.
         if (/^(?:https?:)?\/\//i.test(f.value)) return { ...f, value: ANONYMOUS_URL };
@@ -89,8 +89,12 @@ const SECRET_SETTING = /cookie|key|token|pass|secret|session|auth/i;
  * becomes the redaction placeholder, any other text a neutral value. Numbers,
  * booleans, an info field's text and an empty value stay.
  */
+const INFO_TEXT = 'Information this indexer shows in Prowlarr.';
+
 const neutralValue = (f: Row, k: number): unknown => {
     if (typeof f.value !== 'string' || f.value === '' || f.type === 'info' || (typeof f.name === 'string' && /^info/i.test(f.name))) return f.value;
+    // What an earlier pass wrote, once the name that told it apart is gone.
+    if (f.value === REDACTED || f.value === INFO_TEXT || /^Value \d+$/.test(f.value)) return f.value;
     const secret = (typeof f.privacy === 'string' && f.privacy !== 'normal') || (typeof f.name === 'string' && SECRET_SETTING.test(f.name));
     return secret ? REDACTED : `Value ${k}`;
 };
@@ -138,9 +142,24 @@ const neutralCategories = (categories: unknown, renumbered = new Map<number, num
  * categories, are made neutral as well. `n` is the indexer's place in the list, as its name
  * already uses.
  */
+/**
+ * Implementations that are protocols or a definition engine, not a site. Any
+ * other is one of Prowlarr's built-in indexers, named after its site in
+ * `implementation`, `implementationName` and `configContract`.
+ */
+const GENERIC_IMPLEMENTATION = new Set(['Newznab', 'Torznab', 'Cardigann']);
+
 export function anonymiseProwlarrIndexer(row: Row, index: number): Row {
     const n = index + 1;
     const cardigann = row.implementation === 'Cardigann';
+    const builtIn = typeof row.implementation === 'string' && !GENERIC_IMPLEMENTATION.has(row.implementation) && row.implementation !== 'Indexer';
+    const implementation = builtIn
+        ? {
+              implementation: 'Indexer',
+              ...(row.implementationName === undefined ? {} : { implementationName: replaceIfString(row.implementationName, 'Indexer') }),
+              ...(row.configContract === undefined ? {} : { configContract: replaceIfString(row.configContract, 'IndexerSettings') })
+          }
+        : {};
     let k = 0;
     const fields = Array.isArray(row.fields)
         ? (row.fields as Row[]).map(f => {
@@ -159,6 +178,7 @@ export function anonymiseProwlarrIndexer(row: Row, index: number): Row {
     return {
         ...row,
         ...capabilities,
+        ...implementation,
         name: replaceIfString(row.name, `Indexer ${n}`),
         ...(row.sortName === undefined ? {} : { sortName: replaceIfString(row.sortName, `indexer ${n}`) }),
         description: replaceIfString(row.description, 'An indexer.'),
@@ -328,7 +348,7 @@ export function anonymiseSabnzbdWarnings(body: unknown, serverStats?: unknown): 
                     .reduce((out, [host, placeholder]) => out.replace(whole(host), placeholder), text)
                     .replace(
                         // A host is a name or an IP literal, IPv6 included: SABnzbd writes it straight before the port.
-                        /(\d+@)([A-Za-z0-9.:[\]%-]+?)(:\d+ \()([A-Za-z0-9.:[\]%-]+)(\))/g,
+                        /(\d+@)([\w.:[\]%-]+?)(:\d+ \()([\w.:[\]%-]+)(\))/g,
                         (_all: string, at: string, first: string, port: string, second: string, close: string) =>
                             `${at}${neutral(first)}${port}${neutral(second)}${close}`
                     );
