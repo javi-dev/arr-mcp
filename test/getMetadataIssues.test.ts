@@ -54,7 +54,7 @@ const wrongNumbers = (n: number): EpisodeRecord => ({
     name: 'Opening Night! The Long Road!',
     season: 1,
     episode: 1,
-    path: `/tv/Another/Specials/Episode 10${n} Miras Crossing Harbours Urgent Callout.mkv`,
+    path: `/tv/Another/Specials/Episode 10${n} Miras Crossing Harbours Quiet Morning.mkv`,
     providerIds: { Tvdb: '654321' }
 });
 

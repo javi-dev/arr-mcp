@@ -94,7 +94,7 @@ describe('findMismatches', () => {
                 name: 'Opening Night! The Long Road!',
                 season: 1,
                 episode: 1,
-                path: "/tv/Another Show (2001) [tvdbid-80001]/Specials/Episode 101 Mira's Crossing Harbour's Urgent Call-out!.mkv"
+                path: "/tv/Another Show (2001) [tvdbid-80001]/Specials/Episode 101 Mira's Crossing Harbour's Quiet Morning!.mkv"
             })
         ];
 
@@ -113,7 +113,7 @@ describe('findMismatches', () => {
                 name: 'Opening Night! The Long Road!',
                 season: 0,
                 episode: 101,
-                path: "/tv/Another Show/Specials/Episode 101 Mira's Crossing Harbour's Urgent Call-out!.mkv"
+                path: "/tv/Another Show/Specials/Episode 101 Mira's Crossing Harbour's Quiet Morning!.mkv"
             })
         ];
 
@@ -178,7 +178,7 @@ describe('findMismatches', () => {
                 name: 'Opening Night! The Long Road!',
                 season: 1,
                 episode: 1,
-                path: "/tv/Another Show/Specials/Episode 101 Mira's Crossing Harbour's Urgent Call-out!.mkv"
+                path: "/tv/Another Show/Specials/Episode 101 Mira's Crossing Harbour's Quiet Morning!.mkv"
             })
         ];
         expect(findMismatches(items)[0]?.reasons).toEqual(['numbering', 'title']);
