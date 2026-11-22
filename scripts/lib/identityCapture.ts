@@ -9,7 +9,7 @@
  * writes.
  */
 import { isIP } from 'node:net';
-import { ANONYMOUS_HOST, ANONYMOUS_URL, isRow, REDACTED, replaceIfString, type Row } from './redact.ts';
+import { ANONYMOUS_HOST, ANONYMOUS_URL, isRow, REDACTED, replaceIfString, SECRET_KEY, type Row } from './redact.ts';
 
 /** The name an indexer gets in a fixture, and the suffix an *arr adds to one it syncs from Prowlarr. */
 const PLACEHOLDER_INDEXER = /^Indexer (\d+)$/;
@@ -57,8 +57,8 @@ export function indexerAliases(names: readonly unknown[] = [], reserved: Iterabl
 /** Every absolute URL in a text, a bracketed IPv6 authority included, becomes the placeholder. */
 const scrubUrls = (value: string): string => value.replace(/https?:\/\/(?:\[[^\]\s]*\])?[^\s"',\]]*/gi, ANONYMOUS_URL);
 
-/** A credential's parameter name, as `test/fixtures.test.ts` looks for one, once percent-decoding is undone. */
-const CREDENTIAL_NAME = /^(?:api_?key|passkey|token|access_token|auth_?token|password|nzb_?key)$/i;
+/** A credential's parameter name: the capture's secret-key rule, and a tracker's passkey. As `test/fixtures.test.ts` checks it. */
+const isCredentialName = (name: string): boolean => SECRET_KEY.test(name) || /^passkey$/i.test(name);
 
 const decoded = (name: string): string => {
     try {
@@ -71,7 +71,7 @@ const decoded = (name: string): string => {
 /** Every query parameter whose name, decoded, names a credential gets the redaction placeholder as its value. */
 const redactQueryCredentials = (query: string): string =>
     query.replace(/(^|[?&])([^=&"\s]+)=([^&"\s]*)/g, (all: string, lead: string, name: string) =>
-        CREDENTIAL_NAME.test(decoded(name)) ? `${lead}${name}=${REDACTED}` : all
+        isCredentialName(decoded(name)) ? `${lead}${name}=${REDACTED}` : all
     );
 
 /** Settings every Cardigann indexer has, whichever site its definition is for. */
