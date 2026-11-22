@@ -109,7 +109,7 @@ export const realUserNames = (text: string): string[] =>
     [...text.matchAll(/"\w*user_?name"\s*:\s*"([^"]*)"/gi)].map(m => m[1]!).filter(n => n !== '' && !PLACEHOLDER_USER_NAME.test(n));
 
 /** A credential-named query parameter in a URL, such as an indexer search link's `apikey`. */
-const QUERY_PARAMETER = /[?&]([^=&"\s]+)=([^&"\s]*)/g;
+const QUERY_PARAMETER = /[?&]([^=&"\s]+)=([^&"]*)/g;
 /** The capture's secret-key rule, and a tracker's passkey. */
 const isCredentialName = (name: string): boolean => SECRET_KEY.test(name) || /^passkey$/i.test(name);
 
@@ -259,6 +259,7 @@ describe('the guard itself', () => {
         expect(querySecrets('{"url":"https://indexer.example.test/api?apikey=__REDACTED__&t=caps&key=a"}')).toEqual([]);
         expect(querySecrets('{"url":"https://indexer.example.test/api?t=caps&api%6Bey=0123abcd"}')).toEqual(['&api%6Bey=0123abcd']);
         expect(querySecrets('{"a":"?passwd=a&secret=b&accessToken=c&session_id=d&q=e"}')).toEqual(['?passwd=a', '&secret=b', '&accessToken=c', '&session_id=d']);
+        expect(querySecrets('{"a":"&secret=__REDACTED__ two&q=e"}')).toEqual(['&secret=__REDACTED__ two']);
     });
 
     it('flags an indexer name that is not a placeholder', () => {
