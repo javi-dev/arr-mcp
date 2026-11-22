@@ -70,8 +70,8 @@ const decoded = (name: string): string => {
 
 /** Every query parameter whose name, decoded, names a credential gets the redaction placeholder as its value. */
 const redactQueryCredentials = (query: string): string =>
-    // A value runs to the next parameter, spaces included: Prowlarr appends the text as typed.
-    query.replace(/(^|[?&])([^=&"\s]+)=([^&"]*)/g, (all: string, lead: string, name: string) =>
+    // A value runs to the next parameter, spaces and quotes included: Prowlarr appends the text as typed.
+    query.replace(/(^|[?&])([^=&\s]+)=([^&]*)/g, (all: string, lead: string, name: string) =>
         isCredentialName(decoded(name)) ? `${lead}${name}=${REDACTED}` : all
     );
 
