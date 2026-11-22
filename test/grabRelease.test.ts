@@ -122,6 +122,8 @@ describe('grab_release', () => {
         expect(structuredContent.applied).toBe(false);
         expect(structuredContent.confirm_token).toBeDefined();
         expect(h.grabbed).toHaveLength(0);
+        // #31: the release row names its indexer by placeholder, as every fixture does.
+        expect(JSON.stringify(structuredContent)).toContain('Indexer 2 (Prowlarr)');
     });
 
     it('names the instance in the summary, not only the service', async () => {

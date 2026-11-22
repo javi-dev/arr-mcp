@@ -609,7 +609,7 @@ export class LibraryIndex {
      * title without "(2013)" or "S04E03".
      */
     searchRanked(query: string): RankedHit[] {
-        // "The Crossing (2013)" names a year, and no title carries it in brackets.
+        // "The Crossing (2008)" names a year, and no title carries it in brackets.
         const dated = /^(.*\S)\s*\((\d{4})\)\s*$/.exec(query);
         if (dated?.[1] !== undefined) {
             const year = Number(dated[2]);

@@ -424,8 +424,8 @@ describe('LibraryIndex search', () => {
     /** #312: a series resolved to the film whose title lacked only its article, and the dated query to nothing. */
     describe('titles that differ only by an article', () => {
         const crossing = LibraryIndex.build([
-            arr({ title: 'Crossing', year: 2022, ids: { tmdb: 10 } }),
-            arr({ kind: 'series', title: 'The Crossing', year: 2013, ids: { tvdb: 11 } })
+            arr({ title: 'Crossing', year: 2019, ids: { tmdb: 10 } }),
+            arr({ kind: 'series', title: 'The Crossing', year: 2008, ids: { tvdb: 11 } })
         ]);
 
         it('puts the one the caller spelled first', () => {
@@ -434,8 +434,8 @@ describe('LibraryIndex search', () => {
         });
 
         it('reads a trailing year as the year', () => {
-            expect(crossing.search('The Crossing (2013)').map(i => unfenced(i.title))).toEqual(['The Crossing']);
-            expect(crossing.search('Crossing (2022)').map(i => unfenced(i.title))).toEqual(['Crossing']);
+            expect(crossing.search('The Crossing (2008)').map(i => unfenced(i.title))).toEqual(['The Crossing']);
+            expect(crossing.search('Crossing (2019)').map(i => unfenced(i.title))).toEqual(['Crossing']);
         });
 
         it('still matches a title that has the year in it', () => {
