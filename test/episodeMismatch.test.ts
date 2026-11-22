@@ -38,7 +38,7 @@ describe('parseFileNumbering', () => {
      * signal that catches this shape.
      */
     it('treats a Specials folder as season 0', () => {
-        const got = parseFileNumbering("/storage/tv/Another Show (2001)/Specials/Episode 101 Mira's Crossing.mkv");
+        const got = parseFileNumbering("/tv/Another Show (2001)/Specials/Episode 101 Mira's Crossing.mkv");
         expect(got.season).toBe(0);
         expect(got.episode).toBe(101);
     });
@@ -94,7 +94,7 @@ describe('findMismatches', () => {
                 name: 'Opening Night! The Long Road!',
                 season: 1,
                 episode: 1,
-                path: "/storage/tv/Another Show (2001) [tvdbid-80001]/Specials/Episode 101 Mira's Crossing Harbour's Urgent Call-out!.mkv"
+                path: "/tv/Another Show (2001) [tvdbid-80001]/Specials/Episode 101 Mira's Crossing Harbour's Urgent Call-out!.mkv"
             })
         ];
 
