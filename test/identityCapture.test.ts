@@ -58,6 +58,8 @@ describe('the Prowlarr anonymisers', () => {
                     { name: 'apiurl', value: 'api.some-real-site.example' },
                     { name: 'baseUrl', value: 'https://some-real-site.example/' },
                     { name: 'mirrorUrl', value: 'https://[2001:db8:5::9]:8443/some-site/path?key=x' },
+                    { name: 'cdnUrl', value: '//cdn.some-real-site.example/x' },
+                    { name: 'notice', type: 'info', value: 'Some Real Site asks for an invite.' },
                     { name: 'apiPath', value: '/api' },
                     { name: 'info_uploader', value: 'Some Real Site lists uploaders by name.' },
                     { name: 'sort', value: 2 }
@@ -71,6 +73,8 @@ describe('the Prowlarr anonymisers', () => {
             { name: 'apiurl', value: 'indexer.example.test' },
             { name: 'baseUrl', value: 'https://indexer.example.test/' },
             { name: 'mirrorUrl', value: 'https://indexer.example.test/' },
+            { name: 'cdnUrl', value: 'https://indexer.example.test/' },
+            { name: 'notice', type: 'info', value: 'Information this indexer shows in Prowlarr.' },
             { name: 'apiPath', value: '/api' },
             { name: 'info_uploader', value: 'Information this indexer shows in Prowlarr.' },
             { name: 'sort', value: 2 }
@@ -234,11 +238,11 @@ describe('the other anonymisers', () => {
 
     it('rename an IP literal in a connection failure for a server server_stats does not list', () => {
         const body = anonymiseSabnzbdWarnings(
-            { warnings: [{ text: 'Connection refused 22@2001:db8:77::5:563 (2001:db8:77::5)' }, { text: 'Connection refused 23@198.51.100.9:119 (198.51.100.9)' }] },
+            { warnings: [{ text: 'Connection refused 22@2001:db8:77::5:563 (2001:db8:77::5)' }, { text: 'Connection refused 23@198.51.100.9:119 (198.51.100.9)' }, { text: 'Connection refused 24@fe80::1%eth0:563 (fe80::1%eth0)' }] },
             { servers: {} }
         );
         expect(body).toEqual({
-            warnings: [{ text: 'Connection refused 22@news1.example.test:563 (news1.example.test)' }, { text: 'Connection refused 23@news1.example.test:119 (news1.example.test)' }]
+            warnings: [{ text: 'Connection refused 22@news1.example.test:563 (news1.example.test)' }, { text: 'Connection refused 23@news1.example.test:119 (news1.example.test)' }, { text: 'Connection refused 24@news1.example.test:563 (news1.example.test)' }]
         });
     });
 

@@ -62,10 +62,11 @@ const settingValue = (f: Row, n: number): Row => {
     if (typeof f.value !== 'string' || f.value === '') return f;
     const name = typeof f.name === 'string' ? f.name : '';
     if (name === 'definitionFile') return { ...f, value: `indexer${n}` };
-    if (/^info/i.test(name)) return { ...f, value: 'Information this indexer shows in Prowlarr.' };
+    // An info field is help text the definition shows, whatever its name.
+    if (/^info/i.test(name) || f.type === 'info') return { ...f, value: 'Information this indexer shows in Prowlarr.' };
     if (/url$/i.test(name)) {
         // A URL setting is the site's address whole: nothing of it is kept, a relative path aside.
-        if (/^https?:\/\//i.test(f.value)) return { ...f, value: ANONYMOUS_URL };
+        if (/^(?:https?:)?\/\//i.test(f.value)) return { ...f, value: ANONYMOUS_URL };
         if (!f.value.startsWith('/')) return { ...f, value: new URL(ANONYMOUS_URL).host };
     }
     return { ...f, value: scrubUrls(f.value) };
@@ -296,7 +297,7 @@ export function anonymiseSabnzbdWarnings(body: unknown, serverStats?: unknown): 
                     .reduce((out, [host, placeholder]) => out.replace(whole(host), placeholder), text)
                     .replace(
                         // A host is a name or an IP literal, IPv6 included: SABnzbd writes it straight before the port.
-                        /(\d+@)([A-Za-z0-9.:[\]-]+?)(:\d+ \()([A-Za-z0-9.:[\]%-]+)(\))/g,
+                        /(\d+@)([A-Za-z0-9.:[\]%-]+?)(:\d+ \()([A-Za-z0-9.:[\]%-]+)(\))/g,
                         (_all: string, at: string, first: string, port: string, second: string, close: string) =>
                             `${at}${neutral(first)}${port}${neutral(second)}${close}`
                     );
