@@ -171,10 +171,10 @@ describe('the Prowlarr anonymisers', () => {
 
     it('redact a credential in a Newznab indexer extra query parameters and keep the rest', () => {
         const row = anonymiseProwlarrIndexer(
-            { implementation: 'Newznab', name: 'x', fields: [{ name: 'additionalParameters', value: '&extended=1&apikey=0123abcd&passkey=zz' }] },
+            { implementation: 'Newznab', name: 'x', fields: [{ name: 'additionalParameters', value: '&extended=1&apikey=0123abcd&passkey=zz&api%6Bey=enc&q=keep' }] },
             0
         );
-        expect(row.fields).toEqual([{ name: 'additionalParameters', value: '&extended=1&apikey=__REDACTED__&passkey=__REDACTED__' }]);
+        expect(row.fields).toEqual([{ name: 'additionalParameters', value: '&extended=1&apikey=__REDACTED__&passkey=__REDACTED__&api%6Bey=__REDACTED__&q=keep' }]);
         expect(anonymiseProwlarrIndexer(row, 0)).toEqual(row);
     });
 

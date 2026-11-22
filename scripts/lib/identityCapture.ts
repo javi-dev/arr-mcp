@@ -57,8 +57,22 @@ export function indexerAliases(names: readonly unknown[] = [], reserved: Iterabl
 /** Every absolute URL in a text, a bracketed IPv6 authority included, becomes the placeholder. */
 const scrubUrls = (value: string): string => value.replace(/https?:\/\/(?:\[[^\]\s]*\])?[^\s"',\]]*/gi, ANONYMOUS_URL);
 
-/** A credential-named query parameter, as `test/fixtures.test.ts` looks for one. */
-const QUERY_CREDENTIAL = /(?<=^|[?&])(api_?key|passkey|token|access_token|auth_?token|password|nzb_?key)=[^&"\s]*/gi;
+/** A credential's parameter name, as `test/fixtures.test.ts` looks for one, once percent-decoding is undone. */
+const CREDENTIAL_NAME = /^(?:api_?key|passkey|token|access_token|auth_?token|password|nzb_?key)$/i;
+
+const decoded = (name: string): string => {
+    try {
+        return decodeURIComponent(name);
+    } catch {
+        return name;
+    }
+};
+
+/** Every query parameter whose name, decoded, names a credential gets the redaction placeholder as its value. */
+const redactQueryCredentials = (query: string): string =>
+    query.replace(/(^|[?&])([^=&"\s]+)=([^&"\s]*)/g, (all: string, lead: string, name: string) =>
+        CREDENTIAL_NAME.test(decoded(name)) ? `${lead}${name}=${REDACTED}` : all
+    );
 
 /** Settings every Cardigann indexer has, whichever site its definition is for. */
 const COMMON_SETTING = /^(?:definitionFile|baseUrl|baseSettings\.|torrentBaseSettings\.)/;
@@ -70,7 +84,7 @@ const settingValue = (f: Row, n: number): Row => {
     // An info field is help text the definition shows, whatever its name.
     if (/^info/i.test(name) || f.type === 'info') return { ...f, value: INFO_TEXT };
     // Extra query parameters Prowlarr appends to every request: a key can ride in them.
-    if (name === 'additionalParameters') return { ...f, value: scrubUrls(f.value).replace(QUERY_CREDENTIAL, `$1=${REDACTED}`) };
+    if (name === 'additionalParameters') return { ...f, value: redactQueryCredentials(scrubUrls(f.value)) };
     if (/url$/i.test(name)) {
         // A URL setting is the site's address whole: nothing of it is kept, a relative path aside.
         if (/^(?:https?:)?\/\//i.test(f.value)) return { ...f, value: ANONYMOUS_URL };

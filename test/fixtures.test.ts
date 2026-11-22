@@ -109,11 +109,21 @@ export const realUserNames = (text: string): string[] =>
     [...text.matchAll(/"\w*user_?name"\s*:\s*"([^"]*)"/gi)].map(m => m[1]!).filter(n => n !== '' && !PLACEHOLDER_USER_NAME.test(n));
 
 /** A credential-named query parameter in a URL, such as an indexer search link's `apikey`. */
-const QUERY_SECRET = /[?&](api_?key|passkey|token|access_token|auth_?token|password|nzb_?key)=([^&"\s]*)/gi;
+const QUERY_PARAMETER = /[?&]([^=&"\s]+)=([^&"\s]*)/g;
+const CREDENTIAL_NAME = /^(?:api_?key|passkey|token|access_token|auth_?token|password|nzb_?key)$/i;
+
+/** A parameter name as the service reads it: percent-encoding does not hide a credential. */
+const decodedName = (name: string): string => {
+    try {
+        return decodeURIComponent(name);
+    } catch {
+        return name;
+    }
+};
 
 /** Every credential-named URL query parameter in raw text whose value is not the placeholder. */
 export const querySecrets = (text: string): string[] =>
-    [...text.matchAll(QUERY_SECRET)].filter(m => m[2] !== REDACTED && m[2] !== '').map(m => m[0]);
+    [...text.matchAll(QUERY_PARAMETER)].filter(m => CREDENTIAL_NAME.test(decodedName(m[1]!)) && m[2] !== REDACTED && m[2] !== '').map(m => m[0]);
 
 /** The names the capture script gives indexers: `Indexer 3`, `Indexer 3 (Prowlarr)`, `indexer 3` as a sort name. */
 const PLACEHOLDER_INDEXER = /^(?:(?:Example )?Indexer(?: \d+)?(?: \(Prowlarr\))?|indexer \d+|Direct Download)$/;
@@ -246,6 +256,7 @@ describe('the guard itself', () => {
         expect(querySecrets('{"url":"https://indexer.example.test/api?t=search&apikey=0123abcd&limit=1"}')).toEqual(['&apikey=0123abcd']);
         expect(querySecrets('{"url":"https://x.example.test/a?passkey=zz","b":"?API_KEY=y"}')).toEqual(['?passkey=zz', '?API_KEY=y']);
         expect(querySecrets('{"url":"https://indexer.example.test/api?apikey=__REDACTED__&t=caps&key=a"}')).toEqual([]);
+        expect(querySecrets('{"url":"https://indexer.example.test/api?t=caps&api%6Bey=0123abcd"}')).toEqual(['&api%6Bey=0123abcd']);
     });
 
     it('flags an indexer name that is not a placeholder', () => {
