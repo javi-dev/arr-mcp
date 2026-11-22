@@ -516,7 +516,7 @@ describe('advisory findings', () => {
         const [issue] = (
             await sweep(
                 adapterWith({
-                    Shifted: [at(1, 'Stray Dog Strut', 'Asteroid Blues'), at(2, 'Honky Tonk Women', 'Stray Dog Strut'), at(3, 'Gateway Shuffle', 'Honky Tonk Women')]
+                    Shifted: [at(1, 'Lantern Road', 'Quiet Harbour'), at(2, 'Copper Bell', 'Lantern Road'), at(3, 'Northern Gate', 'Copper Bell')]
                 })
             )
         ).items;

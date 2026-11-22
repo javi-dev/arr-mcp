@@ -586,9 +586,9 @@ describe('false positives on a real Plex library', () => {
         expect(findMismatches([episode('Sensô Kôi', 'Sensō Kōi')])).toEqual([]);
     });
 
-    /** Cowboy Bebop: every episode showed the next one's title. */
+    /** A live series: every episode showed the next one's title. */
     it('still flags a title that shares nothing with the file', () => {
-        expect(findMismatches([episode('Stray Dog Strut', 'Asteroid Blues')])[0]?.reasons).toEqual(['title']);
+        expect(findMismatches([episode('Lantern Road', 'Quiet Harbour')])[0]?.reasons).toEqual(['title']);
     });
 });
 
@@ -626,29 +626,29 @@ describe('advisory findings from a real Plex library', () => {
     const at = (season: number, n: number, name: string, file: string): EpisodeRecord =>
         ep({ id: `${season}x${n}`, name, season, episode: n, path: `/tv/Show/Season ${season}/Show - S0${season}E${String(n).padStart(2, '0')} - ${file}.mkv` });
 
-    /** Cowboy Bebop: every episode shows the next one's title. */
-    const bebop = [
-        at(1, 1, 'Stray Dog Strut', 'Asteroid Blues'),
-        at(1, 2, 'Honky Tonk Women', 'Stray Dog Strut'),
-        at(1, 3, 'Gateway Shuffle', 'Honky Tonk Women')
+    /** A live series: every episode shows the next one's title. */
+    const shiftedRun = [
+        at(1, 1, 'Lantern Road', 'Quiet Harbour'),
+        at(1, 2, 'Copper Bell', 'Lantern Road'),
+        at(1, 3, 'Northern Gate', 'Copper Bell')
     ];
 
     it('marks a title the neighbouring episode carries as shifted', () => {
-        const found = findMismatches(bebop);
+        const found = findMismatches(shiftedRun);
         expect(found.map(m => m.advisory)).toEqual(['shifted', 'shifted', 'shifted']);
     });
 
     it('sends an all-shifted series to inspect, not a repair', () => {
-        expect(summariseSeries(bebop)).toMatchObject({ mismatches: 3, shifted: 3, remedy: 'inspect' });
+        expect(summariseSeries(shiftedRun)).toMatchObject({ mismatches: 3, shifted: 3, remedy: 'inspect' });
     });
 
     it('still sends a series with one ordinary mismatch to the repair', () => {
-        const verdict = summariseSeries([...bebop, at(1, 9, 'The Fixture Show', 'Completely Unrelated Words')]);
+        const verdict = summariseSeries([...shiftedRun, at(1, 9, 'The Fixture Show', 'Completely Unrelated Words')]);
         expect(verdict).toMatchObject({ shifted: 3, remedy: 'refresh_metadata' });
     });
 
     it('does not call a title shifted when no neighbour carries it', () => {
-        expect(findMismatches([at(1, 1, 'Stray Dog Strut', 'Asteroid Blues')])[0]?.advisory).toBeUndefined();
+        expect(findMismatches([at(1, 1, 'Lantern Road', 'Quiet Harbour')])[0]?.advisory).toBeUndefined();
     });
 
     /** #312 on 1.44.1: Super Mario Bros. Super Show! files name both segments,
@@ -819,8 +819,8 @@ describe('titles in different languages', () => {
 
     it('does not mark short titles in a series whose two sides share a language', () => {
         const found = findMismatches([
-            at(1, 'The Sea Monster', 'Asteroid Blues'),
-            at(2, 'The Haunted Fixture', 'Stray Dog Strut'),
+            at(1, 'The Sea Monster', 'Quiet Harbour'),
+            at(2, 'The Haunted Fixture', 'Lantern Road'),
             at(3, 'The Ghosts of the Night', 'Death of the Party')
         ]);
         expect(found.map(m => m.advisory)).toEqual([undefined, undefined, undefined]);
@@ -848,7 +848,7 @@ describe('titles in different languages', () => {
     });
 
     it('does not mark two English titles', () => {
-        expect(findMismatches([at(1, 'Stray Dog Strut', 'Asteroid Blues')])[0]?.advisory).toBeUndefined();
+        expect(findMismatches([at(1, 'Lantern Road', 'Quiet Harbour')])[0]?.advisory).toBeUndefined();
         expect(findMismatches([at(1, 'The Butcher in the Car', 'Death of the Party')])[0]?.advisory).toBeUndefined();
     });
 

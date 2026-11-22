@@ -469,7 +469,7 @@ describe('episodes pinned to their own provider ids', () => {
             ParentIndexNumber: 1,
             Path: `/storage/tv/Some Show/Season 01/Some Show - S01E0${n} - ${file} [Bluray-1080p].mkv`
         });
-        const h = harness({ episodes: [at(1, 'Stray Dog Strut', 'Asteroid Blues'), at(2, 'Honky Tonk Women', 'Stray Dog Strut')] });
+        const h = harness({ episodes: [at(1, 'Lantern Road', 'Quiet Harbour'), at(2, 'Copper Bell', 'Lantern Road')] });
         const effects = (await h.call({ query: 'Another Show' })).structuredContent.effects.join('\n');
         expect(effects).toContain('2 of the 2 mismatching episodes carry the title Jellyfin gives another episode in the same season');
     });
