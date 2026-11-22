@@ -38,7 +38,7 @@ const tiered = (safe_write: boolean): AnyServiceConfig =>
 const release = (over: Record<string, unknown> = {}) => ({
     guid: 'abc',
     indexerId: 3,
-    indexer: 'DrunkenSlug (Prowlarr)',
+    indexer: 'Indexer 2 (Prowlarr)',
     title: 'Alien.1979.2160p.BluRay-GROUP',
     size: 25_900_000_000,
     quality: { quality: { name: 'Bluray-2160p' } },
@@ -122,6 +122,8 @@ describe('grab_release', () => {
         expect(structuredContent.applied).toBe(false);
         expect(structuredContent.confirm_token).toBeDefined();
         expect(h.grabbed).toHaveLength(0);
+        // #31: the release row names its indexer by placeholder, as every fixture does.
+        expect(JSON.stringify(structuredContent)).toContain('Indexer 2 (Prowlarr)');
     });
 
     it('names the instance in the summary, not only the service', async () => {

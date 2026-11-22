@@ -247,15 +247,20 @@ seconds) comes after that and only reads, so it runs with the instance already
 free for the next confirmation; qBittorrent goes on checking in the background
 either way. The torrents it finds whole are started back in the lane, behind
 any confirmation that arrived during the watch, after reading them once more,
-and any library snapshot is dropped after it. Whether to start them is decided
-when that start gets the lane: if another confirmation to that qBittorrent was
-accepted since the recheck, even one that found nothing to do and even another
-`recheck_torrents`, they are left stopped and listed as `left_stopped`, because
-a pause sent then would look the same and starting them would undo it. If the
+and any library snapshot is dropped after it. Whether to start them is asked
+when that start gets the lane, and again after that read: if another
+confirmation to that qBittorrent was accepted since the recheck, even one that
+found nothing to do and even another `recheck_torrents`, or a call without
+`confirm` came back as a no-op (a `pause_downloads` of a torrent already
+stopped answers that way, and asks for no confirmation), they are left stopped
+and listed as `left_stopped`, because a pause sent then would look the same and
+starting them would undo it. If the
 instance is still busy 30 seconds later, the request has been cancelled, or
 qBittorrent refuses the start, they are left stopped too, listed as
-`resume_failed` with the reason in `resume_error`. Once the start has been sent
-it runs to the end, as any apply does.
+`resume_failed` with the reason in `resume_error`. Once qBittorrent has accepted
+the start it runs to the end, as any apply does. A qBittorrent older than 5
+refuses the new start verb without starting anything, so both questions are
+asked once more before the older verb is sent.
 
 The reply reports what a read taken when it was time to start found: the one in
 the lane, just before the start. When no read was taken there (the recheck was
@@ -589,8 +594,10 @@ add_media { service: "radarr", external_id: "550" }
 > library.
 
 That means **adding a second instance changes how existing prompts behave**:
-requests that used to be unambiguous start asking which instance you meant. It
-only affects writes.
+requests that used to be unambiguous start asking which instance you meant.
+Writes refuse this way, and so do reads that act on one item of one instance,
+such as `get_history` with an `id`. A read that covers a whole service asks
+every instance of it instead.
 
 ## Managing someone else's request
 

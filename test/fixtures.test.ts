@@ -108,6 +108,46 @@ const PLACEHOLDER_USER_NAME = /^(?:user\d+|example-user)$/;
 export const realUserNames = (text: string): string[] =>
     [...text.matchAll(/"\w*user_?name"\s*:\s*"([^"]*)"/gi)].map(m => m[1]!).filter(n => n !== '' && !PLACEHOLDER_USER_NAME.test(n));
 
+/** A credential-named query parameter in a URL, such as an indexer search link's `apikey`. */
+// In raw JSON a value ends at the next parameter or the string's closing quote; an escaped quote is part of it.
+// A parameter also counts at the start of a string, as an indexer's extra parameters can begin with one.
+const QUERY_PARAMETER = /[?&"]([^=&"?/\s]+)=((?:[^&"\\]|\\.)*)/g;
+/** The capture's secret-key rule, and a tracker's passkey. */
+const isCredentialName = (name: string): boolean => SECRET_KEY.test(name) || /^passkey$/i.test(name);
+
+/** A parameter name as the service reads it: percent-encoding does not hide a credential. */
+const decodedName = (name: string): string => {
+    try {
+        return decodeURIComponent(name);
+    } catch {
+        return name;
+    }
+};
+
+/** Every credential-named URL query parameter in raw text whose value is not the placeholder. */
+export const querySecrets = (text: string): string[] =>
+    [...text.matchAll(QUERY_PARAMETER)].filter(m => isCredentialName(decodedName(m[1]!)) && m[2] !== REDACTED && m[2] !== '').map(m => m[0]);
+
+/** The names the capture script gives indexers: `Indexer 3`, `Indexer 3 (Prowlarr)`, `indexer 3` as a sort name. */
+const PLACEHOLDER_INDEXER = /^(?:(?:Example )?Indexer(?: \d+)?(?: \(Prowlarr\))?|indexer \d+|Direct Download)$/;
+
+/**
+ * Every indexer name (`indexer`, `indexerName`) in raw text that is not a
+ * placeholder. For Prowlarr's indexer list, also each row's own `name` and
+ * `sortName`: read from the parsed rows, since settings and categories
+ * further down carry `name` keys of their own.
+ */
+export const realIndexerNames = (text: string, prowlarrIndexers = false): string[] => {
+    const named = [...text.matchAll(/"(?:indexer|indexerName)"\s*:\s*"([^"]*)"/g)].map(m => m[1]!);
+    const rows: unknown = prowlarrIndexers ? JSON.parse(text) : [];
+    const listed = (Array.isArray(rows) ? rows : [rows]).flatMap(row =>
+        row !== null && typeof row === 'object'
+            ? [(row as Record<string, unknown>).name, (row as Record<string, unknown>).sortName].filter((v): v is string => typeof v === 'string')
+            : []
+    );
+    return [...named, ...listed].filter(n => n !== '' && !PLACEHOLDER_INDEXER.test(n));
+};
+
 type Finding = { file: string; path: string; reason: string };
 
 export function scan(file: string, node: unknown, path = '$', out: Finding[] = []): Finding[] {
@@ -173,6 +213,21 @@ describe('committed fixtures', () => {
         expect(findings).toEqual([]);
     });
 
+    // #31: an indexer search link carried its API key in the query string,
+    // which the key-name scan above cannot see.
+    it('hold no credential in a URL query string', async () => {
+        const findings = (await fixtureContents()).flatMap(({ file, text }) => querySecrets(text).map(found => `${file}: ${found.split('=')[0]}`));
+        expect(findings).toEqual([]);
+    });
+
+    // #31: indexer names say which indexers a deployment subscribes to.
+    it('name indexers only by placeholder', async () => {
+        const findings = (await fixtureContents()).flatMap(({ file, text }) =>
+            realIndexerNames(text, file.endsWith(join('prowlarr', 'indexer.json'))).map(name => `${file}: ${name}`)
+        );
+        expect(findings).toEqual([]);
+    });
+
     it('contain no public IP address anywhere in the file', async () => {
         const findings = (await fixtureContents()).flatMap(({ file, text }) =>
             publicAddresses(text).map(address => `${file}: ${address}`)
@@ -209,6 +264,26 @@ describe('the guard itself', () => {
         expect(realEmails('{\n  "email": "x@gmail.com"\n}')).toEqual(['x@gmail.com']);
         expect(realEmails('{\n  "email": "x@exampleXtest"\n}')).toEqual(['x@exampleXtest']);
         expect(realEmails('{\n  "email": "x@notexample.test.evil.nl"\n}')).toEqual(['x@notexample.test.evil.nl']);
+    });
+
+    it('flags a credential in a URL query string and passes the placeholder', () => {
+        expect(querySecrets('{"url":"https://indexer.example.test/api?t=search&apikey=0123abcd&limit=1"}')).toEqual(['&apikey=0123abcd']);
+        expect(querySecrets('{"url":"https://x.example.test/a?passkey=zz","b":"?API_KEY=y"}')).toEqual(['?passkey=zz', '?API_KEY=y']);
+        expect(querySecrets('{"url":"https://indexer.example.test/api?apikey=__REDACTED__&t=caps&key=a"}')).toEqual([]);
+        expect(querySecrets('{"url":"https://indexer.example.test/api?t=caps&api%6Bey=0123abcd"}')).toEqual(['&api%6Bey=0123abcd']);
+        expect(querySecrets('{"a":"?passwd=a&secret=b&accessToken=c&session_id=d&q=e"}')).toEqual(['?passwd=a', '&secret=b', '&accessToken=c', '&session_id=d']);
+        expect(querySecrets('{"a":"&secret=__REDACTED__ two&q=e"}')).toEqual(['&secret=__REDACTED__ two']);
+        expect(querySecrets(JSON.stringify({ a: '&secret=__REDACTED__"tail&q=e' }))).toEqual(['&secret=__REDACTED__\\"tail']);
+        expect(querySecrets(JSON.stringify({ additionalParameters: 'apikey=0123&q=e' }))).toEqual(['"apikey=0123']);
+    });
+
+    it('flags an indexer name that is not a placeholder', () => {
+        expect(realIndexerNames('{"indexer":"Some Real Site (Prowlarr)","b":{"indexerName":"Indexer 2"}}')).toEqual(['Some Real Site (Prowlarr)']);
+        expect(realIndexerNames('{"indexer":"Indexer 12","indexer2":"x","indexerName":"Example Indexer 1"}')).toEqual([]);
+        expect(realIndexerNames('{"sortName":"some real site"}', true)).toEqual(['some real site']);
+        // A row's own name, even beside a placeholder sort name or with none; a setting's name further down is not one.
+        expect(realIndexerNames('[{"name":"Some Real Site","sortName":"indexer 1","fields":[{"name":"baseUrl"}]},{"name":"Other Site"},{"name":"Indexer 3"}]', true)).toEqual(['Some Real Site', 'Other Site']);
+        expect(realIndexerNames('{"sortName":"daft punk"}')).toEqual([]);
     });
 
     it('flags a session id, which the capture script also redacts', () => {

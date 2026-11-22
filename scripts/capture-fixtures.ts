@@ -43,6 +43,16 @@ import {
 } from './lib/lidarrCapture.ts';
 import { anonymiseDispatcharr } from './lib/dispatcharrCapture.ts';
 import { anonymiseGrimmory } from './lib/grimmoryCapture.ts';
+import {
+    anonymiseArrBlocklist,
+    anonymiseCleanuparrSeeker,
+    anonymiseJellyfinSystemInfo,
+    anonymiseProwlarrHistory,
+    anonymiseProwlarrIndexer,
+    captureProwlarrIndexerStats,
+    anonymiseSabnzbdServerStats,
+    captureSabnzbdWarnings
+} from './lib/identityCapture.ts';
 import { anonymiseShelfmarkConfig, anonymiseShelfmarkHistory, anonymiseShelfmarkReleases, anonymiseShelfmarkSearch, anonymiseShelfmarkSnapshot, anonymiseShelfmarkStatus } from './lib/shelfmarkCapture.ts';
 import {
     anonymiseArrLog,
@@ -98,7 +108,7 @@ type Endpoint = {
     /** The response is a bare string rather than JSON — qBittorrent only.
      *  `anonymise` is what shapes it into something writable as a fixture. */
     text?: boolean;
-    anonymise?: (body: unknown) => unknown;
+    anonymise?: (body: unknown, captured: Map<string, unknown>) => unknown;
     /**
      * An override for endpoints that need more than one request to decide
      * what to capture — `plex/section-all` walks sections looking for a
@@ -178,9 +188,6 @@ const richestSeriesId = (body: unknown): string | undefined => {
  * scans the library.
  */
 
-/** Replaces any absolute URL, leaving surrounding text intact. */
-const scrubUrls = (value: string): string => value.replace(/https?:\/\/[^\s"',\]]+/gi, ANONYMOUS_URL);
-
 /**
  * Watch history is the one genuinely personal thing in the fixture set — the
  * library titles are already public in radarr/movie.json, but who has watched
@@ -254,25 +261,6 @@ const neutraliseResumeState = (body: unknown): unknown => {
         }))
     };
 };
-
-function anonymiseIndexer(row: Row, index: number): Row {
-    const fields = Array.isArray(row.fields)
-        ? (row.fields as Row[]).map(f => ({
-              ...f,
-              value: typeof f.value === 'string' ? scrubUrls(f.value) : f.value
-          }))
-        : row.fields;
-
-    return {
-        ...row,
-        name: replaceIfString(row.name, `Indexer ${index + 1}`),
-        description: replaceIfString(row.description, 'An indexer.'),
-        definitionName: replaceIfString(row.definitionName, 'Definition'),
-        indexerUrls: Array.isArray(row.indexerUrls) ? [ANONYMOUS_URL] : row.indexerUrls,
-        legacyUrls: Array.isArray(row.legacyUrls) ? [] : row.legacyUrls,
-        fields
-    };
-}
 
 /**
  * An episode file names where the user keeps their media and who they take it
@@ -533,7 +521,7 @@ function anonymiseWhisparrBlocklistItem(row: Row, index: number): Row {
     return {
         ...row,
         sourceTitle: replaceIfString(row.sourceTitle, `Scene.${n}.1080p.WEB-DL.x264-GROUP`),
-        // The same class of thing `anonymiseIndexer` scrubs on Prowlarr: which
+        // The same class of thing `anonymiseProwlarrIndexer` scrubs on Prowlarr: which
         // trackers the operator subscribes to.
         indexer: replaceIfString(row.indexer, `Indexer ${n}`),
         series: isRow(row.series) ? anonymiseWhisparrSeries(row.series, index) : row.series
@@ -581,7 +569,7 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
             anonymise: anonymiseArrLog
         },
         { name: 'queue', path: '/api/v3/queue' },
-        { name: 'blocklist', path: '/api/v3/blocklist?page=1&pageSize=10' },
+        { name: 'blocklist', path: '/api/v3/blocklist?page=1&pageSize=10', anonymise: anonymiseArrBlocklist },
         { name: 'calendar', path: '/api/v3/calendar' },
         { name: 'movie', path: '/api/v3/movie' },
         // The detail endpoint returns the same shape as a list element, so the
@@ -616,7 +604,7 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
             anonymise: anonymiseArrLog
         },
         { name: 'queue', path: '/api/v3/queue' },
-        { name: 'blocklist', path: '/api/v3/blocklist?page=1&pageSize=10' },
+        { name: 'blocklist', path: '/api/v3/blocklist?page=1&pageSize=10', anonymise: anonymiseArrBlocklist },
         { name: 'calendar', path: '/api/v3/calendar' },
         // See the Radarr entry: `unmappedFolders` rides along on this read.
         { name: 'rootfolder', path: '/api/v3/rootfolder' },
@@ -832,11 +820,11 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
         {
             name: 'indexer',
             path: '/api/v1/indexer',
-            anonymise: body => (Array.isArray(body) ? (body as Row[]).map(anonymiseIndexer) : body)
+            anonymise: body => (Array.isArray(body) ? (body as Row[]).map(anonymiseProwlarrIndexer) : body)
         },
         { name: 'indexerstatus', path: '/api/v1/indexerstatus' },
-        { name: 'indexerstats', path: '/api/v1/indexerstats' },
-        { name: 'history', path: '/api/v1/history?pageSize=20' },
+        { name: 'indexerstats', path: '/api/v1/indexerstats', anonymise: captureProwlarrIndexerStats },
+        { name: 'history', path: '/api/v1/history?pageSize=20', anonymise: anonymiseProwlarrHistory },
         { name: 'command', path: '/api/v1/command' },
         {
             // Every level, unlike the Radarr, Sonarr and Lidarr entries: the
@@ -885,7 +873,7 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
         }
     ],
     jellyfin: [
-        { name: 'system-info', path: '/System/Info' },
+        { name: 'system-info', path: '/System/Info', anonymise: anonymiseJellyfinSystemInfo },
         {
             name: 'users',
             path: '/Users',
@@ -1083,8 +1071,8 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
     sabnzbd: [
         { name: 'version', path: '/api?mode=version&output=json' },
         { name: 'queue', path: '/api?mode=queue&output=json' },
-        { name: 'server-stats', path: '/api?mode=server_stats&output=json' },
-        { name: 'warnings', path: '/api?mode=warnings&output=json' }
+        { name: 'server-stats', path: '/api?mode=server_stats&output=json', anonymise: anonymiseSabnzbdServerStats },
+        { name: 'warnings', path: '/api?mode=warnings&output=json', anonymise: captureSabnzbdWarnings }
     ],
     nzbget: [
         { name: 'version', path: '/jsonrpc', body: { jsonrpc: '2.0', method: 'version', params: [], id: 1 } },
@@ -1334,7 +1322,7 @@ const ENDPOINTS: Record<ServiceId, Endpoint[]> = {
         { name: 'queue-rules-stall', path: '/api/queue-rules/stall' },
         { name: 'queue-rules-slow', path: '/api/queue-rules/slow' },
         { name: 'configuration-malware_blocker', path: '/api/configuration/malware_blocker', anonymise: anonymiseBlocklistPaths },
-        { name: 'configuration-seeker', path: '/api/configuration/seeker' },
+        { name: 'configuration-seeker', path: '/api/configuration/seeker', anonymise: anonymiseCleanuparrSeeker },
         { name: 'strikes', path: '/api/strikes?page=1&pageSize=500', anonymise: anonymiseCleanuparrStrikes },
         { name: 'manualevents', path: '/api/manualevents?isResolved=false&pageSize=20', anonymise: anonymiseCleanuparrEvents }
     ],
@@ -1696,7 +1684,7 @@ for (const instance of listInstances(config)) {
 
             // Anonymise identity first, then redact credentials — so a value
             // the anonymiser rewrites is still checked for leaked secrets.
-            const identified = endpoint.anonymise === undefined ? raw : endpoint.anonymise(raw);
+            const identified = endpoint.anonymise === undefined ? raw : endpoint.anonymise(raw, soFar);
             const serialised = JSON.stringify(redact(identified, secrets, hosts), null, 2);
 
             // The gate. If a configured credential or host survived, refuse to

@@ -2,7 +2,7 @@
   "indexers": [
     {
       "indexerId": 20,
-      "indexerName": "The Pirate Bay",
+      "indexerName": "Indexer 5",
       "averageResponseTime": 203,
       "averageGrabResponseTime": 0,
       "numberOfQueries": 91,
@@ -16,7 +16,7 @@
     },
     {
       "indexerId": 9,
-      "indexerName": "DrunkenSlug",
+      "indexerName": "Indexer 2",
       "averageResponseTime": 286,
       "averageGrabResponseTime": 0,
       "numberOfQueries": 60,
@@ -30,7 +30,7 @@
     },
     {
       "indexerId": 8,
-      "indexerName": "altHUB",
+      "indexerName": "Indexer 1",
       "averageResponseTime": 241,
       "averageGrabResponseTime": 0,
       "numberOfQueries": 112,
@@ -44,7 +44,7 @@
     },
     {
       "indexerId": 34,
-      "indexerName": "Spotarr",
+      "indexerName": "Indexer 4",
       "averageResponseTime": 818,
       "averageGrabResponseTime": 0,
       "numberOfQueries": 126,
@@ -58,7 +58,7 @@
     },
     {
       "indexerId": 21,
-      "indexerName": "Nyaa.si",
+      "indexerName": "Indexer 3",
       "averageResponseTime": 226,
       "averageGrabResponseTime": 0,
       "numberOfQueries": 150,
@@ -95,7 +95,7 @@
   ],
   "hosts": [
     {
-      "host": "homelab",
+      "host": "service.example.test",
       "numberOfQueries": 26703,
       "numberOfGrabs": 158
     },

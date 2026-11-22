@@ -94,7 +94,7 @@ export type Mismatch = {
     /**
      * Real, but not something a rematch fixes. `shifted`: the file carries the
      * title the server gives another episode in the same season, a different episode
-     * order (Cowboy Bebop, TNG and 20 more on one Plex library; a rematch did
+     * order (22 series on one Plex library; a rematch did
      * not move them). `special`: both sides say season 0, which sources number
      * differently. `language`: the file and the server title are in different
      * languages (Los Espookys, The House of Flowers).
@@ -271,7 +271,7 @@ function titleFields(path: string, stripped: RegExp): string[] | undefined {
      * all correct.
      *
      * So an `SxxExx` name must have a delimited field after the numbering for
-     * its title to be trusted. `Episode 101 Videl's Crisis` is exempt: the
+     * its title to be trusted. `Episode 101 Mira's Crossing` is exempt: the
      * word form is not a scene convention, and what follows it is the title by
      * construction.
      */
@@ -678,8 +678,8 @@ export function findMovieMismatches(items: readonly MovieRecord[]): Mismatch[] {
  */
 export function findMismatches(items: readonly EpisodeRecord[]): Mismatch[] {
     const out: Mismatch[] = [];
-    // Any episode in the same season, not just the neighbours: Goof Troop was
-    // out by two and Cowboy Bebop reordered (#312). Both directions, so the
+    // Any episode in the same season, not just the neighbours: one series was
+    // out by two and another reordered (#312). Both directions, so the
     // ends of a shifted run count too.
     const others = items.map(i => ({ id: i.id, season: i.season, name: i.name, files: i.path === undefined ? [] : fileTitleParts(i.path) }));
     const seasonHas = (item: EpisodeRecord, files: readonly string[]): boolean =>

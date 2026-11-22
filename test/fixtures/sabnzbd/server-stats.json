@@ -4,7 +4,7 @@
   "week": 92418538950,
   "day": 8151352558,
   "servers": {
-    "news.sunnyusenet.com": {
+    "news1.example.test": {
       "total": 70990898739451,
       "month": 218530297758,
       "week": 86270594959,
@@ -6027,7 +6027,7 @@
         "2026-08-05": 0
       }
     },
-    "news.bulknews.eu": {
+    "news2.example.test": {
       "total": 5767330161715,
       "month": 14737269504,
       "week": 6147943991,

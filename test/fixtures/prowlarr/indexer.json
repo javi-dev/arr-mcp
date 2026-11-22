@@ -292,7 +292,7 @@
     "priority": 1,
     "downloadClientId": 0,
     "added": "2021-08-23T11:32:28Z",
-    "sortName": "althub",
+    "sortName": "indexer 1",
     "name": "Indexer 1",
     "fields": [
       {
@@ -397,7 +397,7 @@
     "implementationName": "Newznab",
     "implementation": "Newznab",
     "configContract": "NewznabSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#newznab",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 8
   },
@@ -844,7 +844,7 @@
     "priority": 1,
     "downloadClientId": 0,
     "added": "2021-08-23T11:32:44Z",
-    "sortName": "drunkenslug",
+    "sortName": "indexer 2",
     "name": "Indexer 2",
     "fields": [
       {
@@ -949,7 +949,7 @@
     "implementationName": "Newznab",
     "implementation": "Newznab",
     "configContract": "NewznabSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#newznab",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 9
   },
@@ -987,28 +987,28 @@
           ]
         },
         {
-          "id": 140679,
-          "name": "Anime",
+          "id": 100001,
+          "name": "Category 100001",
           "subCategories": []
         },
         {
-          "id": 125996,
-          "name": "Anime - Anime Music Video",
+          "id": 100002,
+          "name": "Category 100002",
           "subCategories": []
         },
         {
-          "id": 127720,
-          "name": "Anime - English-translated",
+          "id": 100003,
+          "name": "Category 100003",
           "subCategories": []
         },
         {
-          "id": 131088,
-          "name": "Anime - Non-English-translated",
+          "id": 100004,
+          "name": "Category 100004",
           "subCategories": []
         },
         {
-          "id": 134634,
-          "name": "Anime - Raw",
+          "id": 100005,
+          "name": "Category 100005",
           "subCategories": []
         },
         {
@@ -1023,28 +1023,28 @@
           ]
         },
         {
-          "id": 140679,
-          "name": "Anime",
+          "id": 100001,
+          "name": "Category 100001",
           "subCategories": []
         },
         {
-          "id": 125996,
-          "name": "Anime - Anime Music Video",
+          "id": 100002,
+          "name": "Category 100002",
           "subCategories": []
         },
         {
-          "id": 127720,
-          "name": "Anime - English-translated",
+          "id": 100003,
+          "name": "Category 100003",
           "subCategories": []
         },
         {
-          "id": 131088,
-          "name": "Anime - Non-English-translated",
+          "id": 100004,
+          "name": "Category 100004",
           "subCategories": []
         },
         {
-          "id": 134634,
-          "name": "Anime - Raw",
+          "id": 100005,
+          "name": "Category 100005",
           "subCategories": []
         },
         {
@@ -1053,18 +1053,18 @@
           "subCategories": []
         },
         {
-          "id": 145414,
-          "name": "Audio",
+          "id": 100006,
+          "name": "Category 100006",
           "subCategories": []
         },
         {
-          "id": 118685,
-          "name": "Audio - Lossless",
+          "id": 100007,
+          "name": "Category 100007",
           "subCategories": []
         },
         {
-          "id": 155285,
-          "name": "Audio - Lossy",
+          "id": 100008,
+          "name": "Category 100008",
           "subCategories": []
         },
         {
@@ -1073,48 +1073,48 @@
           "subCategories": []
         },
         {
-          "id": 100920,
-          "name": "Literature",
+          "id": 100009,
+          "name": "Category 100009",
           "subCategories": []
         },
         {
-          "id": 156719,
-          "name": "Literature  English-translated",
+          "id": 100010,
+          "name": "Category 100010",
           "subCategories": []
         },
         {
-          "id": 111160,
-          "name": "Literature - Non-English-translated",
+          "id": 100011,
+          "name": "Category 100011",
           "subCategories": []
         },
         {
-          "id": 117084,
-          "name": "Literature - Raw",
+          "id": 100012,
+          "name": "Category 100012",
           "subCategories": []
         },
         {
-          "id": 129933,
-          "name": "Live Action",
+          "id": 100013,
+          "name": "Category 100013",
           "subCategories": []
         },
         {
-          "id": 101340,
-          "name": "Live Action - English-translated",
+          "id": 100014,
+          "name": "Category 100014",
           "subCategories": []
         },
         {
-          "id": 150332,
-          "name": "Live Action - Idol/Promotional Video",
+          "id": 100015,
+          "name": "Category 100015",
           "subCategories": []
         },
         {
-          "id": 150562,
-          "name": "Live Action - Non-English-translated",
+          "id": 100016,
+          "name": "Category 100016",
           "subCategories": []
         },
         {
-          "id": 150452,
-          "name": "Live Action - Raw",
+          "id": 100017,
+          "name": "Category 100017",
           "subCategories": []
         },
         {
@@ -1123,18 +1123,18 @@
           "subCategories": []
         },
         {
-          "id": 134686,
-          "name": "Pictures",
+          "id": 100018,
+          "name": "Category 100018",
           "subCategories": []
         },
         {
-          "id": 131360,
-          "name": "Pictures - Graphics",
+          "id": 100019,
+          "name": "Category 100019",
           "subCategories": []
         },
         {
-          "id": 109829,
-          "name": "Pictures - Photos",
+          "id": 100020,
+          "name": "Category 100020",
           "subCategories": []
         },
         {
@@ -1154,18 +1154,18 @@
           ]
         },
         {
-          "id": 117318,
-          "name": "Software",
+          "id": 100021,
+          "name": "Category 100021",
           "subCategories": []
         },
         {
-          "id": 130420,
-          "name": "Software - Applications",
+          "id": 100022,
+          "name": "Category 100022",
           "subCategories": []
         },
         {
-          "id": 103955,
-          "name": "Software - Games",
+          "id": 100023,
+          "name": "Category 100023",
           "subCategories": []
         }
       ],
@@ -1192,13 +1192,13 @@
     "priority": 25,
     "downloadClientId": 0,
     "added": "2022-12-17T11:07:44Z",
-    "sortName": "nyaa si",
+    "sortName": "indexer 3",
     "name": "Indexer 3",
     "fields": [
       {
         "order": 0,
         "name": "definitionFile",
-        "value": "nyaasi",
+        "value": "indexer3",
         "type": "textbox",
         "advanced": false,
         "hidden": "hidden",
@@ -1316,8 +1316,8 @@
       },
       {
         "order": 0,
-        "name": "prefer_magnet_links",
-        "label": "Prefer Magnet Links",
+        "name": "setting1",
+        "label": "Setting 1",
         "value": true,
         "type": "checkbox",
         "advanced": false,
@@ -1326,8 +1326,8 @@
       },
       {
         "order": 1,
-        "name": "sonarr_compatibility",
-        "label": "Improve Sonarr compatibility by trying to add Season information into Release Titles",
+        "name": "setting2",
+        "label": "Setting 2",
         "value": false,
         "type": "checkbox",
         "advanced": false,
@@ -1336,8 +1336,8 @@
       },
       {
         "order": 2,
-        "name": "strip_s01",
-        "label": "Remove first season keywords (S1/S01/Season 1), as some results do not include this for first/single season releases",
+        "name": "setting3",
+        "label": "Setting 3",
         "value": false,
         "type": "checkbox",
         "advanced": false,
@@ -1346,8 +1346,8 @@
       },
       {
         "order": 3,
-        "name": "radarr_compatibility",
-        "label": "Improve Radarr compatibility by removing year information from keywords and adding it to Release Titles",
+        "name": "setting4",
+        "label": "Setting 4",
         "value": false,
         "type": "checkbox",
         "advanced": false,
@@ -1356,25 +1356,25 @@
       },
       {
         "order": 4,
-        "name": "filter-id",
-        "label": "Filter",
+        "name": "setting5",
+        "label": "Setting 5",
         "value": 0,
         "type": "select",
         "advanced": false,
         "selectOptions": [
           {
             "value": 0,
-            "name": "No filter",
+            "name": "Option 1",
             "order": 0
           },
           {
             "value": 1,
-            "name": "No remakes",
+            "name": "Option 2",
             "order": 0
           },
           {
             "value": 2,
-            "name": "Trusted only",
+            "name": "Option 3",
             "order": 0
           }
         ],
@@ -1383,130 +1383,130 @@
       },
       {
         "order": 5,
-        "name": "cat-id",
-        "label": "Category",
+        "name": "setting6",
+        "label": "Setting 6",
         "value": 0,
         "type": "select",
         "advanced": false,
         "selectOptions": [
           {
             "value": 0,
-            "name": "All categories",
+            "name": "Option 1",
             "order": 0
           },
           {
             "value": 1,
-            "name": "Anime",
+            "name": "Option 2",
             "order": 0
           },
           {
             "value": 2,
-            "name": "Anime - Anime Music Video",
+            "name": "Option 3",
             "order": 0
           },
           {
             "value": 3,
-            "name": "Anime - English-translated",
+            "name": "Option 4",
             "order": 0
           },
           {
             "value": 4,
-            "name": "Anime - Non-English-translated",
+            "name": "Option 5",
             "order": 0
           },
           {
             "value": 5,
-            "name": "Anime - Raw",
+            "name": "Option 6",
             "order": 0
           },
           {
             "value": 6,
-            "name": "Audio",
+            "name": "Option 7",
             "order": 0
           },
           {
             "value": 7,
-            "name": "Audio - Lossless",
+            "name": "Option 8",
             "order": 0
           },
           {
             "value": 8,
-            "name": "Audio - Lossy",
+            "name": "Option 9",
             "order": 0
           },
           {
             "value": 9,
-            "name": "Literature",
+            "name": "Option 10",
             "order": 0
           },
           {
             "value": 10,
-            "name": "Literature - English-translated",
+            "name": "Option 11",
             "order": 0
           },
           {
             "value": 11,
-            "name": "Literature - Non-English-translated",
+            "name": "Option 12",
             "order": 0
           },
           {
             "value": 12,
-            "name": "Literature - Lossy",
+            "name": "Option 13",
             "order": 0
           },
           {
             "value": 13,
-            "name": "Live Action",
+            "name": "Option 14",
             "order": 0
           },
           {
             "value": 14,
-            "name": "Live Action - English",
+            "name": "Option 15",
             "order": 0
           },
           {
             "value": 15,
-            "name": "Live Action - Idol/PV",
+            "name": "Option 16",
             "order": 0
           },
           {
             "value": 16,
-            "name": "Live Action - Non-English",
+            "name": "Option 17",
             "order": 0
           },
           {
             "value": 17,
-            "name": "Live Action - Raw",
+            "name": "Option 18",
             "order": 0
           },
           {
             "value": 18,
-            "name": "Pictures",
+            "name": "Option 19",
             "order": 0
           },
           {
             "value": 19,
-            "name": "Pictures  - Graphics",
+            "name": "Option 20",
             "order": 0
           },
           {
             "value": 20,
-            "name": "Pictures  - Photos",
+            "name": "Option 21",
             "order": 0
           },
           {
             "value": 21,
-            "name": "Software",
+            "name": "Option 22",
             "order": 0
           },
           {
             "value": 22,
-            "name": "Software - Applications",
+            "name": "Option 23",
             "order": 0
           },
           {
             "value": 23,
-            "name": "Software - Games",
+            "name": "Option 24",
             "order": 0
           }
         ],
@@ -1515,25 +1515,25 @@
       },
       {
         "order": 6,
-        "name": "sort",
-        "label": "Sort requested from site",
+        "name": "setting7",
+        "label": "Setting 7",
         "value": 0,
         "type": "select",
         "advanced": false,
         "selectOptions": [
           {
             "value": 0,
-            "name": "created",
+            "name": "Option 1",
             "order": 0
           },
           {
             "value": 1,
-            "name": "seeders",
+            "name": "Option 2",
             "order": 0
           },
           {
             "value": 2,
-            "name": "size",
+            "name": "Option 3",
             "order": 0
           }
         ],
@@ -1542,20 +1542,20 @@
       },
       {
         "order": 7,
-        "name": "type",
-        "label": "Order requested from site",
+        "name": "setting8",
+        "label": "Setting 8",
         "value": 1,
         "type": "select",
         "advanced": false,
         "selectOptions": [
           {
             "value": 0,
-            "name": "asc",
+            "name": "Option 1",
             "order": 0
           },
           {
             "value": 1,
-            "name": "desc",
+            "name": "Option 2",
             "order": 0
           }
         ],
@@ -1566,7 +1566,7 @@
     "implementationName": "Cardigann",
     "implementation": "Cardigann",
     "configContract": "CardigannSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#nyaasi",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 21
   },
@@ -1598,8 +1598,8 @@
           "subCategories": []
         },
         {
-          "id": 100000,
-          "name": "Reserved",
+          "id": 100001,
+          "name": "Category 100001",
           "subCategories": []
         },
         {
@@ -1664,63 +1664,63 @@
           ]
         },
         {
-          "id": 101010,
-          "name": "Console/NDS",
+          "id": 100002,
+          "name": "Category 100002",
           "subCategories": []
         },
         {
-          "id": 101020,
-          "name": "Console/PSP",
+          "id": 100003,
+          "name": "Category 100003",
           "subCategories": []
         },
         {
-          "id": 101030,
-          "name": "Console/Wii",
+          "id": 100004,
+          "name": "Category 100004",
           "subCategories": []
         },
         {
-          "id": 101035,
-          "name": "Console/Switch",
+          "id": 100005,
+          "name": "Category 100005",
           "subCategories": []
         },
         {
-          "id": 101040,
-          "name": "Console/XBox",
+          "id": 100006,
+          "name": "Category 100006",
           "subCategories": []
         },
         {
-          "id": 101050,
-          "name": "Console/XBox 360",
+          "id": 100007,
+          "name": "Category 100007",
           "subCategories": []
         },
         {
-          "id": 101060,
-          "name": "Console/Wiiware",
+          "id": 100008,
+          "name": "Category 100008",
           "subCategories": []
         },
         {
-          "id": 101070,
-          "name": "Console/XBox 360 DLC",
+          "id": 100009,
+          "name": "Category 100009",
           "subCategories": []
         },
         {
-          "id": 101080,
-          "name": "Console/PS3",
+          "id": 100010,
+          "name": "Category 100010",
           "subCategories": []
         },
         {
-          "id": 101090,
-          "name": "Console/XBox One",
+          "id": 100011,
+          "name": "Category 100011",
           "subCategories": []
         },
         {
-          "id": 101100,
-          "name": "Console/PS4",
+          "id": 100012,
+          "name": "Category 100012",
           "subCategories": []
         },
         {
-          "id": 101000,
-          "name": "Console",
+          "id": 100013,
+          "name": "Category 100013",
           "subCategories": []
         },
         {
@@ -1765,43 +1765,43 @@
           ]
         },
         {
-          "id": 102010,
-          "name": "Movies/Foreign",
+          "id": 100014,
+          "name": "Category 100014",
           "subCategories": []
         },
         {
-          "id": 102020,
-          "name": "Movies/Other",
+          "id": 100015,
+          "name": "Category 100015",
           "subCategories": []
         },
         {
-          "id": 102030,
-          "name": "Movies/SD",
+          "id": 100016,
+          "name": "Category 100016",
           "subCategories": []
         },
         {
-          "id": 102040,
-          "name": "Movies/HD",
+          "id": 100017,
+          "name": "Category 100017",
           "subCategories": []
         },
         {
-          "id": 102045,
-          "name": "Movies/UHD",
+          "id": 100018,
+          "name": "Category 100018",
           "subCategories": []
         },
         {
-          "id": 102050,
-          "name": "Movies/BluRay",
+          "id": 100019,
+          "name": "Category 100019",
           "subCategories": []
         },
         {
-          "id": 102060,
-          "name": "Movies/3D",
+          "id": 100020,
+          "name": "Category 100020",
           "subCategories": []
         },
         {
-          "id": 102000,
-          "name": "Movies",
+          "id": 100021,
+          "name": "Category 100021",
           "subCategories": []
         },
         {
@@ -1836,33 +1836,33 @@
           ]
         },
         {
-          "id": 103010,
-          "name": "Audio/MP3",
+          "id": 100022,
+          "name": "Category 100022",
           "subCategories": []
         },
         {
-          "id": 103020,
-          "name": "Audio/Video",
+          "id": 100023,
+          "name": "Category 100023",
           "subCategories": []
         },
         {
-          "id": 103030,
-          "name": "Audio/Audiobook",
+          "id": 100024,
+          "name": "Category 100024",
           "subCategories": []
         },
         {
-          "id": 103040,
-          "name": "Audio/Lossless",
+          "id": 100025,
+          "name": "Category 100025",
           "subCategories": []
         },
         {
-          "id": 103050,
-          "name": "Audio/Podcast",
+          "id": 100026,
+          "name": "Category 100026",
           "subCategories": []
         },
         {
-          "id": 103000,
-          "name": "Audio",
+          "id": 100027,
+          "name": "Category 100027",
           "subCategories": []
         },
         {
@@ -1907,43 +1907,43 @@
           ]
         },
         {
-          "id": 104010,
-          "name": "PC/0day",
+          "id": 100028,
+          "name": "Category 100028",
           "subCategories": []
         },
         {
-          "id": 104020,
-          "name": "PC/ISO",
+          "id": 100029,
+          "name": "Category 100029",
           "subCategories": []
         },
         {
-          "id": 104030,
-          "name": "PC/Mac",
+          "id": 100030,
+          "name": "Category 100030",
           "subCategories": []
         },
         {
-          "id": 104040,
-          "name": "PC/Mobile - Other",
+          "id": 100031,
+          "name": "Category 100031",
           "subCategories": []
         },
         {
-          "id": 104050,
-          "name": "PC/Games",
+          "id": 100032,
+          "name": "Category 100032",
           "subCategories": []
         },
         {
-          "id": 104060,
-          "name": "PC/Mobile - iOS",
+          "id": 100033,
+          "name": "Category 100033",
           "subCategories": []
         },
         {
-          "id": 104070,
-          "name": "PC/Mobile - Android",
+          "id": 100034,
+          "name": "Category 100034",
           "subCategories": []
         },
         {
-          "id": 104000,
-          "name": "PC",
+          "id": 100035,
+          "name": "Category 100035",
           "subCategories": []
         },
         {
@@ -1993,48 +1993,48 @@
           ]
         },
         {
-          "id": 105020,
-          "name": "TV/Foreign",
+          "id": 100036,
+          "name": "Category 100036",
           "subCategories": []
         },
         {
-          "id": 105030,
-          "name": "TV/SD",
+          "id": 100037,
+          "name": "Category 100037",
           "subCategories": []
         },
         {
-          "id": 105040,
-          "name": "TV/HD",
+          "id": 100038,
+          "name": "Category 100038",
           "subCategories": []
         },
         {
-          "id": 105045,
-          "name": "TV/UHD",
+          "id": 100039,
+          "name": "Category 100039",
           "subCategories": []
         },
         {
-          "id": 105050,
-          "name": "TV/Other",
+          "id": 100040,
+          "name": "Category 100040",
           "subCategories": []
         },
         {
-          "id": 105060,
-          "name": "TV/Sport",
+          "id": 100041,
+          "name": "Category 100041",
           "subCategories": []
         },
         {
-          "id": 105070,
-          "name": "TV/Anime",
+          "id": 100042,
+          "name": "Category 100042",
           "subCategories": []
         },
         {
-          "id": 105080,
-          "name": "TV/Documentary",
+          "id": 100043,
+          "name": "Category 100043",
           "subCategories": []
         },
         {
-          "id": 105000,
-          "name": "TV",
+          "id": 100044,
+          "name": "Category 100044",
           "subCategories": []
         },
         {
@@ -2079,43 +2079,43 @@
           ]
         },
         {
-          "id": 106010,
-          "name": "XXX/DVD",
+          "id": 100045,
+          "name": "Category 100045",
           "subCategories": []
         },
         {
-          "id": 106020,
-          "name": "XXX/WMV",
+          "id": 100046,
+          "name": "Category 100046",
           "subCategories": []
         },
         {
-          "id": 106030,
-          "name": "XXX/XviD",
+          "id": 100047,
+          "name": "Category 100047",
           "subCategories": []
         },
         {
-          "id": 106040,
-          "name": "XXX/x264",
+          "id": 100048,
+          "name": "Category 100048",
           "subCategories": []
         },
         {
-          "id": 106050,
-          "name": "XXX/Pack",
+          "id": 100049,
+          "name": "Category 100049",
           "subCategories": []
         },
         {
-          "id": 106060,
-          "name": "XXX/ImgSet",
+          "id": 100050,
+          "name": "Category 100050",
           "subCategories": []
         },
         {
-          "id": 106070,
-          "name": "XXX/Other",
+          "id": 100051,
+          "name": "Category 100051",
           "subCategories": []
         },
         {
-          "id": 106000,
-          "name": "XXX",
+          "id": 100052,
+          "name": "Category 100052",
           "subCategories": []
         },
         {
@@ -2145,28 +2145,28 @@
           ]
         },
         {
-          "id": 107010,
-          "name": "Books/Mags",
+          "id": 100053,
+          "name": "Category 100053",
           "subCategories": []
         },
         {
-          "id": 107020,
-          "name": "Books/EBook",
+          "id": 100054,
+          "name": "Category 100054",
           "subCategories": []
         },
         {
-          "id": 107030,
-          "name": "Books/Comics",
+          "id": 100055,
+          "name": "Category 100055",
           "subCategories": []
         },
         {
-          "id": 107900,
-          "name": "Books/Category not determined",
+          "id": 100056,
+          "name": "Category 100056",
           "subCategories": []
         },
         {
-          "id": 107000,
-          "name": "Books",
+          "id": 100057,
+          "name": "Category 100057",
           "subCategories": []
         },
         {
@@ -2181,18 +2181,18 @@
           ]
         },
         {
-          "id": 108010,
-          "name": "Other/Misc",
+          "id": 100058,
+          "name": "Category 100058",
           "subCategories": []
         },
         {
-          "id": 108000,
-          "name": "Other",
+          "id": 100059,
+          "name": "Category 100059",
           "subCategories": []
         },
         {
-          "id": 200000,
-          "name": "Custom",
+          "id": 100060,
+          "name": "Category 100060",
           "subCategories": []
         }
       ],
@@ -2224,7 +2224,7 @@
     "priority": 1,
     "downloadClientId": 0,
     "added": "2025-05-19T14:17:47Z",
-    "sortName": "spotarr",
+    "sortName": "indexer 4",
     "name": "Indexer 4",
     "fields": [
       {
@@ -2328,7 +2328,7 @@
     "implementationName": "Newznab",
     "implementation": "Newznab",
     "configContract": "NewznabSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#newznab",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 34
   },
@@ -2381,33 +2381,33 @@
           ]
         },
         {
-          "id": 100100,
-          "name": "Audio",
+          "id": 100001,
+          "name": "Category 100001",
           "subCategories": []
         },
         {
-          "id": 100101,
-          "name": "Music",
+          "id": 100002,
+          "name": "Category 100002",
           "subCategories": []
         },
         {
-          "id": 100102,
-          "name": "Audio Books",
+          "id": 100003,
+          "name": "Category 100003",
           "subCategories": []
         },
         {
-          "id": 100103,
-          "name": "Sound Clips",
+          "id": 100004,
+          "name": "Category 100004",
           "subCategories": []
         },
         {
-          "id": 100104,
-          "name": "FLAC",
+          "id": 100005,
+          "name": "Category 100005",
           "subCategories": []
         },
         {
-          "id": 100199,
-          "name": "Audio Other",
+          "id": 100006,
+          "name": "Category 100006",
           "subCategories": []
         },
         {
@@ -2442,28 +2442,28 @@
           ]
         },
         {
-          "id": 100200,
-          "name": "Video",
+          "id": 100007,
+          "name": "Category 100007",
           "subCategories": []
         },
         {
-          "id": 100201,
-          "name": "Movies",
+          "id": 100008,
+          "name": "Category 100008",
           "subCategories": []
         },
         {
-          "id": 100202,
-          "name": "Movies DVDR",
+          "id": 100009,
+          "name": "Category 100009",
           "subCategories": []
         },
         {
-          "id": 100203,
-          "name": "Music Videos",
+          "id": 100010,
+          "name": "Category 100010",
           "subCategories": []
         },
         {
-          "id": 100204,
-          "name": "Movie Clips",
+          "id": 100011,
+          "name": "Category 100011",
           "subCategories": []
         },
         {
@@ -2488,48 +2488,48 @@
           ]
         },
         {
-          "id": 100205,
-          "name": "TV Shows",
+          "id": 100012,
+          "name": "Category 100012",
           "subCategories": []
         },
         {
-          "id": 100206,
-          "name": "Handheld",
+          "id": 100013,
+          "name": "Category 100013",
           "subCategories": []
         },
         {
-          "id": 100207,
-          "name": "HD - Movies",
+          "id": 100014,
+          "name": "Category 100014",
           "subCategories": []
         },
         {
-          "id": 100208,
-          "name": "HD - TV shows",
+          "id": 100015,
+          "name": "Category 100015",
           "subCategories": []
         },
         {
-          "id": 100209,
-          "name": "3D",
+          "id": 100016,
+          "name": "Category 100016",
           "subCategories": []
         },
         {
-          "id": 100210,
-          "name": "CAM/TS",
+          "id": 100017,
+          "name": "Category 100017",
           "subCategories": []
         },
         {
-          "id": 100211,
-          "name": "UHD/4k - Movies",
+          "id": 100018,
+          "name": "Category 100018",
           "subCategories": []
         },
         {
-          "id": 100212,
-          "name": "UHD/4k - TV shows",
+          "id": 100019,
+          "name": "Category 100019",
           "subCategories": []
         },
         {
-          "id": 100299,
-          "name": "Video Other",
+          "id": 100020,
+          "name": "Category 100020",
           "subCategories": []
         },
         {
@@ -2564,43 +2564,43 @@
           ]
         },
         {
-          "id": 100300,
-          "name": "Applications",
+          "id": 100021,
+          "name": "Category 100021",
           "subCategories": []
         },
         {
-          "id": 100301,
-          "name": "Windows",
+          "id": 100022,
+          "name": "Category 100022",
           "subCategories": []
         },
         {
-          "id": 100302,
-          "name": "Mac",
+          "id": 100023,
+          "name": "Category 100023",
           "subCategories": []
         },
         {
-          "id": 100303,
-          "name": "UNIX",
+          "id": 100024,
+          "name": "Category 100024",
           "subCategories": []
         },
         {
-          "id": 100304,
-          "name": "Handheld",
+          "id": 100025,
+          "name": "Category 100025",
           "subCategories": []
         },
         {
-          "id": 100305,
-          "name": "IOS (iPad/iPhone)",
+          "id": 100026,
+          "name": "Category 100026",
           "subCategories": []
         },
         {
-          "id": 100306,
-          "name": "Android",
+          "id": 100027,
+          "name": "Category 100027",
           "subCategories": []
         },
         {
-          "id": 100399,
-          "name": "Other OS",
+          "id": 100028,
+          "name": "Category 100028",
           "subCategories": []
         },
         {
@@ -2630,53 +2630,53 @@
           ]
         },
         {
-          "id": 100400,
-          "name": "Games",
+          "id": 100029,
+          "name": "Category 100029",
           "subCategories": []
         },
         {
-          "id": 100401,
-          "name": "PC",
+          "id": 100030,
+          "name": "Category 100030",
           "subCategories": []
         },
         {
-          "id": 100402,
-          "name": "Mac",
+          "id": 100031,
+          "name": "Category 100031",
           "subCategories": []
         },
         {
-          "id": 100403,
-          "name": "PSx",
+          "id": 100032,
+          "name": "Category 100032",
           "subCategories": []
         },
         {
-          "id": 100404,
-          "name": "XBOX360",
+          "id": 100033,
+          "name": "Category 100033",
           "subCategories": []
         },
         {
-          "id": 100405,
-          "name": "Wii",
+          "id": 100034,
+          "name": "Category 100034",
           "subCategories": []
         },
         {
-          "id": 100406,
-          "name": "Handheld",
+          "id": 100035,
+          "name": "Category 100035",
           "subCategories": []
         },
         {
-          "id": 100407,
-          "name": "IOS (iPad/iPhone)",
+          "id": 100036,
+          "name": "Category 100036",
           "subCategories": []
         },
         {
-          "id": 100408,
-          "name": "Android",
+          "id": 100037,
+          "name": "Category 100037",
           "subCategories": []
         },
         {
-          "id": 100499,
-          "name": "Games Other",
+          "id": 100038,
+          "name": "Category 100038",
           "subCategories": []
         },
         {
@@ -2711,48 +2711,48 @@
           ]
         },
         {
-          "id": 100500,
-          "name": "Porn",
+          "id": 100039,
+          "name": "Category 100039",
           "subCategories": []
         },
         {
-          "id": 100501,
-          "name": "Movies",
+          "id": 100040,
+          "name": "Category 100040",
           "subCategories": []
         },
         {
-          "id": 100502,
-          "name": "Movies DVDR",
+          "id": 100041,
+          "name": "Category 100041",
           "subCategories": []
         },
         {
-          "id": 100503,
-          "name": "Pictures",
+          "id": 100042,
+          "name": "Category 100042",
           "subCategories": []
         },
         {
-          "id": 100504,
-          "name": "Games",
+          "id": 100043,
+          "name": "Category 100043",
           "subCategories": []
         },
         {
-          "id": 100505,
-          "name": "HD - Movies",
+          "id": 100044,
+          "name": "Category 100044",
           "subCategories": []
         },
         {
-          "id": 100506,
-          "name": "Movie Clips",
+          "id": 100045,
+          "name": "Category 100045",
           "subCategories": []
         },
         {
-          "id": 100507,
-          "name": "UHD/4k - Movies",
+          "id": 100046,
+          "name": "Category 100046",
           "subCategories": []
         },
         {
-          "id": 100599,
-          "name": "Porn other",
+          "id": 100047,
+          "name": "Category 100047",
           "subCategories": []
         },
         {
@@ -2761,8 +2761,8 @@
           "subCategories": []
         },
         {
-          "id": 100600,
-          "name": "Other",
+          "id": 100048,
+          "name": "Category 100048",
           "subCategories": []
         },
         {
@@ -2787,33 +2787,33 @@
           ]
         },
         {
-          "id": 100601,
-          "name": "E-books",
+          "id": 100049,
+          "name": "Category 100049",
           "subCategories": []
         },
         {
-          "id": 100602,
-          "name": "Comics",
+          "id": 100050,
+          "name": "Category 100050",
           "subCategories": []
         },
         {
-          "id": 100603,
-          "name": "Pictures",
+          "id": 100051,
+          "name": "Category 100051",
           "subCategories": []
         },
         {
-          "id": 100604,
-          "name": "Covers",
+          "id": 100052,
+          "name": "Category 100052",
           "subCategories": []
         },
         {
-          "id": 100605,
-          "name": "Physibles",
+          "id": 100053,
+          "name": "Category 100053",
           "subCategories": []
         },
         {
-          "id": 100699,
-          "name": "Other Other",
+          "id": 100054,
+          "name": "Category 100054",
           "subCategories": []
         }
       ],
@@ -2840,13 +2840,13 @@
     "priority": 25,
     "downloadClientId": 0,
     "added": "2022-12-17T11:07:20Z",
-    "sortName": "pirate bay",
+    "sortName": "indexer 5",
     "name": "Indexer 5",
     "fields": [
       {
         "order": 0,
         "name": "definitionFile",
-        "value": "thepiratebay",
+        "value": "indexer5",
         "type": "textbox",
         "advanced": false,
         "hidden": "hidden",
@@ -2964,9 +2964,9 @@
       },
       {
         "order": 0,
-        "name": "apiurl",
-        "label": "API URL",
-        "value": "apibay.org",
+        "name": "setting1",
+        "label": "Setting 1",
+        "value": "Value 1",
         "type": "textbox",
         "advanced": false,
         "privacy": "normal",
@@ -2974,45 +2974,45 @@
       },
       {
         "order": 1,
-        "name": "top100",
-        "label": "Top100",
+        "name": "setting2",
+        "label": "Setting 2",
         "value": 6,
         "type": "select",
         "advanced": false,
         "selectOptions": [
           {
             "value": 0,
-            "name": "Audio",
+            "name": "Option 1",
             "order": 0
           },
           {
             "value": 1,
-            "name": "Movies/TV",
+            "name": "Option 2",
             "order": 0
           },
           {
             "value": 2,
-            "name": "Apps",
+            "name": "Option 3",
             "order": 0
           },
           {
             "value": 3,
-            "name": "Games",
+            "name": "Option 4",
             "order": 0
           },
           {
             "value": 4,
-            "name": "XXX",
+            "name": "Option 5",
             "order": 0
           },
           {
             "value": 5,
-            "name": "Books",
+            "name": "Option 6",
             "order": 0
           },
           {
             "value": 6,
-            "name": "All",
+            "name": "Option 7",
             "order": 0
           }
         ],
@@ -3021,9 +3021,9 @@
       },
       {
         "order": 2,
-        "name": "info_top100",
-        "label": "About the top100 selection",
-        "value": "TPB indexer uses <b>top100_recent</b> for its <i>TEST</i> and <i>keyword-less</i> searches. However TPB will often only include Movies and TV in its top100_recent list which makes setting up Lidarr for Audio or other similar *Arr apps problematic. By changing the top100 selector you will make the indexer use a more focused top100 for the category group your *Arr app uses.",
+        "name": "setting3",
+        "label": "Setting 3",
+        "value": "Information this indexer shows in Prowlarr.",
         "type": "info",
         "advanced": false,
         "privacy": "normal",
@@ -3031,8 +3031,8 @@
       },
       {
         "order": 3,
-        "name": "uploader",
-        "label": "Filter by Uploader",
+        "name": "setting4",
+        "label": "Setting 4",
         "type": "textbox",
         "advanced": false,
         "privacy": "normal",
@@ -3040,9 +3040,9 @@
       },
       {
         "order": 4,
-        "name": "info_uploader",
-        "label": "About filtering by Uploader",
-        "value": "You can filter by Uploader by entering a Case Sensitive username, or leave empty to get all results.<br>Note: this is the username of the Uploader and not the Groupname that often show up at the end of TPB titles, eg -MeGusta.",
+        "name": "setting5",
+        "label": "Setting 5",
+        "value": "Information this indexer shows in Prowlarr.",
         "type": "info",
         "advanced": false,
         "privacy": "normal",
@@ -3052,7 +3052,7 @@
     "implementationName": "Cardigann",
     "implementation": "Cardigann",
     "configContract": "CardigannSettings",
-    "infoLink": "https://wiki.servarr.com/prowlarr/supported-indexers#thepiratebay",
+    "infoLink": "https://indexer.example.test/",
     "tags": [],
     "id": 20
   }

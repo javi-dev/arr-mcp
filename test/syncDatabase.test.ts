@@ -126,6 +126,7 @@ describe('sync_database', () => {
         const h = harness({ adapter });
 
         await expect(h.call({})).rejects.toThrow(/several databases/);
+        await expect(h.call({})).rejects.toMatchObject({ kind: 'InvalidRequest' });
     });
 
     it('selects the named database among several, by name', async () => {

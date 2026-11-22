@@ -33,12 +33,12 @@ describe('parseFileNumbering', () => {
     });
 
     /**
-     * The Dragon Ball Kai case from #199. A Specials folder pins the season to
+     * The Specials case from #199. A Specials folder pins the season to
      * 0 even though the filename itself carries no SxxExx, which is the only
      * signal that catches this shape.
      */
     it('treats a Specials folder as season 0', () => {
-        const got = parseFileNumbering("/storage/tv/Dragon Ball Kai (2009)/Specials/Episode 101 Videl's Crisis.mkv");
+        const got = parseFileNumbering("/tv/Another Show (2001)/Specials/Episode 101 Mira's Crossing.mkv");
         expect(got.season).toBe(0);
         expect(got.episode).toBe(101);
     });
@@ -91,10 +91,10 @@ describe('findMismatches', () => {
         const items: EpisodeRecord[] = [
             ep({
                 id: 'k',
-                name: 'Prologue to Battle! The Return of Goku!',
+                name: 'Opening Night! The Long Road!',
                 season: 1,
                 episode: 1,
-                path: "/storage/tv/Dragon Ball Kai (2009) [tvdbid-88031]/Specials/Episode 101 Videl's Crisis Gohan's Urgent Call-out!.mkv"
+                path: "/tv/Another Show (2001) [tvdbid-80001]/Specials/Episode 101 Mira's Crossing Harbour's Quiet Morning!.mkv"
             })
         ];
 
@@ -110,10 +110,10 @@ describe('findMismatches', () => {
         const items: EpisodeRecord[] = [
             ep({
                 id: 't',
-                name: 'Prologue to Battle! The Return of Goku!',
+                name: 'Opening Night! The Long Road!',
                 season: 0,
                 episode: 101,
-                path: "/tv/Dragon Ball Kai/Specials/Episode 101 Videl's Crisis Gohan's Urgent Call-out!.mkv"
+                path: "/tv/Another Show/Specials/Episode 101 Mira's Crossing Harbour's Quiet Morning!.mkv"
             })
         ];
 
@@ -175,10 +175,10 @@ describe('findMismatches', () => {
         const items: EpisodeRecord[] = [
             ep({
                 id: 'b',
-                name: 'Prologue to Battle! The Return of Goku!',
+                name: 'Opening Night! The Long Road!',
                 season: 1,
                 episode: 1,
-                path: "/tv/Dragon Ball Kai/Specials/Episode 101 Videl's Crisis Gohan's Urgent Call-out!.mkv"
+                path: "/tv/Another Show/Specials/Episode 101 Mira's Crossing Harbour's Quiet Morning!.mkv"
             })
         ];
         expect(findMismatches(items)[0]?.reasons).toEqual(['numbering', 'title']);
@@ -347,11 +347,11 @@ describe('summariseSeries', () => {
         expect(verdict).toMatchObject({ mismatches: 1, titleOnly: 1, pinned: 1, remedy: 'inspect' });
     });
 
-    /** The Dragon Ball Kai shape. Numbering is stored at scan time and no
+    /** The Specials shape. Numbering is stored at scan time and no
      *  refresh re-derives it, matched or not. */
     it('sends any numbering mismatch to a rename', () => {
         const verdict = summariseSeries([
-            ep({ id: 'n', name: 'Prologue to Battle!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Videls Crisis.mkv' })
+            ep({ id: 'n', name: 'Opening Night!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Miras Crossing.mkv' })
         ]);
         expect(verdict).toMatchObject({ numbering: 1, remedy: 'rename_files' });
     });
@@ -378,14 +378,14 @@ describe('summariseSeries', () => {
     /** A lock does not move a file, so numbering still wants the rename. */
     it('still sends a locked numbering mismatch to a rename', () => {
         const verdict = summariseSeries([
-            ep({ id: 'n', name: 'Prologue to Battle!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Videls Crisis.mkv', lockedFields: ['title'] })
+            ep({ id: 'n', name: 'Opening Night!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Miras Crossing.mkv', lockedFields: ['title'] })
         ]);
         expect(verdict?.remedy).toBe('rename_files');
     });
 
     it('counts what it could compare, not what it was handed', () => {
         const verdict = summariseSeries([
-            ep({ id: 'n', name: 'X', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Videls Crisis.mkv' }),
+            ep({ id: 'n', name: 'X', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Miras Crossing.mkv' }),
             ep({ id: 'nopath', name: 'Y', season: 1, episode: 2 })
         ]);
         expect(verdict?.compared).toBe(1);
@@ -586,9 +586,9 @@ describe('false positives on a real Plex library', () => {
         expect(findMismatches([episode('Sensô Kôi', 'Sensō Kōi')])).toEqual([]);
     });
 
-    /** Cowboy Bebop: every episode showed the next one's title. */
+    /** A live series: every episode showed the next one's title. */
     it('still flags a title that shares nothing with the file', () => {
-        expect(findMismatches([episode('Stray Dog Strut', 'Asteroid Blues')])[0]?.reasons).toEqual(['title']);
+        expect(findMismatches([episode('Lantern Road', 'Quiet Harbour')])[0]?.reasons).toEqual(['title']);
     });
 });
 
@@ -626,29 +626,29 @@ describe('advisory findings from a real Plex library', () => {
     const at = (season: number, n: number, name: string, file: string): EpisodeRecord =>
         ep({ id: `${season}x${n}`, name, season, episode: n, path: `/tv/Show/Season ${season}/Show - S0${season}E${String(n).padStart(2, '0')} - ${file}.mkv` });
 
-    /** Cowboy Bebop: every episode shows the next one's title. */
-    const bebop = [
-        at(1, 1, 'Stray Dog Strut', 'Asteroid Blues'),
-        at(1, 2, 'Honky Tonk Women', 'Stray Dog Strut'),
-        at(1, 3, 'Gateway Shuffle', 'Honky Tonk Women')
+    /** A live series: every episode shows the next one's title. */
+    const shiftedRun = [
+        at(1, 1, 'Lantern Road', 'Quiet Harbour'),
+        at(1, 2, 'Copper Bell', 'Lantern Road'),
+        at(1, 3, 'Northern Gate', 'Copper Bell')
     ];
 
     it('marks a title the neighbouring episode carries as shifted', () => {
-        const found = findMismatches(bebop);
+        const found = findMismatches(shiftedRun);
         expect(found.map(m => m.advisory)).toEqual(['shifted', 'shifted', 'shifted']);
     });
 
     it('sends an all-shifted series to inspect, not a repair', () => {
-        expect(summariseSeries(bebop)).toMatchObject({ mismatches: 3, shifted: 3, remedy: 'inspect' });
+        expect(summariseSeries(shiftedRun)).toMatchObject({ mismatches: 3, shifted: 3, remedy: 'inspect' });
     });
 
     it('still sends a series with one ordinary mismatch to the repair', () => {
-        const verdict = summariseSeries([...bebop, at(1, 9, 'The Fixture Show', 'Completely Unrelated Words')]);
+        const verdict = summariseSeries([...shiftedRun, at(1, 9, 'The Fixture Show', 'Completely Unrelated Words')]);
         expect(verdict).toMatchObject({ shifted: 3, remedy: 'refresh_metadata' });
     });
 
     it('does not call a title shifted when no neighbour carries it', () => {
-        expect(findMismatches([at(1, 1, 'Stray Dog Strut', 'Asteroid Blues')])[0]?.advisory).toBeUndefined();
+        expect(findMismatches([at(1, 1, 'Lantern Road', 'Quiet Harbour')])[0]?.advisory).toBeUndefined();
     });
 
     /** #312 on 1.44.1: Super Mario Bros. Super Show! files name both segments,
@@ -741,10 +741,10 @@ describe('advisory findings from a real Plex library', () => {
         expect(summariseSeries([special])).toMatchObject({ specials: 1, remedy: 'inspect' });
     });
 
-    /** Dragon Ball Kai: a season 1 episode filed under Specials is still numbering. */
+    /** A live series: a season 1 episode filed under Specials is still numbering. */
     it('still flags an episode the server puts in a different season from Specials', () => {
         const found = findMismatches([
-            ep({ id: 'k', name: 'Prologue to Battle!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Videls Crisis.mkv' })
+            ep({ id: 'k', name: 'Opening Night!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Miras Crossing.mkv' })
         ]);
         expect(found[0]?.reasons).toContain('numbering');
         expect(found[0]?.advisory).toBeUndefined();
@@ -819,8 +819,8 @@ describe('titles in different languages', () => {
 
     it('does not mark short titles in a series whose two sides share a language', () => {
         const found = findMismatches([
-            at(1, 'The Sea Monster', 'Asteroid Blues'),
-            at(2, 'The Haunted Fixture', 'Stray Dog Strut'),
+            at(1, 'The Sea Monster', 'Quiet Harbour'),
+            at(2, 'The Haunted Fixture', 'Lantern Road'),
             at(3, 'The Ghosts of the Night', 'Death of the Party')
         ]);
         expect(found.map(m => m.advisory)).toEqual([undefined, undefined, undefined]);
@@ -848,7 +848,7 @@ describe('titles in different languages', () => {
     });
 
     it('does not mark two English titles', () => {
-        expect(findMismatches([at(1, 'Stray Dog Strut', 'Asteroid Blues')])[0]?.advisory).toBeUndefined();
+        expect(findMismatches([at(1, 'Lantern Road', 'Quiet Harbour')])[0]?.advisory).toBeUndefined();
         expect(findMismatches([at(1, 'The Butcher in the Car', 'Death of the Party')])[0]?.advisory).toBeUndefined();
     });
 

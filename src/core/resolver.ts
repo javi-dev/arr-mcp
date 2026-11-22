@@ -609,7 +609,7 @@ export class LibraryIndex {
      * title without "(2013)" or "S04E03".
      */
     searchRanked(query: string): RankedHit[] {
-        // "The Fall (2013)" names a year, and no title carries it in brackets.
+        // "The Crossing (2008)" names a year, and no title carries it in brackets.
         const dated = /^(.*\S)\s*\((\d{4})\)\s*$/.exec(query);
         if (dated?.[1] !== undefined) {
             const year = Number(dated[2]);
@@ -634,7 +634,7 @@ export class LibraryIndex {
     }
 
     #ranked(query: string): RankedHit[] {
-        // Ranking drops the article, so "The Fall" and "Fall" tie; the one
+        // Ranking drops the article, so "The Crossing" and "Crossing" tie; the one
         // spelled as asked goes first (#312).
         const spelled = (title: string): number => (literalTitle(title) === literalTitle(query) ? 0 : 1);
         return this.#items

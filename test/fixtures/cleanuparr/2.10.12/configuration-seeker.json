@@ -8,7 +8,7 @@
   "instances": [
     {
       "arrInstanceId": "14a25b1a-5efb-4597-a38a-58b609549233",
-      "instanceName": "[arrglue] Sonarr",
+      "instanceName": "Sonarr",
       "instanceType": "Sonarr",
       "enabled": false,
       "skipTags": [],
@@ -23,7 +23,7 @@
     },
     {
       "arrInstanceId": "5a9ae16d-9664-4fdc-af35-042e659e77f1",
-      "instanceName": "[arrglue] Radarr",
+      "instanceName": "Radarr",
       "instanceType": "Radarr",
       "enabled": false,
       "skipTags": [],

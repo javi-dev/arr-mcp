@@ -51,11 +51,11 @@ const misnamed = (n: number): EpisodeRecord => ({
 
 const wrongNumbers = (n: number): EpisodeRecord => ({
     id: `n${n}`,
-    name: 'Prologue to Battle! The Return of Goku!',
+    name: 'Opening Night! The Long Road!',
     season: 1,
     episode: 1,
-    path: `/tv/Kai/Specials/Episode 10${n} Videls Crisis Gohans Urgent Callout.mkv`,
-    providerIds: { Tvdb: '507731' }
+    path: `/tv/Another/Specials/Episode 10${n} Miras Crossing Harbours Quiet Morning.mkv`,
+    providerIds: { Tvdb: '654321' }
 });
 
 function adapterWith(
@@ -516,7 +516,7 @@ describe('advisory findings', () => {
         const [issue] = (
             await sweep(
                 adapterWith({
-                    Shifted: [at(1, 'Stray Dog Strut', 'Asteroid Blues'), at(2, 'Honky Tonk Women', 'Stray Dog Strut'), at(3, 'Gateway Shuffle', 'Honky Tonk Women')]
+                    Shifted: [at(1, 'Lantern Road', 'Quiet Harbour'), at(2, 'Copper Bell', 'Lantern Road'), at(3, 'Northern Gate', 'Copper Bell')]
                 })
             )
         ).items;
