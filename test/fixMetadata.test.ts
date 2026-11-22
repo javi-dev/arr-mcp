@@ -54,7 +54,7 @@ const broken = (n: number) => ({
     Name: 'Some Episode Title',
     IndexNumber: 1,
     ParentIndexNumber: 1,
-    Path: `/storage/tv/Another Show (2001)/Specials/Episode 10${n} Some Special.mkv`
+    Path: `/tv/Another Show (2001)/Specials/Episode 10${n} Some Special.mkv`
 });
 
 const seriesItem = (over: Partial<MergedItem> = {}): MergedItem =>
