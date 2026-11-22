@@ -51,11 +51,11 @@ const misnamed = (n: number): EpisodeRecord => ({
 
 const wrongNumbers = (n: number): EpisodeRecord => ({
     id: `n${n}`,
-    name: 'Prologue to Battle! The Return of Goku!',
+    name: 'Opening Night! The Long Road!',
     season: 1,
     episode: 1,
-    path: `/tv/Kai/Specials/Episode 10${n} Videls Crisis Gohans Urgent Callout.mkv`,
-    providerIds: { Tvdb: '507731' }
+    path: `/tv/Another/Specials/Episode 10${n} Miras Crossing Harbours Urgent Callout.mkv`,
+    providerIds: { Tvdb: '654321' }
 });
 
 function adapterWith(

@@ -33,12 +33,12 @@ describe('parseFileNumbering', () => {
     });
 
     /**
-     * The Dragon Ball Kai case from #199. A Specials folder pins the season to
+     * The Specials case from #199. A Specials folder pins the season to
      * 0 even though the filename itself carries no SxxExx, which is the only
      * signal that catches this shape.
      */
     it('treats a Specials folder as season 0', () => {
-        const got = parseFileNumbering("/storage/tv/Dragon Ball Kai (2009)/Specials/Episode 101 Videl's Crisis.mkv");
+        const got = parseFileNumbering("/storage/tv/Another Show (2001)/Specials/Episode 101 Mira's Crossing.mkv");
         expect(got.season).toBe(0);
         expect(got.episode).toBe(101);
     });
@@ -91,10 +91,10 @@ describe('findMismatches', () => {
         const items: EpisodeRecord[] = [
             ep({
                 id: 'k',
-                name: 'Prologue to Battle! The Return of Goku!',
+                name: 'Opening Night! The Long Road!',
                 season: 1,
                 episode: 1,
-                path: "/storage/tv/Dragon Ball Kai (2009) [tvdbid-88031]/Specials/Episode 101 Videl's Crisis Gohan's Urgent Call-out!.mkv"
+                path: "/storage/tv/Another Show (2001) [tvdbid-80001]/Specials/Episode 101 Mira's Crossing Harbour's Urgent Call-out!.mkv"
             })
         ];
 
@@ -110,10 +110,10 @@ describe('findMismatches', () => {
         const items: EpisodeRecord[] = [
             ep({
                 id: 't',
-                name: 'Prologue to Battle! The Return of Goku!',
+                name: 'Opening Night! The Long Road!',
                 season: 0,
                 episode: 101,
-                path: "/tv/Dragon Ball Kai/Specials/Episode 101 Videl's Crisis Gohan's Urgent Call-out!.mkv"
+                path: "/tv/Another Show/Specials/Episode 101 Mira's Crossing Harbour's Urgent Call-out!.mkv"
             })
         ];
 
@@ -175,10 +175,10 @@ describe('findMismatches', () => {
         const items: EpisodeRecord[] = [
             ep({
                 id: 'b',
-                name: 'Prologue to Battle! The Return of Goku!',
+                name: 'Opening Night! The Long Road!',
                 season: 1,
                 episode: 1,
-                path: "/tv/Dragon Ball Kai/Specials/Episode 101 Videl's Crisis Gohan's Urgent Call-out!.mkv"
+                path: "/tv/Another Show/Specials/Episode 101 Mira's Crossing Harbour's Urgent Call-out!.mkv"
             })
         ];
         expect(findMismatches(items)[0]?.reasons).toEqual(['numbering', 'title']);
@@ -347,11 +347,11 @@ describe('summariseSeries', () => {
         expect(verdict).toMatchObject({ mismatches: 1, titleOnly: 1, pinned: 1, remedy: 'inspect' });
     });
 
-    /** The Dragon Ball Kai shape. Numbering is stored at scan time and no
+    /** The Specials shape. Numbering is stored at scan time and no
      *  refresh re-derives it, matched or not. */
     it('sends any numbering mismatch to a rename', () => {
         const verdict = summariseSeries([
-            ep({ id: 'n', name: 'Prologue to Battle!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Videls Crisis.mkv' })
+            ep({ id: 'n', name: 'Opening Night!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Miras Crossing.mkv' })
         ]);
         expect(verdict).toMatchObject({ numbering: 1, remedy: 'rename_files' });
     });
@@ -378,14 +378,14 @@ describe('summariseSeries', () => {
     /** A lock does not move a file, so numbering still wants the rename. */
     it('still sends a locked numbering mismatch to a rename', () => {
         const verdict = summariseSeries([
-            ep({ id: 'n', name: 'Prologue to Battle!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Videls Crisis.mkv', lockedFields: ['title'] })
+            ep({ id: 'n', name: 'Opening Night!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Miras Crossing.mkv', lockedFields: ['title'] })
         ]);
         expect(verdict?.remedy).toBe('rename_files');
     });
 
     it('counts what it could compare, not what it was handed', () => {
         const verdict = summariseSeries([
-            ep({ id: 'n', name: 'X', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Videls Crisis.mkv' }),
+            ep({ id: 'n', name: 'X', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Miras Crossing.mkv' }),
             ep({ id: 'nopath', name: 'Y', season: 1, episode: 2 })
         ]);
         expect(verdict?.compared).toBe(1);
@@ -741,10 +741,10 @@ describe('advisory findings from a real Plex library', () => {
         expect(summariseSeries([special])).toMatchObject({ specials: 1, remedy: 'inspect' });
     });
 
-    /** Dragon Ball Kai: a season 1 episode filed under Specials is still numbering. */
+    /** A live series: a season 1 episode filed under Specials is still numbering. */
     it('still flags an episode the server puts in a different season from Specials', () => {
         const found = findMismatches([
-            ep({ id: 'k', name: 'Prologue to Battle!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Videls Crisis.mkv' })
+            ep({ id: 'k', name: 'Opening Night!', season: 1, episode: 1, path: '/tv/K/Specials/Episode 101 Miras Crossing.mkv' })
         ]);
         expect(found[0]?.reasons).toContain('numbering');
         expect(found[0]?.advisory).toBeUndefined();

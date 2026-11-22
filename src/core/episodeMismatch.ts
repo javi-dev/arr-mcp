@@ -271,7 +271,7 @@ function titleFields(path: string, stripped: RegExp): string[] | undefined {
      * all correct.
      *
      * So an `SxxExx` name must have a delimited field after the numbering for
-     * its title to be trusted. `Episode 101 Videl's Crisis` is exempt: the
+     * its title to be trusted. `Episode 101 Mira's Crossing` is exempt: the
      * word form is not a scene convention, and what follows it is the title by
      * construction.
      */
