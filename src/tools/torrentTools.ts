@@ -358,7 +358,7 @@ const AddTorrentInput = z.object({
 const RecheckInput = z.object({
     instance: instanceField,
     ids: z.array(torrentHash).min(1).max(50).describe('Torrent hashes: `id` on their get_queue rows.'),
-    resume_if_complete: z.boolean().default(false).describe('Watch the recheck briefly and start each stopped torrent that comes back complete, unless another confirmation to this qBittorrent is accepted first, even one that changes nothing.'),
+    resume_if_complete: z.boolean().default(false).describe('Watch the recheck briefly and start each stopped torrent that comes back complete, unless another confirmation to this qBittorrent is accepted first, even one that changes nothing, or a call to it comes back as a no-op without one (not a dry_run).'),
     allow_removal: allowRemovalField
 });
 
@@ -393,7 +393,7 @@ export function registerTorrentTools(server: McpServer, context: WriteContext, a
         name: 'recheck_torrents',
         title: 'Recheck torrents',
         description:
-            'Has qBittorrent verify torrents against the data on disk: the usual next step for a torrent at `missing files` once its data is back. `resume_if_complete` watches about 45 seconds and starts stopped ones found complete, unless a later confirmation was accepted, even a no-op (`left_stopped`); slower: still checking. Previews first. Field reference: arr://docs/recheck_torrents.',
+            'Has qBittorrent verify torrents against the data on disk: the usual next step for a torrent at `missing files` once its data is back. `resume_if_complete` watches about 45 seconds and starts stopped ones found complete, unless a later write or no-op came first (`left_stopped`); slower: still checking. Previews first. Field reference: arr://docs/recheck_torrents.',
         inputSchema: RecheckInput,
         service: ({ instance }) => clientOf(adapters, instance).id,
         operation: 'recheck_torrents',
